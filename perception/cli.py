@@ -10,7 +10,6 @@
     perceive rs-info                       # RealSense devices + SDK (needs librealsense2)
     perceive rs-capture --out captures     # one aligned RGB-D capture (+ nearest-object mask)
     perceive gui --fake                    # the RGB-D cockpit (synthetic scene; drop --fake for the camera)
-    perceive scan --fake                   # monocular sweep + locate (docs/mono-scan.md)
 
 Camera + backend selection come from ``--device`` / ``--width`` / ``--height``
 / ``--fps`` / ``--depth-backend`` / ``--blob-backend`` or the matching
@@ -30,7 +29,6 @@ import sys
 from .cell import ENV_CELL, apply_cell, list_cells
 from .config import PerceptionConfig
 from .pipeline import PerceptionPipeline
-from .scan_cli import add_scan_commands, run_scan_command
 from .tools import ToolError, call_tool, get_tool_schemas
 from .webapp import (
     DEFAULT_CAPTURE_ROOT,
@@ -162,7 +160,6 @@ def build_parser() -> argparse.ArgumentParser:
     gu.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
     gu.add_argument("--demo", action="store_true", help="open the demo view: one picture, four big buttons")
 
-    add_scan_commands(sub, add_camera_args=add_camera_args, add_robot_args=add_robot_args)
     return ap
 
 
@@ -307,15 +304,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report.ok else 1
     if args.cmd in ("rs-info", "rs-capture", "gui"):
         return _realsense_command(args)
-    scan_rc = run_scan_command(
-        args,
-        camera_from_args=camera_from_args,
-        robot_from_args=robot_from_args,
-        config_from_args=_config_from_args,
-    )
-    if scan_rc is not None:
-        return scan_rc
-
     pipe = PerceptionPipeline(_config_from_args(args))
 
     if args.cmd == "synthetic":

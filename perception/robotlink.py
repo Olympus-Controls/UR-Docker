@@ -178,7 +178,7 @@ class RobotLink:
         acceleration: float = DEFAULT_APPROACH_ACCELERATION,
     ) -> dict:
         """One relative base-frame ``movel`` (``[dx, dy, dz, drx, dry, drz]``) —
-        the scan's sweep. Bigger than a jog, still capped by the envelope's
+        a sweep. Bigger than a jog, still capped by the envelope's
         relative-step limit; blocks until the move confirms."""
         vals = [float(v) for v in delta]
         if len(vals) != 6 or not all(math.isfinite(v) for v in vals):
@@ -204,7 +204,7 @@ class RobotLink:
         reference: str | None = None,
     ) -> dict:
         """An approach pose ``standoff_m`` from a **base-frame** point along
-        ``along`` (the table normal for a scanned object), tool orientation
+        ``along`` (a surface normal), tool orientation
         unchanged — the same output shape as :meth:`locate` (``approach_pose``,
         ``flange_target_pose``, ``reachable``) so Move/Approach can reuse it.
         Reads the flange pose; moves nothing."""
