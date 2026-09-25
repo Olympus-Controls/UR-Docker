@@ -90,7 +90,7 @@ COCKPIT_TOOLS: list[CockpitTool] = [
         "cam_segment",
         "Segment the object under pixel (x, y) and/or inside a box on the latest frame. Returns the mask "
         "area, and features: centroid, bbox, depth median, 3D point in the camera frame (point_m, metres), "
-        "metric extent, orientation, and a grasp hint. The segment stays active for cam_locate/cam_capture.",
+        "metric extent, orientation, and a grasp hint. The segment stays active for cam_locate.",
         _schema({"x": {"type": "integer"}, "y": {"type": "integer"}, "box": _BOX}),
         lambda c, p: _strip_mask(c.segment(x=p.get("x"), y=p.get("y"), box=p.get("box"))),
     ),
@@ -151,13 +151,6 @@ COCKPIT_TOOLS: list[CockpitTool] = [
             hold_s=p.get("hold_s"),
             velocity=p.get("velocity"),
         ),
-    ),
-    CockpitTool(
-        "cam_capture",
-        "Save the current frame (and the active mask + features) into the capture dataset "
-        "(captures/<name>/color_NNNNN.png, depth_NNNNN.png, mask_NNNNN.png, meta_NNNNN.json).",
-        _schema({"name": {"type": "string"}, "include_mask": {"type": "boolean"}}),
-        lambda c, p: c.capture(p.get("name", "object"), p.get("include_mask", True)),
     ),
     CockpitTool(
         "cam_events",

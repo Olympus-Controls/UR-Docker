@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from perception.capture import CaptureStore
 from perception.config import PerceptionConfig
 from perception.realsense import RealSenseError, SyntheticRgbdCamera
 from perception.rgbd import synthetic_disks, unpack_rgbd
@@ -44,7 +43,6 @@ def server(tmp_path):
     app = ViewerApp(
         SyntheticRgbdCamera(width=64, height=48, fps=0),
         config=PerceptionConfig(),
-        store=CaptureStore(tmp_path / "caps"),
     )
     srv = ThreadingHTTPServer(("127.0.0.1", 0), ViewerHandler)
     srv.daemon_threads = True
@@ -118,7 +116,7 @@ def test_bad_query_params(server):
     assert ei.value.code == 404
 
 
-def test_segment_capture_clear_flow(server):
+def test_segment_nearest_clear_flow(server):
     base, app, root = server
     cx, cy, r, rgb, z = synthetic_disks(64, 48)[0]
     status, j = post(base, "/api/segment", {"x": cx, "y": cy})
@@ -127,25 +125,10 @@ def test_segment_capture_clear_flow(server):
     assert j["prompt"] == {"x": cx, "y": cy} and j["segmenter"] == "stub"
     assert json.loads(get(base, "/api/info")[2])["has_mask"]
 
-    status, c = post(base, "/api/capture", {"name": "apple", "include_mask": True})
-    assert status == 200 and c["ok"] and c["with_mask"] and c["index"] == 1
-    files = sorted(p.name for p in (root / "apple").iterdir())
-    assert files == ["color_00001.png", "depth_00001.png", "mask_00001.png", "meta_00001.json"]
-    meta = json.loads((root / "apple" / "meta_00001.json").read_text())
-    assert meta["features"]["area_px"] == j["area_px"] and meta["device"]["serial"] == "SYNTH"
-
-    status, c2 = post(base, "/api/capture", {"name": "apple", "include_mask": False})
-    assert c2["index"] == 2 and not c2["with_mask"]
-    status, lst = get(base, "/api/captures")[0], json.loads(get(base, "/api/captures")[2])
-    assert lst["sets"] == [{"name": "apple", "count": 2}]
-
     status, n = post(base, "/api/nearest", {})
     assert status == 200 and n["ok"] and n["prompt"] == {"nearest": 1.2} and n["area_px"] > 0
     status, cl = post(base, "/api/clear", {})
     assert cl["ok"] and not json.loads(get(base, "/api/info")[2])["has_mask"]
-    # capture with no mask falls back to the live frame
-    status, c3 = post(base, "/api/capture", {"name": "apple", "include_mask": True})
-    assert c3["index"] == 3 and not c3["with_mask"]
 
 
 def test_segment_by_box_and_by_box_plus_point(server):
@@ -188,9 +171,9 @@ def test_segment_by_box_and_by_box_plus_point(server):
         ("/api/segment", {"y": 1}, 400),
         ("/api/nearest", {"near_ratio": 0.5}, 400),
         ("/api/nearest", {"near_ratio": "big"}, 400),
-        ("/api/capture", {"name": "../evil"}, 400),
-        ("/api/capture", {"name": ""}, 400),
-        ("/api/capture", {"name": "a" * 65}, 400),
+        ("/api/snapshot", {"name": "../evil"}, 400),
+        ("/api/snapshot", {"name": ""}, 400),
+        ("/api/snapshot", {"name": "a" * 65}, 400),
         ("/api/bogus", {}, 404),
     ],
 )
@@ -209,7 +192,7 @@ def test_malformed_bodies(server):
 
 
 def test_pump_recovers_from_open_failure(tmp_path):
-    app = ViewerApp(FlakyCamera(fail_opens=1, width=32, height=24, fps=0), store=CaptureStore(tmp_path))
+    app = ViewerApp(FlakyCamera(fail_opens=1, width=32, height=24, fps=0))
     app.start()
     try:
         deadline = time.monotonic() + 5
@@ -234,7 +217,7 @@ def test_reopen_delay_backs_off_and_caps():
 
 
 def test_pump_reports_persistent_failure_with_hint(tmp_path):
-    app = ViewerApp(FlakyCamera(fail_opens=10**6, width=32, height=24, fps=0), store=CaptureStore(tmp_path))
+    app = ViewerApp(FlakyCamera(fail_opens=10**6, width=32, height=24, fps=0))
     app.start()
     try:
         deadline = time.monotonic() + 3
@@ -244,8 +227,6 @@ def test_pump_reports_persistent_failure_with_hint(tmp_path):
         assert "sudo" in app.last_error or "udev" in app.last_error
         with pytest.raises(RuntimeError, match="no frame yet"):
             app.segment(1, 1)
-        with pytest.raises(RuntimeError, match="no frame to capture"):
-            app.capture("x")
     finally:
         app.stop()
 
@@ -266,8 +247,6 @@ def test_gui_main_help_and_fake_wiring(monkeypatch, tmp_path):
             [
                 "--fake",
                 "--no-browser",
-                "--out",
-                str(tmp_path),
                 "--port",
                 "0",
                 "--width",
@@ -279,12 +258,8 @@ def test_gui_main_help_and_fake_wiring(monkeypatch, tmp_path):
         == 0
     )
     assert isinstance(calls["camera"], SyntheticRgbdCamera) and calls["camera"].width == 32
-    assert (
-        calls["capture_root"] == str(tmp_path)
-        and calls["open_browser"] is False
-        and calls["bind"] == "127.0.0.1"
-    )
-    assert isinstance(calls["config"], PerceptionConfig) and Path(calls["capture_root"]).exists()
+    assert calls["open_browser"] is False and calls["bind"] == "127.0.0.1"
+    assert isinstance(calls["config"], PerceptionConfig)
 
 
 def test_depth_flags_reach_the_camera(monkeypatch, tmp_path):
@@ -374,7 +349,6 @@ def robot_server(tmp_path, monkeypatch):
     app = ViewerApp(
         SyntheticRgbdCamera(width=64, height=48, fps=0),
         config=PerceptionConfig(),
-        store=CaptureStore(tmp_path / "caps"),
         robot=link,
     )
     srv = ThreadingHTTPServer(("127.0.0.1", 0), ViewerHandler)
@@ -483,7 +457,7 @@ def test_gui_main_robot_flags(monkeypatch, tmp_path):
 
     calls = {}
     monkeypatch.setattr("perception.webapp.serve", lambda camera, **kw: calls.update(kw))
-    common = ["--fake", "--no-browser", "--out", str(tmp_path), "--port", "0"]
+    common = ["--fake", "--no-browser", "--port", "0"]
     assert gui_main([*common, "--no-robot"]) == 0 and calls["robot"] is None
     assert gui_main([*common, "--robot-host", "10.1.2.3", "--robot-dry-run"]) == 0
     link = calls["robot"]
@@ -511,7 +485,6 @@ def pilot(tmp_path):
     app = ViewerApp(
         SyntheticRgbdCamera(width=64, height=48, fps=0),
         config=PerceptionConfig(),
-        store=CaptureStore(tmp_path / "caps"),
         # An unreachable robot must fail *fast*: a made-up hostname is not safe
         # (corporate DNS search suffixes wildcard-resolve even ".invalid" names),
         # so point at loopback ports nothing listens on.

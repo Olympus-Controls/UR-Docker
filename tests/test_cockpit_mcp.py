@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from perception.capture import CaptureStore
 from perception.cockpitclient import CockpitClient, CockpitUnavailable
 from perception.config import PerceptionConfig
 from perception.mcp_server import COCKPIT_TOOLS, CockpitTools, build_server
@@ -29,7 +28,6 @@ def cockpit(tmp_path):
     app = ViewerApp(
         SyntheticRgbdCamera(width=96, height=64, fps=0),
         config=PerceptionConfig(),
-        store=CaptureStore(tmp_path / "caps"),
         robot=link,
     )
     srv = ThreadingHTTPServer(("127.0.0.1", 0), ViewerHandler)

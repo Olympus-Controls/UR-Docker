@@ -13,7 +13,6 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from perception.capture import CaptureStore
 from perception.config import PerceptionConfig
 from perception.realsense import SyntheticRgbdCamera
 from perception.views import (
@@ -147,7 +146,6 @@ def server(tmp_path):
     app = ViewerApp(
         SyntheticRgbdCamera(width=32, height=24, fps=0),
         config=PerceptionConfig(),
-        store=CaptureStore(tmp_path / "caps"),
         views=[
             SyntheticView(name="left", width=32, height=24, fps=0),
             SyntheticView(name="right", width=16, height=12, fps=0),
@@ -211,7 +209,6 @@ def test_no_views_means_no_view_route_and_empty_list(tmp_path):
     app = ViewerApp(
         SyntheticRgbdCamera(width=16, height=12, fps=0),
         config=PerceptionConfig(),
-        store=CaptureStore(tmp_path),
     )
     assert app.info()["views"] == []
     with pytest.raises(IndexError):

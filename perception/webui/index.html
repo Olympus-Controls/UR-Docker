@@ -253,14 +253,6 @@
           <div id="calResult" hidden><table id="calTable"><tbody></tbody></table><pre class="env" id="calEnv"></pre></div>
         </details>
       </div>
-      <div class="head" style="padding:7px 0 0;border:0"><h2>Capture</h2></div>
-      <div class="row">
-        <input id="setName" type="text" value="object" placeholder="set name" style="flex:1">
-        <label><input id="withMask" type="checkbox" checked> with mask</label>
-        <button id="captureBtn" class="primary">Capture</button>
-      </div>
-      <div class="hint">Writes color_NNNNN.png, depth_NNNNN.png (16-bit), mask_NNNNN.png and meta_NNNNN.json under <code id="root">captures/</code>.</div>
-      <ul id="sets" class="sets"></ul>
       <div class="head" style="padding:7px 0 0;border:0"><h2>Camera</h2></div>
       <table id="camTable"><tbody></tbody></table>
     </div>
@@ -679,20 +671,6 @@
   $('doctorBtn').onclick = doctor; $('checks').onclick = () => { $('checks').hidden = true; };
   document.querySelectorAll('button[data-jog]').forEach(b => b.onclick = () => jog(b.dataset.jog));
 
-  // ---- capture ----------------------------------------------------------------------
-  async function capture() {
-    try {
-      const j = await post('/api/capture', { name: $('setName').value.trim() || 'object', include_mask: $('withMask').checked });
-      toast(`saved #${j.index} → ${j.dir}${j.with_mask ? ' (with mask)' : ''}`); refreshSets();
-    } catch (e) { toast(`capture: ${e.message}`); }
-  }
-  async function refreshSets() {
-    try {
-      const j = await (await fetch('/api/captures')).json();
-      $('root').textContent = j.root + '/';
-      $('sets').innerHTML = j.sets.map(s => `<li>${s.name} · ${s.count}</li>`).join('') || '<li class="hint">no captures yet</li>';
-    } catch (e) {}
-  }
 
   // ---- info poll -------------------------------------------------------------------
   // ---- extra viewpoints (--view): one long-poll loop per view, image bytes → <img> ----
@@ -757,15 +735,14 @@
   }
 
   // ---- wiring ----------------------------------------------------------------------
-  $('nearestBtn').onclick = nearest; $('clearBtn').onclick = clearSeg; $('captureBtn').onclick = capture;
+  $('nearestBtn').onclick = nearest; $('clearBtn').onclick = clearSeg;
   $('locateBtn').onclick = locateRobot; $('moveBtn').onclick = moveRobot; $('cycleBtn').onclick = approachCycle;
   $('pauseBtn').onclick = () => { running = !running; $('pauseBtn').textContent = running ? 'Pause' : 'Resume'; };
   document.addEventListener('keydown', (ev) => {
-    if (ev.target.tagName === 'INPUT') return;
-    if (ev.key === 'c') capture(); else if (ev.key === 'n') nearest(); else if (ev.key === 'Escape') clearSeg();
+    if (ev.target.tagName === 'INPUT') return; if if (ev.key === 'n') nearest(); else if (ev.key === 'Escape') clearSeg();
     else if (ev.key === ' ') { ev.preventDefault(); $('pauseBtn').click(); }
   });
-  info(); setInterval(info, 2000); refreshSets(); loop();
+  info(); setInterval(info, 2000); loop();
   setTimeout(robotState, 300); setInterval(robotState, 2500); events(); setInterval(events, 1500);
 })();
 </script>

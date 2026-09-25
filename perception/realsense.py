@@ -24,8 +24,6 @@ Layers:
   laser power (:class:`DepthTuning`) at open. Takes an ``api`` argument so
   tests drive it with a fake; the hardware test (``-m realsense``) runs it for
   real.
-* :class:`RealSenseSource` — the :class:`perception.sources.FrameSource`
-  adapter (RGB frames only) so the existing pipeline can read from the D435.
 * :class:`SyntheticRgbdCamera` — same surface as :class:`RealSenseCamera`,
   no hardware: what ``--fake`` and the viewer tests run on.
 
@@ -1487,45 +1485,6 @@ class SyntheticRgbdCamera:
                 "translation": [0.0, 0.0, 0.0],
             },
         }
-
-
-class RealSenseSource:
-    """:class:`perception.sources.FrameSource` adapter: RGB frames from a D4xx.
-
-    Keeps the full :class:`RealSenseCamera` on ``.camera`` for callers that want
-    the depth too; :meth:`frames` yields only the color :class:`Frame` so the
-    existing (monocular) pipeline runs unchanged on real camera frames.
-    """
-
-    def __init__(self, camera: RealSenseCamera | None = None, **camera_kwargs):
-        self.camera = camera or RealSenseCamera(**camera_kwargs)
-
-    def open(self) -> None:
-        self.camera.open()
-
-    def frames(self) -> Iterator[Frame]:
-        while True:
-            yield self.camera.read().color
-
-    def read_one(self) -> Frame:
-        opened_here = self.camera._pipe is None
-        if opened_here:
-            self.open()
-        try:
-            return self.camera.read().color
-        finally:
-            if opened_here:
-                self.close()
-
-    def close(self) -> None:
-        self.camera.close()
-
-    def __enter__(self) -> RealSenseSource:
-        self.open()
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.close()
 
 
 def open_camera(

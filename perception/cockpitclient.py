@@ -94,12 +94,6 @@ class CockpitClient:
     def clear(self) -> dict:
         return self.post("/api/clear")
 
-    def capture(self, name: str = "object", include_mask: bool = True) -> dict:
-        return self.post("/api/capture", {"name": name, "include_mask": bool(include_mask)})
-
-    def captures(self) -> dict:
-        return self.get("/api/captures")
-
     def events(self, after: int = 0, limit: int = 200) -> dict:
         return self.get(f"/api/events?after={int(after)}&limit={int(limit)}")
 

@@ -65,7 +65,7 @@ from xml.sax.saxutils import escape
 
 # Reuse urp_convert's version constants so the two emitters stay in lockstep on
 # the header PolyScope stamps into every program. Bootstrap scripts/ onto the
-# path the same way urctl.urp does when running from a source checkout.
+# path (the vendored copy in the wheel, else scripts/ from a source checkout).
 try:
     from urp_convert import DEFAULT_CREATED_IN, DEFAULT_LAST_SAVED_IN
 except ImportError:  # pragma: no cover - exercised only outside an install

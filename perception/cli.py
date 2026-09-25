@@ -8,7 +8,6 @@
     perceive --cell ur20 doctor            # pre-flight: SDK, camera, robot reachability + state
     perceive cells                         # the shipped cell profiles (sim / ur3 / ur20)
     perceive rs-info                       # RealSense devices + SDK (needs librealsense2)
-    perceive rs-capture --out captures     # one aligned RGB-D capture (+ nearest-object mask)
     perceive gui --fake                    # the RGB-D cockpit (synthetic scene; drop --fake for the camera)
 
 Camera + backend selection come from ``--device`` / ``--width`` / ``--height``
@@ -31,7 +30,6 @@ from .config import PerceptionConfig
 from .pipeline import PerceptionPipeline
 from .tools import ToolError, call_tool, get_tool_schemas
 from .webapp import (
-    DEFAULT_CAPTURE_ROOT,
     DEFAULT_PORT,
     add_camera_args,
     add_robot_args,
@@ -136,25 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="also dump every sensor option (value/range) per sensor — what a preset or another app left",
     )
 
-    rc = sub.add_parser("rs-capture", help="grab one aligned RGB-D frame from the RealSense and save it")
-    add_camera_args(rc)
-    rc.add_argument(
-        "--out", default=DEFAULT_CAPTURE_ROOT, help=f"capture root (default: {DEFAULT_CAPTURE_ROOT}/)"
-    )
-    rc.add_argument("--name", default="object", help="capture set name (default: object)")
-    rc.add_argument("--no-mask", action="store_true", help="skip the nearest-object mask")
-    rc.add_argument(
-        "--warmup", type=int, default=15, help="frames to discard for auto-exposure (default: 15)"
-    )
-
     gu = sub.add_parser(
-        "gui", help="local RGB-D cockpit: live view, click-to-segment, capture, send-to-robot"
+        "gui", help="local RGB-D cockpit: live view, click-to-segment, snapshots, send-to-robot"
     )
     add_camera_args(gu)
     add_robot_args(gu)
-    gu.add_argument(
-        "--out", default=DEFAULT_CAPTURE_ROOT, help=f"capture root (default: {DEFAULT_CAPTURE_ROOT}/)"
-    )
     gu.add_argument("--bind", default="127.0.0.1", help="interface to bind (default: loopback only)")
     gu.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT})")
     gu.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
@@ -217,7 +201,6 @@ def _realsense_command(args) -> int:
         serve(
             camera_from_args(args, config),
             config=config,
-            capture_root=args.out,
             bind=args.bind,
             port=args.port,
             open_browser=not args.no_browser,
@@ -227,35 +210,7 @@ def _realsense_command(args) -> int:
         )
         return 0
 
-    # rs-capture
-    from pathlib import Path
-
-    from .capture import CaptureStore
-    from .segment import StubSegmenter, extract_features
-
-    camera = camera_from_args(args, config)
-    try:
-        camera.open()
-        frame = None
-        for _ in range(max(0, args.warmup) + 1):
-            frame = camera.read()
-        assert frame is not None
-        mask = None if args.no_mask else StubSegmenter().nearest_object(frame)
-        feats = extract_features(mask, frame) if mask is not None and mask.area else None
-        result = CaptureStore(Path(args.out)).save(
-            args.name,
-            frame,
-            mask=mask if (mask is not None and mask.area) else None,
-            features=feats.as_dict() if feats else None,
-            device=camera.describe().get("device", {}),
-        )
-        result["frame"] = frame.summary()
-        result["features"] = feats.as_dict() if feats else None
-        return _emit(result)
-    except RealSenseError as exc:
-        return _emit({"ok": False, "error": str(exc), "hint": platform_hint(exc) or None})
-    finally:
-        camera.close()
+    raise SystemExit(f"unknown realsense command {args.cmd}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -302,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(report.render())
         return 0 if report.ok else 1
-    if args.cmd in ("rs-info", "rs-capture", "gui"):
+    if args.cmd in ("rs-info", "gui"):
         return _realsense_command(args)
     pipe = PerceptionPipeline(_config_from_args(args))
 

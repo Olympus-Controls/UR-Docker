@@ -9,7 +9,6 @@ import os
 
 import pytest
 
-from perception.frame import Frame
 from perception.realsense import (
     FORMAT_RGB8,
     FORMAT_Z16,
@@ -30,7 +29,6 @@ from perception.realsense import (
     RealSenseCamera,
     RealSenseError,
     RealSenseLibraryNotFound,
-    RealSenseSource,
     RgbdCamera,
     SyntheticRgbdCamera,
     _unstride,
@@ -341,14 +339,6 @@ def test_padded_strides_are_removed():
     assert f.depth.distance_m(63, 47) == pytest.approx(1.0)
     assert _unstride({"width": 2, "height": 2, "stride": 3, "data": b"abXcdX"}, 1) == b"abcd"
     assert _unstride({"width": 2, "height": 1, "stride": 0, "data": b"ab"}, 1) == b"ab"
-
-
-def test_realsense_source_yields_color_frames():
-    src = RealSenseSource(RealSenseCamera(width=64, height=48, api=FakeApi()))
-    with src:
-        frame = next(src.frames())
-    assert isinstance(frame, Frame) and frame.width == 64
-    assert isinstance(src.read_one(), Frame)  # opens/closes itself
 
 
 def test_synthetic_camera_and_factory():

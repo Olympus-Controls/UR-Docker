@@ -25,7 +25,7 @@ export UR_HOST
 
 .PHONY: help sim-up sim-down sim-logs sim-shell sim-poweron \
         simx-up simx-down simx-logs simx-shell \
-        rs-info rs-gui rs-gui-fake rs-capture rs-test perception-build perception-up perception-down \
+        rs-info rs-gui rs-gui-fake rs-test perception-build perception-up perception-down \
         doctor cockpit cockpit-dry mcp \
         test test-unit test-integration test-all \
         lint lint-py lint-sh fmt regen-urps install-dev
@@ -93,8 +93,6 @@ rs-gui:  ## RGB-D cockpit on the RealSense (browser, loopback).
 rs-gui-fake:  ## RGB-D cockpit on a synthetic scene (no camera).
 	$(PYTHON) -m perception gui --fake
 
-rs-capture:  ## One aligned RGB-D capture + nearest-object mask into captures/.
-	sudo $(PYTHON) -m perception rs-capture --out captures
 
 rs-test:  ## Hardware-in-the-loop RealSense tests (skips without a camera).
 	sudo $(PYTEST) -m realsense -q
@@ -174,4 +172,4 @@ regen-urps:  ## Rebuild every <name>.urp from its build.py (node tree) or siblin
 # ---- One-time setup ---------------------------------------------------------
 
 install-dev:  ## Create/refresh the uv venv with dev + optional extras.
-	$(UV) sync --extra perception --extra mcp
+	$(UV) sync --extra perception

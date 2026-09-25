@@ -1420,7 +1420,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'depth'", specifier = ">=4.40" },
     { name = "transformers", marker = "extra == 'sam'", specifier = ">=4.40" },
 ]
-provides-extras = ["mcp", "perception", "depth", "sam"]
+provides-extras = ["perception", "depth", "sam"]
 
 [package.metadata.requires-dev]
 dev = [

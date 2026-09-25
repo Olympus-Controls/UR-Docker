@@ -52,8 +52,6 @@ API:
     ``/api/cal/apply`` ``{save?}`` / ``/api/cal/reset`` / ``GET /api/cal`` —
                                       touch-and-click hand-eye calibration
                                       (:mod:`perception.calibrate`).
-  * ``POST /api/capture``  ``{name, include_mask}`` save color/depth(/mask/meta).
-  * ``GET  /api/captures``            what's in the capture root.
   * ``POST /api/clear``               drop the current mask.
 
 One background thread pumps the camera; every consumer reads the latest frame
@@ -71,6 +69,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -82,7 +81,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .capture import CaptureStore, validate_name
 from .cell import describe_cell
 from .config import PerceptionConfig
 from .factory import SEGMENT_BACKENDS, make_segmenter
@@ -103,11 +101,17 @@ from .segment import Mask, StubSegmenter, extract_features, normalize_box
 from .views import ViewSource, open_views, parse_view_size, parse_view_specs
 
 DEFAULT_PORT = 7621
-DEFAULT_CAPTURE_ROOT = "captures"
 DEFAULT_SNAPSHOT_DIR = "captures/snapshots"
 REOPEN_DELAY_S = 1.0
 REOPEN_MAX_DELAY_S = 30.0
 EVENT_LOG_SIZE = 500
+
+
+def validate_name(name: str) -> str:
+    """A snapshot/set name: 1-64 chars of [A-Za-z0-9_-] (no paths, no dots)."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name or ""):
+        raise ValueError("name must be 1-64 characters of letters, digits, _ or -")
+    return name
 
 
 class EventLog:
@@ -278,7 +282,6 @@ class ViewerApp:
         camera: RgbdCamera,
         *,
         config: PerceptionConfig | None = None,
-        store: CaptureStore | None = None,
         segmenter=None,
         robot: RobotLink | None = None,
         views: list[ViewSource] | None = None,
@@ -286,7 +289,6 @@ class ViewerApp:
         self.camera = camera
         self.robot = robot
         self.config = config or PerceptionConfig.from_env()
-        self.store = store or CaptureStore(Path(DEFAULT_CAPTURE_ROOT))
         self.segmenter = segmenter or make_segmenter(self.config)
         self._cond = threading.Condition()
         self._latest: RgbdFrame | None = None
@@ -431,7 +433,6 @@ class ViewerApp:
             "camera": self.camera.describe(),
             "segmenter": getattr(self.segmenter, "name", type(self.segmenter).__name__),
             "segment_backends": list(SEGMENT_BACKENDS),
-            "capture_root": str(self.store.root),
             "seq": seq,
             "fps": round(self.fps(), 2),
             "frames_read": self.frames_read,
@@ -821,26 +822,6 @@ class ViewerApp:
         self.mask_seq = 0
         return {"ok": True}
 
-    def capture(self, name: str, include_mask: bool = True) -> dict:
-        if include_mask and self.mask is not None and self.mask_frame is not None:
-            frame, mask, feats = self.mask_frame, self.mask, self.features
-        else:
-            _seq, frame = self.latest()
-            mask, feats = None, None
-        if frame is None:
-            raise RuntimeError("no frame to capture" + (f" ({self.last_error})" if self.last_error else ""))
-        result = self.store.save(
-            name, frame, mask=mask, features=feats, device=self.camera.describe().get("device", {})
-        )
-        result["with_mask"] = mask is not None
-        self.events.add(
-            "capture", f"capture {name} #{result.get('index', '?')}" + (" +mask" if mask else ""), ok=True
-        )
-        return result
-
-    def captures(self) -> dict:
-        return {"ok": True, "root": str(self.store.root), "sets": self.store.list()}
-
 
 class ViewerHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -891,8 +872,6 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._send(_WEBUI.read_bytes(), "text/html; charset=utf-8")
         elif route == "/api/info":
             self._guarded(self.app.info)
-        elif route == "/api/captures":
-            self._guarded(self.app.captures)
         elif route == "/api/doctor":
             self._guarded(lambda: self.app.doctor(robot=qs.get("robot", ["1"])[0] not in ("0", "false")))
         elif route == "/api/events":
@@ -981,12 +960,6 @@ class ViewerHandler(BaseHTTPRequestHandler):
             )
         elif route == "/api/nearest":
             self._guarded(lambda: self.app.nearest(float(payload.get("near_ratio", 1.2))))
-        elif route == "/api/capture":
-            self._guarded(
-                lambda: self.app.capture(
-                    str(payload.get("name", "object")), bool(payload.get("include_mask", True))
-                )
-            )
         elif route == "/api/clear":
             self._guarded(self.app.clear)
         elif route == "/api/robot/state":
@@ -1166,7 +1139,6 @@ def serve(
     camera: RgbdCamera,
     *,
     config: PerceptionConfig | None = None,
-    capture_root: str = DEFAULT_CAPTURE_ROOT,
     bind: str = "127.0.0.1",
     port: int = DEFAULT_PORT,
     open_browser: bool = True,
@@ -1178,7 +1150,7 @@ def serve(
     ``demo`` opens the browser on the demo view (``/?demo=1``: one picture,
     four buttons, one light; the header's *Developer view* toggles back).
     ``views`` are the extra webcam viewpoints (:mod:`perception.views`)."""
-    app = ViewerApp(camera, config=config, store=CaptureStore(Path(capture_root)), robot=robot, views=views)
+    app = ViewerApp(camera, config=config, robot=robot, views=views)
     server = ThreadingHTTPServer((bind, port), ViewerHandler)
     server.daemon_threads = True
     server.app = app  # type: ignore[attr-defined]
@@ -1193,7 +1165,8 @@ def serve(
         else "robot: off"
     )
     print(
-        f"perception gui -> {url}   (camera: {kind}, {robot_desc}, captures: {capture_root}, Ctrl-C to stop)"
+        f"perception gui -> {url}   (camera: {kind}, {robot_desc}, "
+        f"snapshots: {DEFAULT_SNAPSHOT_DIR}, Ctrl-C to stop)"
     )
     if bind not in ("127.0.0.1", "localhost", "::1"):
         print(f"WARNING: bound to {bind} with no authentication — only do this on a trusted cell network.")
@@ -1409,9 +1382,6 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="SAM checkpoint id for the sam backend (default: $PERCEPTION_SAM_MODEL)",
     )
-    ap.add_argument(
-        "--out", default=DEFAULT_CAPTURE_ROOT, help=f"capture root (default: {DEFAULT_CAPTURE_ROOT}/)"
-    )
     ap.add_argument("--bind", default="127.0.0.1", help="interface to bind (default: loopback only)")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT})")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
@@ -1440,7 +1410,6 @@ def main(argv: list[str] | None = None) -> int:
     serve(
         camera_from_args(args, config),
         config=config,
-        capture_root=args.out,
         bind=args.bind,
         port=args.port,
         open_browser=not args.no_browser,
