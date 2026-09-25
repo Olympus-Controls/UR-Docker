@@ -152,11 +152,15 @@ def platform_hint(exc: BaseException) -> str:
         or "Operation not permitted" in text
         or "Input/output error" in text
         or "no frame within" in text
+        or "stalled" in text
     ):
         return (
-            "macOS camera permission: the app that launched the cockpit (Terminal, iTerm) must be "
-            "allowed under System Settings → Privacy & Security → Camera. An SSH session is denied "
-            "without a prompt — launch the cockpit from a local terminal."
+            "macOS camera permission (TCC): ffmpeg opened the device but no frame ever came — the "
+            "camera is withheld from the process tree that launched the cockpit. An SSH session "
+            "(even with sudo) is denied without a prompt; launch the cockpit from a Terminal window "
+            "on the Mac itself (Screen Sharing counts) and allow it once under System Settings → "
+            "Privacy & Security → Camera. `/usr/bin/log show --last 5m --predicate "
+            "'eventMessage CONTAINS \"kTCCServiceCamera\"'` shows the decision."
         )
     if "Cannot open" in text or "No such file" in text or "not found" in text:
         return (

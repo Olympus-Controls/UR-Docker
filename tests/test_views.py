@@ -216,3 +216,13 @@ def test_no_views_means_no_view_route_and_empty_list(tmp_path):
     assert app.info()["views"] == []
     with pytest.raises(IndexError):
         app.view_frame(0, None, 0.1)
+
+
+def test_stall_hint_names_tcc_on_macos(monkeypatch):
+    from perception.views import platform_hint
+
+    monkeypatch.setattr("perception.views.sys.platform", "darwin")
+    hint = platform_hint(ViewError("stalled from 'HD Pro Webcam C920': nv12; 0rgb; bgr0"))
+    assert "TCC" in hint and "SSH" in hint and "Screen Sharing" in hint
+    monkeypatch.setattr("perception.views.sys.platform", "linux")
+    assert platform_hint(ViewError("stalled from '/dev/video0'")) == ""
