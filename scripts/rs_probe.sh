@@ -8,8 +8,9 @@
 # Needs root on macOS (libusb must take the camera from Apple's UVC driver);
 # it re-execs itself under sudo. No browser or SSH tunnel needed.
 #
-#   usage: scripts/rs_probe.sh [--port N] [--samples N] [--interval S] [--single] [--fake]
-#   (--fake drives the synthetic camera instead — no root, no hardware; a self-test)
+#   usage: scripts/rs_probe.sh [--port N] [--samples N] [--interval S] [--single] [--fake] [--lean]
+#   (--fake drives the synthetic camera instead — no root, no hardware; a self-test;
+#    --lean opens the camera with the fewest USB handle opens — `perception gui --rs-lean`)
 set -euo pipefail
 
 PORT=7621
@@ -17,6 +18,7 @@ SAMPLES=4
 INTERVAL=8
 SINGLE=0
 FAKE=0
+LEAN=0
 RESULT_first=""
 RESULT_reopen=""
 while [ $# -gt 0 ]; do
@@ -26,7 +28,8 @@ while [ $# -gt 0 ]; do
     --interval) INTERVAL="$2"; shift 2 ;;
     --single) SINGLE=1; shift ;;
     --fake) FAKE=1; shift ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    --lean) LEAN=1; shift ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -35,10 +38,12 @@ if [ "$FAKE" = 0 ] && [ "$(uname)" = "Darwin" ] && [ "$(id -u)" -ne 0 ]; then
   echo "re-running under sudo (macOS needs root to open the camera)" >&2
   SUDO_ARGS=(--port "$PORT" --samples "$SAMPLES" --interval "$INTERVAL")
   [ "$SINGLE" = 1 ] && SUDO_ARGS+=(--single)
+  [ "$LEAN" = 1 ] && SUDO_ARGS+=(--lean)
   exec sudo "$0" "${SUDO_ARGS[@]}"
 fi
 GUI_ARGS=(gui --no-browser --port "$PORT")
 [ "$FAKE" = 1 ] && GUI_ARGS+=(--fake)
+[ "$LEAN" = 1 ] && GUI_ARGS+=(--rs-lean)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -x "$ROOT/.venv/bin/perception" ]; then

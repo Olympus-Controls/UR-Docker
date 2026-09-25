@@ -62,6 +62,7 @@ INFO_USB_TYPE, INFO_PRODUCT_LINE = 9, 10
 EXTENSION_DEPTH_SENSOR = 7
 # rs2_option (rs_option.h): sensor + processing-block options we touch.
 OPTION_VISUAL_PRESET, OPTION_LASER_POWER, OPTION_EMITTER_ENABLED = 12, 13, 18
+OPTION_GLOBAL_TIME_ENABLED = 53  # host<->device clock fit; polls the hardware monitor while streaming
 OPTION_MIN_DISTANCE, OPTION_MAX_DISTANCE = 33, 34
 OPTION_FILTER_MAGNITUDE, OPTION_FILTER_SMOOTH_ALPHA, OPTION_FILTER_SMOOTH_DELTA = 36, 37, 38
 OPTION_HOLES_FILL = 39  # hole-filling mode on the hole filter; *persistency index* on the temporal filter
@@ -498,6 +499,25 @@ class Api:
 
     def delete_sensor(self, sensor) -> None:
         self.lib.rs2_delete_sensor(sensor)
+
+    def sensors(self, dev) -> list[tuple[str, Any]]:
+        """``(name, handle)`` for every sensor of ``dev``; release each handle
+        with :meth:`delete_sensor`."""
+        out: list[tuple[str, Any]] = []
+        sensors = self._call("rs2_query_sensors", dev)
+        try:
+            for i in range(self._call("rs2_get_sensors_count", sensors)):
+                sensor = self._call("rs2_create_sensor", sensors, i)
+                name = f"sensor {i}"
+                try:
+                    raw = self._call("rs2_get_sensor_info", sensor, INFO_NAME)
+                    name = raw.decode(errors="replace") if raw else name
+                except RealSenseError:
+                    pass
+                out.append((name, sensor))
+        finally:
+            self.lib.rs2_delete_sensor_list(sensors)
+        return out
 
     def depth_scale(self, dev) -> float | None:
         """Metres per depth unit from the device's depth sensor (None if none)."""
@@ -1017,6 +1037,17 @@ class RealSenseCamera:
     is ``None``, runs through :class:`DepthFilters` before alignment;
     ``tuning`` (:class:`DepthTuning`, or ``None`` to leave the sensor alone)
     is applied at open. ``api`` lets tests inject a fake SDK.
+
+    ``lean`` is the fewest-USB-handles open: no USB-type probe, no stream-mode
+    enumeration (the configured mode is requested as is), no preset / laser
+    writes, and ``RS2_OPTION_GLOBAL_TIME_ENABLED`` switched off on every
+    sensor right after the pipeline starts. On macOS libusb's root-only driver
+    detach resets the camera on *every* handle open and Apple's ``UVCAssistant``
+    re-claims it each time (2026-09-25: 43 resets in one start, the stream
+    dying after 2 frames), and the SDK keeps opening handles after streaming
+    begins — hardware-monitor polling for the global-time fit, the preset and
+    laser writes. The lean open removes every one of ours; whether the SDK's
+    remaining opens still lose the race is what a hardware run decides.
     """
 
     width: int = DEFAULT_DEPTH_WIDTH
@@ -1029,6 +1060,7 @@ class RealSenseCamera:
     filters: DepthFilters | None = DEFAULT_DEPTH_FILTERS
     tuning: DepthTuning | None = DEFAULT_DEPTH_TUNING
     infrared: bool = False  # also stream the left IR imager (RgbdFrame.extra["ir"]) — unverified on hardware
+    lean: bool = False  # fewest handle opens (macOS experiment; see the class docstring)
     timeout_ms: int = 5000
     log_severity: str = "error"
     library: str | None = None
@@ -1040,6 +1072,7 @@ class RealSenseCamera:
     effective_fps: int | None = field(default=None, init=False)
     negotiated: str | None = field(default=None, init=False)  # why open() changed the requested mode
     tuning_applied: dict = field(default_factory=dict, init=False)  # filled on the first read()
+    global_time_off: dict = field(default_factory=dict, init=False)  # per sensor, lean open only
     extrinsics_depth_to_color: dict | None = field(default=None, init=False)
     _tuning_pending: bool = field(default=False, init=False, repr=False)
     _ctx: Any = field(default=None, init=False, repr=False)
@@ -1058,9 +1091,14 @@ class RealSenseCamera:
         self.api = api
         api.log_to_console(self.log_severity)
         self._ctx = api.context()
+        self.global_time_off = {}
         try:
-            self.effective_fps = self._choose_fps(api)
-            self._negotiate(api)
+            if self.lean:
+                self.effective_fps = int(self.fps or 30)
+                self.negotiated = None
+            else:
+                self.effective_fps = self._choose_fps(api)
+                self._negotiate(api)
             start_kwargs: dict = {}
             if self.infrared:
                 start_kwargs["infrared"] = True
@@ -1080,10 +1118,12 @@ class RealSenseCamera:
                 self.depth_scale = api.depth_scale(dev)
                 if self.depth_scale is None:
                     raise RealSenseError("device has no depth sensor")
+                if self.lean:
+                    self.global_time_off = self._disable_global_time(api, dev)
             finally:
                 api.delete_device(dev)
-            self.tuning_applied = {}
-            self._tuning_pending = self.tuning is not None
+            self.tuning_applied = {"skipped": "lean open"} if self.lean and self.tuning is not None else {}
+            self._tuning_pending = self.tuning is not None and not self.lean
             self.intrinsics = {}
             for sp in api.profile_streams(self._profile):
                 key = {STREAM_DEPTH: "depth", STREAM_COLOR: "color", STREAM_INFRARED: "infrared"}.get(
@@ -1145,6 +1185,29 @@ class RealSenseCamera:
                     applied[name] = {"ok": False, "error": str(exc)}
         finally:
             api.delete_sensor(sensor)
+        return applied
+
+    def _disable_global_time(self, api, dev) -> dict:
+        """Switch ``RS2_OPTION_GLOBAL_TIME_ENABLED`` off on every sensor of
+        ``dev``; ``{sensor name: {ok, error?}}``. Lean open only: with it on,
+        the SDK polls the hardware monitor for its host<->device clock fit
+        after streaming starts, and on macOS each such handle open resets the
+        camera. Runs right after ``rs2_pipeline_start`` on the pipeline's own
+        device — the C API offers no earlier hook on that object, and an
+        option written on a separately created device would not carry over
+        (and would itself be one more handle open)."""
+        applied: dict[str, dict] = {}
+        for name, sensor in api.sensors(dev):
+            try:
+                if api.supports_option(sensor, OPTION_GLOBAL_TIME_ENABLED):
+                    api.set_option(sensor, OPTION_GLOBAL_TIME_ENABLED, 0.0)
+                    applied[name] = {"ok": True}
+                else:
+                    applied[name] = {"ok": False, "error": "unsupported by this sensor"}
+            except RealSenseError as exc:
+                applied[name] = {"ok": False, "error": str(exc)}
+            finally:
+                api.delete_sensor(sensor)
         return applied
 
     def _negotiate(self, api) -> None:
@@ -1304,6 +1367,8 @@ class RealSenseCamera:
                 "tuning_applied": self.tuning_applied,
             },
             "negotiated": self.negotiated,
+            "lean": self.lean,
+            "global_time_off": self.global_time_off,
             "depth_scale_m": self.depth_scale,
             "infrared": self.infrared,
             "intrinsics": {k: v.as_dict() for k, v in self.intrinsics.items()},
@@ -1476,9 +1541,11 @@ def open_camera(
     depth_height: int = DEFAULT_DEPTH_HEIGHT,
     filters: DepthFilters | None = DEFAULT_DEPTH_FILTERS,
     tuning: DepthTuning | None = DEFAULT_DEPTH_TUNING,
+    lean: bool = False,
 ) -> RgbdCamera:
     """Factory used by the CLI/viewer: a real D4xx, or the synthetic stand-in.
-    ``width``/``height`` = the colour size; ``None`` follows the depth size."""
+    ``width``/``height`` = the colour size; ``None`` follows the depth size.
+    ``lean`` = :attr:`RealSenseCamera.lean` (fewest USB handle opens)."""
     width = width or depth_width
     height = height or depth_height
     if fake:
@@ -1494,6 +1561,7 @@ def open_camera(
         depth_height=depth_height,
         filters=filters,
         tuning=tuning,
+        lean=lean,
     )
 
 

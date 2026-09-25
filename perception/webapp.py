@@ -1339,6 +1339,12 @@ def add_camera_args(ap) -> None:
         metavar="MW",
         help="projector power in mW, or max|none (default: $PERCEPTION_RS_LASER_POWER, max)",
     )
+    ap.add_argument(
+        "--rs-lean",
+        action="store_true",
+        help="fewest USB handle opens at start: no USB-type probe or mode enumeration, no preset/laser "
+        "writes, global time off (or PERCEPTION_RS_LEAN=1; the macOS claim-race experiment)",
+    )
     ap.add_argument("--library", default=None, help="path to librealsense2 (default: $REALSENSE_LIB / auto)")
 
 
@@ -1460,6 +1466,7 @@ def camera_from_args(args, config: PerceptionConfig) -> RgbdCamera:
         depth_height=depth_h,
         filters=DEFAULT_DEPTH_FILTERS if filters_on else None,
         tuning=tuning,
+        lean=bool(getattr(args, "rs_lean", False)) or config.rs_lean,
     )
 
 

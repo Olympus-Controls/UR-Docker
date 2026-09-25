@@ -58,6 +58,10 @@ DEFAULT_RS_FILTERS = True
 # as configured) and projector power ("max", "none", or mW).
 DEFAULT_RS_PRESET = "high_accuracy"
 DEFAULT_RS_LASER_POWER = "max"
+# Lean open: the fewest USB handle opens per start (no USB-type probe, no mode
+# enumeration, no preset/laser writes, global time off). A macOS experiment —
+# see perception.realsense.RealSenseCamera.lean.
+DEFAULT_RS_LEAN = False
 
 # The stub depth estimator emits a normalized 0..1 map; near/far scale it into
 # metres so downstream consumers always see physical units. These bracket a
@@ -141,6 +145,7 @@ class PerceptionConfig:
     rs_filters: bool = DEFAULT_RS_FILTERS
     rs_preset: str = DEFAULT_RS_PRESET
     rs_laser_power: str = DEFAULT_RS_LASER_POWER
+    rs_lean: bool = DEFAULT_RS_LEAN
 
     @classmethod
     def from_env(cls, **overrides) -> PerceptionConfig:
@@ -171,6 +176,7 @@ class PerceptionConfig:
             "rs_filters": _env_bool("PERCEPTION_RS_FILTERS", DEFAULT_RS_FILTERS),
             "rs_preset": _env_str("PERCEPTION_RS_PRESET", DEFAULT_RS_PRESET),
             "rs_laser_power": _env_str("PERCEPTION_RS_LASER_POWER", DEFAULT_RS_LASER_POWER),
+            "rs_lean": _env_bool("PERCEPTION_RS_LEAN", DEFAULT_RS_LEAN),
         }
         values.update(overrides)
         return cls(**values)  # type: ignore[arg-type]

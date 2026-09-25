@@ -17,6 +17,7 @@ from perception.realsense import (
     OPTION_EMITTER_ENABLED,
     OPTION_FILTER_MAGNITUDE,
     OPTION_FILTER_SMOOTH_ALPHA,
+    OPTION_GLOBAL_TIME_ENABLED,
     OPTION_HOLES_FILL,
     OPTION_LASER_POWER,
     OPTION_MIN_DISTANCE,
@@ -85,6 +86,7 @@ class FakeApi:
         self.modes = modes  # None = "enumeration says nothing" (the request stands)
         self.fail_modes = fail_modes
         self.options: dict[str, dict[int, float]] = {}  # handle -> {option: value}
+        self.device_queries = 0  # list_devices() calls (the USB-type probe)
 
     def _take(self, kind):
         self.live[kind] = self.live.get(kind, 0) + 1
@@ -111,6 +113,7 @@ class FakeApi:
 
     def list_devices(self, ctx):
         assert ctx == self._ctx, "enumeration must use the shared context"
+        self.device_queries += 1
         return [self.device_info(None)]
 
     def stream_modes(self, ctx, serial=None):
@@ -149,6 +152,10 @@ class FakeApi:
 
     def delete_sensor(self, sensor):
         self._give("sensor")
+
+    def sensors(self, dev):
+        names = ("RGB Camera",) if self.no_depth_sensor else ("Stereo Module", "RGB Camera")
+        return [(name, self._take("sensor")) for name in names]
 
     def supports_option(self, handle, option):
         return option not in self.unsupported
@@ -700,3 +707,52 @@ def test_depth_resolution_is_independent_of_colour():
     follows = open_camera(fake=False, depth_width=1280, depth_height=720)
     assert (follows.width, follows.height) == (1280, 720)  # colour follows depth unless given
     assert (RealSenseCamera().width, RealSenseCamera().depth_width) == (848, 848)
+
+
+def test_lean_open_makes_no_extra_handle_opens_and_turns_global_time_off(capsys):
+    """The macOS claim-race experiment: a lean open never probes the USB type,
+    never enumerates stream modes, never writes the preset/laser, and switches
+    global time off on every sensor before the first frame — the requested
+    mode goes to the SDK as is (even one this USB 2 camera would renegotiate)."""
+    api = FakeApi(usb_type="2.1", modes=USB2_MODES)
+    with RealSenseCamera(**REQUEST, lean=True, api=api) as cam:
+        assert api.device_queries == 0
+        assert not any(s.startswith("modes:") for s in api.log)
+        assert cam.effective_fps == 30 and cam.negotiated is None
+        assert "start:848x480@30:None" in api.log
+        assert cam.global_time_off == {"Stereo Module": {"ok": True}, "RGB Camera": {"ok": True}}
+        assert [s for s in api.log if s.startswith("set:sensor")] == [
+            "set:sensor#1:53=0",
+            "set:sensor#2:53=0",
+        ] and OPTION_GLOBAL_TIME_ENABLED == 53
+        cam.read()  # the first frameset would normally trigger the tuning writes
+        assert cam.tuning_applied == {"skipped": "lean open"}
+        assert not any(s.startswith("set:sensor") and ":53=" not in s for s in api.log)
+        desc = cam.describe()
+        assert desc["lean"] is True and desc["global_time_off"] == cam.global_time_off
+        assert desc["depth"]["tuning_applied"] == {"skipped": "lean open"}
+    assert balanced(api)
+    assert capsys.readouterr().err == ""
+
+
+def test_lean_open_reports_a_refused_or_unsupported_global_time_and_keeps_going():
+    api = FakeApi(refuse=frozenset({OPTION_GLOBAL_TIME_ENABLED}))
+    with RealSenseCamera(width=64, height=48, lean=True, api=api) as cam:
+        assert all(not v["ok"] and "refused" in v["error"] for v in cam.global_time_off.values())
+        cam.read()
+    assert balanced(api)
+    api = FakeApi(unsupported=frozenset({OPTION_GLOBAL_TIME_ENABLED}))
+    with RealSenseCamera(width=64, height=48, lean=True, api=api) as cam:
+        assert all(
+            v == {"ok": False, "error": "unsupported by this sensor"} for v in cam.global_time_off.values()
+        )
+    assert balanced(api)
+
+
+def test_default_open_is_unchanged_by_the_lean_field():
+    api = FakeApi(usb_type="2.1", modes=USB2_MODES)
+    with RealSenseCamera(**REQUEST, api=api) as cam:
+        assert cam.lean is False and cam.global_time_off == {} and cam.negotiated
+        assert api.device_queries >= 1 and any(s.startswith("modes:") for s in api.log)
+        assert not any(s.startswith("set:sensor") for s in api.log)
+    assert balanced(api)
