@@ -190,3 +190,20 @@ def test_off_surface_candidates_are_dropped():
     ]
     two = [mk(0, -0.27), mk(1, -0.10)]
     assert reject_off_surface(two) == two  # too few to vote
+
+
+def test_cli_parser_carries_every_option_the_runner_reads():
+    """Every attribute run_pick_cycle reads must exist on the parsed namespace —
+    a missing add_argument crashed the command on start once (2026-09-25)."""
+    import argparse
+    import inspect
+    import re
+
+    from perception.pickcycle import add_pick_cycle_args, run_pick_cycle
+
+    ap = argparse.ArgumentParser()
+    add_pick_cycle_args(ap)
+    ns = ap.parse_args(["--dry-run"])
+    used = set(re.findall(r"args\.([a-z_]+)", inspect.getsource(run_pick_cycle)))
+    missing = sorted(a for a in used if not hasattr(ns, a))
+    assert not missing, missing

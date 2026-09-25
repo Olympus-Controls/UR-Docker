@@ -852,6 +852,12 @@ def add_pick_cycle_args(ap) -> None:
     ap.add_argument(
         "--min-radius-m", type=float, default=0.0, help="skip blocks closer than this to the base column"
     )
+    ap.add_argument(
+        "--max-radius-m",
+        type=float,
+        default=0.0,
+        help="skip blocks farther than this (default: reach − 50 mm)",
+    )
     ap.add_argument("--velocity", type=float, default=0.25, help="transit speed m/s (default 0.25)")
     ap.add_argument("--dry-run", action="store_true", help="survey and plan, send no motion")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
