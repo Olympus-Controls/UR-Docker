@@ -315,7 +315,45 @@ landing on the object after applying.
 | stream stalls after a while | USB-C cable too long / hub | RealSense is picky: ≤ 2 m active-free cable, direct port |
 | depth readout flickers by mm–cm on a static scene | raw stereo noise (grows with distance²); or the filters were turned off | leave the defaults on (see *Depth quality*); check `/api/info` → `camera.depth.filters` is non-empty and `tuning_applied` says `ok`; get the camera closer to the work |
 | colour panel is black (mean RGB 0,0,0), depth fine, room lit, RGB options at factory (`rs-info --options`) | depth and colour streaming at **different resolutions** (seen with 848×480 depth + 640×480 colour on a D435, fw 5.12.7.100) | keep them equal — the default now does; if you pass `--width/--height`, pass a matching `--depth-res`. The hardware test asserts the colour frame isn't black. |
+| every hover lands centimetres off although `PERCEPTION_T_FLANGE_CAMERA` looks plausible | the hand-eye is a seed (bracket nominal, or an old solve rotated after the bracket was re-clocked); 2026-09-25 the rotated 09-23 solve was 5-10 cm wrong | re-solve; with nothing to touch, use the orbit calibration (section below) |
+| no depth on the part under the fingers at hover height; `locate` under-estimates its top | the camera is inside the D435's ~0.2 m minimum range whenever the fingertips are within ~40 mm of the part | measure from >= 0.25 m, take the top face as the nearest 3-D plane (not the blob's median depth), then descend on that height |
+| a straight descent puts a fingertip on the part's edge and protective-stops | the tool axis was 12 deg off vertical, so 180 mm of gripper puts the fingertips ~38 mm sideways of the flange | target the fingertips: flange = tip - R_flange*(0,0,L), L = flange-to-fingertip (Hand-E 157 mm + 6 mm adapter) |
 | a view panel says `Input/output error` / `not permitted`, or ffmpeg opens nothing, while `ffmpeg -list_devices` lists the webcam | macOS TCC: camera access is granted per *launching* app; an SSH session (`sshd-session` is the responsible process) is denied **without a prompt** (`tccd: Policy disallows prompt … kTCCServiceCamera denied`, 2026-09-25) | launch the cockpit from a local Terminal/iTerm (allow it once under Privacy & Security → Camera); the RealSense is unaffected (libusb, not AVFoundation) |
 | `PermissionError: captures/snapshots` from a non-root cockpit | an earlier `sudo` run created `captures/` as root | `sudo chown -R $USER captures` |
 | first open of a process never delivers a frame, re-opens in the same process do | sensor option writes landed between pipeline start and the first frameset (fw 5.12.7.100, macOS libusb backend) | fixed — `DepthTuning` is applied on the first `read()`; if you add sensor writes, put them after a frameset has arrived (`tests/test_realsense.py::test_tuning_waits_for_the_first_frameset`) |
 | `Couldn't resolve requests` / pipeline start fails | the requested mode isn't on the camera's list *and* no same-size pair could replace it (negotiation only steps in when both sensors share a size at or below the requested rate) | `sudo rs-enumerate-devices` to see what's offered; `--depth-res` / `--width/--height` / `--rs-fps` to a listed pair |
+
+
+## Hand-eye without a mark (orbit calibration)
+
+`CalibrationSession` solves the mark jointly when none was recorded
+(`MIN_VIEWS_WITHOUT_MARK`). Used on 2026-09-25 with a Hand-E on the flange, so
+nothing could touch a mark: a foam block's top-face centre is the mark, the
+wrist orbits it, and every view is a click on that centre through
+`POST /api/cal/view`. What made it converge:
+
+- **Range diversity.** Views at one range leave the camera offset and the mark
+  trading off: three seeds gave three answers with the same residual. Use
+  three ranges (0.2 / 0.3 / 0.4 m) plus tilts of 15 deg and yaws of 30 deg
+  about the mark, and lateral shifts.
+- **The click is the top face's 3-D centroid** (plane fit, points within 5 mm),
+  not the nearest white pixels, which bias toward the near edge under tilt.
+- **Track the block by identity.** Predict the mark's pixel from the current
+  solve and reject any candidate whose top-face point is more than 40 mm from
+  it; a neighbouring block sneaking into the set is what a 60 mm residual means.
+- **Trim.** Drop views above ~9 mm residual and re-solve; the UR3e solve went
+  from 9.3 mm over 23 views to 4.4 mm over 16 with no warnings.
+
+Then `POST /api/cal/apply` puts it in force and saves `handeye_<cell>.json`;
+paste the `env_line` into the cell file.
+
+## Picking with the Hand-E
+
+The Robotiq URCap daemon speaks on the controller's loopback only
+(`127.0.0.1:63352`), so `urctl gripper` / `ur_gripper` / `POST /api/robot/gripper`
+drive it from URScript over Primary. A pick that worked on 2026-09-25: measure
+the block from >= 0.25 m, hover with the **fingertips** 40 mm above its top,
+descend to the top level and check both webcam views for the block between the
+fingers, descend 15 mm more, close (`OBJ` 2 = held, `POS` 114 = 27.6 mm opening
+on a 27 mm block), lift. The webcams are the arbiter at every step; the wrist
+camera is blind that close.
