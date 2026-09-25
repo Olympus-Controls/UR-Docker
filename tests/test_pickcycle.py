@@ -13,10 +13,12 @@ import pytest
 from perception.config import PerceptionConfig
 from perception.frame import Frame
 from perception.pickcycle import (
+    Block,
     Cockpit,
     PickCycle,
     grasp_yaw_deg,
     plane_axes_xy,
+    reject_off_surface,
     tip_pose,
     top_face,
     white_blobs,
@@ -73,12 +75,26 @@ def test_plane_axes_and_grasp_yaw():
     ax = plane_axes_xy(pts)
     assert ax["theta"] == pytest.approx(0.3, abs=0.02)
     assert ax["major_m"] > ax["minor_m"] > 0
-    # tool pointing down (Rx = pi): flange X points along base +X → a minor axis at 30° needs +30°
-    flange = [0.3, 0.2, 0.1, math.pi, 0.0, 0.0]
-    assert grasp_yaw_deg(flange, math.radians(30)) == pytest.approx(30.0, abs=1e-6)
-    assert grasp_yaw_deg(flange, math.radians(120)) == pytest.approx(
-        -60.0, abs=1e-6
-    )  # the other sense, smaller turn
+    # The invariant that matters: after tip_pose applies the yaw, the finger axis
+    # heads along the minor axis (either sense) — for a tool pointing down, tilted,
+    # and for either finger axis.
+    down = [0.3, 0.2, 0.1, math.pi, 0.0, 0.0]
+    tilted = [
+        0.3,
+        0.2,
+        0.1,
+        *Transform.from_pose(down).compose(Transform.from_pose([0, 0, 0, 0.2, -0.1, 0.4])).to_pose()[3:],
+    ]
+    for flange in (down, tilted):
+        for axis, vec in (("x", (1.0, 0.0, 0.0)), ("y", (0.0, 1.0, 0.0))):
+            for minor_deg in (0, 30, 75, 120, 170, -50):
+                yaw = grasp_yaw_deg(flange, math.radians(minor_deg), axis)
+                assert -90 <= yaw <= 90
+                pose = tip_pose([0.3, 0.2, -0.1], flange, 0.163, yaw)
+                fa = Transform.from_pose(pose).rotate(vec)
+                heading = math.degrees(math.atan2(fa[1], fa[0]))
+                err = (heading - minor_deg + 90.0) % 180.0 - 90.0
+                assert abs(err) < 3.0, (axis, minor_deg, yaw, heading)
 
 
 def test_tip_pose_places_the_fingertips_not_the_flange():
@@ -162,3 +178,15 @@ def test_dry_run_survey_and_cycle_through_a_cockpit(cockpit):
     assert out["ok"] and [r["stage"] for r in out["results"]] == ["replaced", "dropped"]
     assert any("closing" in ev["text"] for ev in cycle.log) and cycle.log[-1]["text"] == "Done"
     assert json.dumps(out, default=str)
+
+
+def test_off_surface_candidates_are_dropped():
+    mk = lambda i, z: Block(i, [0.1 * i, 0.2, z], 0.0, 0.045, 0.028, (0, 0), 500)  # noqa: E731
+    kept = reject_off_surface([mk(0, -0.27), mk(1, -0.20), mk(2, -0.275), mk(3, -0.268)])
+    assert [b.centre_base[2] for b in kept] == [-0.27, -0.275, -0.268] and [b.index for b in kept] == [
+        0,
+        1,
+        2,
+    ]
+    two = [mk(0, -0.27), mk(1, -0.10)]
+    assert reject_off_surface(two) == two  # too few to vote

@@ -114,10 +114,11 @@ def top_face(
                 if d:
                     z = d * scale
                     pts.append(((x - K["ppx"]) * z / K["fx"], (y - K["ppy"]) * z / K["fy"], z))
-    if len(pts) < 60:
+    if len(pts) < 25:
         return None
     zmin = min(p[2] for p in pts)
     sel = [p for p in pts if p[2] <= zmin + 0.015]
+    seed = list(sel)
     normal = [0.0, 0.0, -1.0]
     for _ in range(3):
         c = [sum(p[k] for p in sel) / len(sel) for k in range(3)]
@@ -131,8 +132,9 @@ def top_face(
         nn = math.sqrt(sum(v * v for v in n)) or 1.0
         normal = [v / nn for v in n]
         sel = [p for p in pts if abs(sum((p[k] - c[k]) * normal[k] for k in range(3))) < 0.007]
-        if len(sel) < 40:
-            return None
+        if len(sel) < 20:
+            sel = seed  # sparse depth on white foam: the nearest points are the top face
+            break
     c = [sum(p[k] for p in sel) / len(sel) for k in range(3)]
     return {"centre": c, "normal": normal, "points": sel, "n": len(sel)}
 
@@ -158,13 +160,20 @@ def plane_axes_xy(points: Sequence[Sequence[float]]) -> dict:
     }
 
 
-def grasp_yaw_deg(flange_pose: Sequence[float], minor_heading: float) -> float:
-    """The smallest rotation about the flange's own Z (degrees) that lines flange X
-    up with ``minor_heading`` (base XY, rad) in either sense — the fingers open
-    along flange X on the Hand-E as mounted here."""
-    fx = Transform.from_pose(flange_pose).rotate((1.0, 0.0, 0.0))
-    heading = math.atan2(fx[1], fx[0])
+def grasp_yaw_deg(flange_pose: Sequence[float], minor_heading: float, finger_axis: str = "y") -> float:
+    """The smallest rotation about the flange's own Z (degrees) that lines the
+    finger travel axis (flange ``finger_axis``, ``"y"`` on the Hand-E as mounted
+    here: the pads run along flange X, so the fingers travel along Y) up with
+    ``minor_heading`` (base XY, rad) in either sense."""
+    ax = (0.0, 1.0, 0.0) if finger_axis == "y" else (1.0, 0.0, 0.0)
+    T = Transform.from_pose(flange_pose)
+    fa = T.rotate(ax)
+    heading = math.atan2(fa[1], fa[0])
     yaw = math.degrees(minor_heading - heading)
+    # The rotation is applied about the flange's own Z. With the tool pointing down,
+    # +Z is base −Z, so a positive turn about it moves base headings the other way.
+    if T.rotate((0.0, 0.0, 1.0))[2] < 0:
+        yaw = -yaw
     return (yaw + 90.0) % 180.0 - 90.0
 
 
@@ -179,6 +188,20 @@ def tip_pose(
     )
     zax = yawed.rotate((0.0, 0.0, 1.0))
     return [tip[i] - zax[i] * tip_m for i in range(3)] + list(yawed.to_pose()[3:])
+
+
+def reject_off_surface(blocks: list, tolerance_m: float = 0.03) -> list:
+    """Blocks lie on one surface: drop any candidate whose top height is more than
+    ``tolerance_m`` from the median of the others (a strap end on the rail, a
+    reflection, a block perched on the frame). Re-indexes the survivors."""
+    if len(blocks) < 3:
+        return blocks
+    zs = sorted(b.centre_base[2] for b in blocks)
+    median = zs[len(zs) // 2]
+    kept = [b for b in blocks if abs(b.centre_base[2] - median) <= tolerance_m]
+    for i, b in enumerate(kept):
+        b.index = i
+    return kept
 
 
 # -- the cockpit client ---------------------------------------------------------------------
@@ -257,12 +280,15 @@ class PickCycle:
     cockpit: Cockpit = field(default_factory=Cockpit)
     tip_m: float = DEFAULT_TIP_M
     hover_mm: float = 40.0
+    look_mm: float = 90.0  # the second look: camera ≥ 0.25 m from the top (D435 range)
     grasp_below_mm: float = 15.0
     lift_mm: float = 25.4
     clear_mm: float = 60.0
     drop_mm: float = 120.0
     velocity: float = 0.06
     force: int = 80
+    stroke_m: float = 0.05  # Hand-E
+    finger_axis: str = "y"  # flange axis the fingers travel along
     dry_run: bool = False
     log: list[dict] = field(default_factory=list)
     t0: float = field(default_factory=time.time)
@@ -349,43 +375,106 @@ class PickCycle:
             tf = top_face(w, h, ch, rgb, depth, hdr["depth_scale_m"], K, b["bbox"])
             if tf is None:
                 continue
-            pts_base = [T_bf.apply(T_fc.apply(p)) for p in tf["points"]]
+            # The depth has holes on white foam; the colour blob is complete. Take the
+            # centre and extents from every white pixel, back-projected at the top face's
+            # depth, and let the depth points only say how far away that face is.
+            z = tf["centre"][2]
+            pts_cam = []
+            for y in range(y0, min(y1, h)):
+                for x in range(x0, min(x1, w)):
+                    i = (y * w + x) * ch
+                    r, g, bb = rgb[i], rgb[i + 1], rgb[i + 2]
+                    if min(r, g, bb) > WHITE_MIN and max(r, g, bb) - min(r, g, bb) < WHITE_CHROMA:
+                        pts_cam.append(((x - K["ppx"]) * z / K["fx"], (y - K["ppy"]) * z / K["fy"], z))
+            pts_base = [T_bf.apply(T_fc.apply(p)) for p in pts_cam]
             ax = plane_axes_xy(pts_base)
-            centre = T_bf.apply(T_fc.apply(tf["centre"]))
+            cx, cy = ax["centre_xy"]
+            centre = [cx, cy, sum(p[2] for p in pts_base) / len(pts_base)]
+            # Orientation from the depth points of the top face itself: the colour blob
+            # also holds the side faces seen at an angle, and they turn the axes.
+            if tf["n"] >= 150:
+                ax_depth = plane_axes_xy([T_bf.apply(T_fc.apply(p)) for p in tf["points"]])
+                ax["theta"] = ax_depth["theta"]
             if ax["major_m"] > 0.07 or ax["minor_m"] > 0.06 or ax["minor_m"] < 0.010:
                 continue  # not a block: a velcro strap (100 x 15 mm), the rail, a speck
             blocks.append(
                 Block(
                     len(blocks),
-                    list(centre),
+                    centre,
                     ax["theta"],
                     ax["major_m"],
                     ax["minor_m"],
                     (b["cx"], b["cy"]),
-                    tf["n"],
+                    len(pts_cam),
                 )
             )
-        return blocks
+        return reject_off_surface(blocks)
+
+    def refine(self, blk: Block, radius_m: float = 0.04) -> Block | None:
+        """Re-detect ``blk`` from the current (closer) pose: the survey candidate whose
+        top centre lies within ``radius_m`` of it, else None."""
+        best = None
+        for cand in self.survey():
+            d = math.hypot(cand.centre_base[0] - blk.centre_base[0], cand.centre_base[1] - blk.centre_base[1])
+            if d < radius_m and (best is None or d < best[0]):
+                best = (d, cand)
+        if best is None:
+            return None
+        cand = best[1]
+        cand.index = blk.index
+        dtheta = abs((math.degrees(cand.theta - blk.theta) + 90.0) % 180.0 - 90.0)
+        if dtheta > 30.0:
+            cand.theta = blk.theta  # the closer look disagrees on orientation: keep the survey's
+            cand.major_m, cand.minor_m = blk.major_m, blk.minor_m
+        return cand
 
     # -- one block --------------------------------------------------------------------
     def cycle_block(self, blk: Block, *, drop: bool = False) -> dict:
         label = f"block {blk.index + 1}"
         fl = self._flange()
-        yaw = grasp_yaw_deg(fl, blk.theta + math.pi / 2)
+        if blk.minor_m > self.stroke_m - 0.006:
+            self.say(
+                f"{label}: short side {blk.minor_m * 1000:.0f} mm is wider than the "
+                f"{self.stroke_m * 1000:.0f} mm stroke — skipping"
+            )
+            return {"block": blk.index, "ok": False, "stage": "stroke"}
+        yaw = grasp_yaw_deg(fl, blk.theta + math.pi / 2, self.finger_axis)
         top = blk.centre_base
         self.say(
             f"{label}: top at {[round(v, 3) for v in top]} m, "
             f"{blk.major_m * 1000:.0f} x {blk.minor_m * 1000:.0f} mm; "
-            f"turning the fingers {yaw:+.0f} deg to close across the short side"
+            f"wrist 3 turns {yaw:+.0f} deg so the fingers close across the short side"
         )
-        hover = tip_pose([top[0], top[1], top[2] + self.hover_mm / 1000.0], fl, self.tip_m, yaw)
-        if not self._ok_after(self._move(hover), f"{label} hover"):
+        # everything below runs along the TOOL axis (the camera's optical axis, tilted with the wrist),
+        # not base Z: hover back along it, descend along it
+        hover0 = tip_pose(top, fl, self.tip_m, yaw)  # tip on the top centre, yawed
+        zax = Transform.from_pose(hover0).rotate((0.0, 0.0, 1.0))  # tool z, pointing into the part
+        along = lambda mm: [hover0[i] - zax[i] * (mm / 1000.0) for i in range(3)] + list(hover0[3:])  # noqa: E731
+        look = along(max(self.hover_mm, self.look_mm))
+        if not self._ok_after(self._move(look), f"{label} hover"):
             return {"block": blk.index, "ok": False, "stage": "hover"}
-        self.say(f"{label}: fingertips {self.hover_mm:.0f} mm above the top, straight down to the edge")
-        edge = tip_pose(top, hover, self.tip_m)
-        if not self._ok_after(self._move(edge, 0.03), f"{label} descent"):
+        time.sleep(0.5)
+        seen = self.refine(blk)
+        if seen is not None:
+            shift = math.hypot(seen.centre_base[0] - top[0], seen.centre_base[1] - top[1]) * 1000
+            blk, top = seen, seen.centre_base
+            yaw = grasp_yaw_deg(self._flange(), blk.theta + math.pi / 2, self.finger_axis)
+            hover0 = tip_pose(top, self._flange(), self.tip_m, yaw)
+            zax = Transform.from_pose(hover0).rotate((0.0, 0.0, 1.0))
+            along = lambda mm: [hover0[i] - zax[i] * (mm / 1000.0) for i in range(3)] + list(hover0[3:])  # noqa: E731
+            self.say(
+                f"{label}: second look from {self.look_mm:.0f} mm — centre moved {shift:.0f} mm, "
+                f"{blk.major_m * 1000:.0f} x {blk.minor_m * 1000:.0f} mm, wrist 3 {yaw:+.0f} deg"
+            )
+        else:
+            self.say(f"{label}: second look did not find it again — using the survey")
+        hover = along(self.hover_mm)
+        if not self._ok_after(self._move(hover, 0.04), f"{label} hover"):
+            return {"block": blk.index, "ok": False, "stage": "hover"}
+        self.say(f"{label}: fingertips {self.hover_mm:.0f} mm off the top along the tool axis, closing in")
+        if not self._ok_after(self._move(along(0.0), 0.03), f"{label} descent"):
             return {"block": blk.index, "ok": False, "stage": "edge"}
-        grasp = tip_pose([top[0], top[1], top[2] - self.grasp_below_mm / 1000.0], hover, self.tip_m)
+        grasp = along(-self.grasp_below_mm)
         if not self._ok_after(self._move(grasp, 0.03), f"{label} grasp descent"):
             return {"block": blk.index, "ok": False, "stage": "grasp"}
         self.say(f"{label}: {self.grasp_below_mm:.0f} mm into the grasp, closing")
@@ -395,21 +484,22 @@ class PickCycle:
                 f"{label}: closed on nothing (POS {(g.get('status') or {}).get('POS')}) — opening, moving on"
             )
             self._gripper("open")
-            self._move([grasp[0], grasp[1], grasp[2] + self.clear_mm / 1000.0, *grasp[3:]])
+            self._move(along(self.clear_mm))
             return {"block": blk.index, "ok": False, "stage": "close", "gripper": g}
         pos = (g.get("status") or {}).get("POS")
-        self.say(f"{label}: held (Robotiq POS {pos})")
+        self.say(
+            f"{label}: held (Robotiq POS {pos}, "
+            f"about {(255 - (pos or 0)) / 255 * self.stroke_m * 1000:.0f} mm)"
+        )
         if drop:
-            up = [grasp[0], grasp[1], grasp[2] + self.drop_mm / 1000.0, *grasp[3:]]
-            if not self._ok_after(self._move(up), f"{label} lift"):
+            if not self._ok_after(self._move(along(self.drop_mm)), f"{label} lift"):
                 self._gripper("open")
                 return {"block": blk.index, "ok": False, "stage": "lift"}
-            self.say(f"{label}: {self.drop_mm:.0f} mm up — dropping it to shuffle")
+            self.say(f"{label}: {self.drop_mm:.0f} mm up the tool axis — dropping it to shuffle")
             self._gripper("open")
             time.sleep(0.5)
             return {"block": blk.index, "ok": True, "stage": "dropped", "pos": pos}
-        up = [grasp[0], grasp[1], grasp[2] + self.lift_mm / 1000.0, *grasp[3:]]
-        if not self._ok_after(self._move(up, 0.03), f"{label} lift"):
+        if not self._ok_after(self._move(along(self.lift_mm), 0.03), f"{label} lift"):
             self._gripper("open")
             return {"block": blk.index, "ok": False, "stage": "lift"}
         self.say(f"{label}: lifted {self.lift_mm:.0f} mm, setting it back down")
@@ -417,7 +507,7 @@ class PickCycle:
         self._move(grasp, 0.03)
         self._gripper("open")
         self.say(f"{label}: released, clearing")
-        self._move([grasp[0], grasp[1], grasp[2] + self.clear_mm / 1000.0, *grasp[3:]])
+        self._move(along(self.clear_mm))
         return {"block": blk.index, "ok": True, "stage": "replaced", "pos": pos}
 
     # -- the whole run ----------------------------------------------------------------
@@ -596,6 +686,18 @@ def add_pick_cycle_args(ap) -> None:
         help="a flange pose [x y z rx ry rz] overlooking the blocks from >= 0.25 m; repeat for several "
         "views, merged by position (default: survey from where the arm is)",
     )
+    ap.add_argument(
+        "--stroke-m",
+        type=float,
+        default=0.05,
+        help="gripper stroke; a block wider than this is skipped (default 0.05)",
+    )
+    ap.add_argument(
+        "--finger-axis",
+        choices=["x", "y"],
+        default="y",
+        help="flange axis the fingers travel along (default y)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="survey and plan, send no motion")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
 
@@ -608,6 +710,8 @@ def run_pick_cycle(args) -> int:
         lift_mm=args.lift_mm,
         drop_mm=args.drop_mm,
         grasp_below_mm=args.grasp_below_mm,
+        stroke_m=args.stroke_m,
+        finger_axis=args.finger_axis,
         dry_run=args.dry_run,
     )
     rec = None

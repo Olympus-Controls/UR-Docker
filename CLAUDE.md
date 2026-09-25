@@ -111,8 +111,10 @@ pass that lets each block go from 120 mm up. A close on nothing opens and moves
 on; a protective stop unlocks, lifts and moves on. It is a client of the running
 cockpit (HTTP, like the MCP tools) and falls back to `urctl gripper` when the
 cockpit predates the gripper route. `--record DIR` saves the three feeds + the
-captioned events for `scripts/pilot/assemble.py`. First run 2026-09-25 on the
-UR3e + Hand-E.
+captioned events for `scripts/pilot/assemble.py`. Hand-E as mounted: the fingers
+travel along flange **Y**; a yaw about the tool Z (pointing down) is the negative
+of the base-heading yaw — `grasp_yaw_deg` handles it and a composed-pose test
+locks it. First runs 2026-09-25 on the UR3e + Hand-E.
 
 **Local GUI (`urctl gui` / `urctl-gui`):** a loopback-only web cockpit
 (`urctl/webapp.py` + `urctl/webui/index.html`, stdlib server, SSE telemetry at
