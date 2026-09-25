@@ -34,6 +34,8 @@ API:
   * ``POST /api/robot/jog``           ``{delta:[dx,dy,dz,drx,dry,drz], velocity?}`` one
                                       relative base-frame nudge (≤ 5 cm / 0.35 rad per axis).
   * ``POST /api/robot/bring_up`` / ``/api/robot/stop`` / ``/api/robot/freedrive`` ``{enable}``
+  * ``POST /api/robot/gripper``       ``{action: status|open|close|move|activate, position?}``
+                                      the Robotiq gripper through its URCap daemon.
   * ``GET  /api/doctor``              the pre-flight report (:mod:`perception.doctor`)
                                       for the robot side; the camera side is this
                                       process's own stream stats.
@@ -629,6 +631,11 @@ class ViewerApp:
         return self._robot_action(
             "freedrive", lambda: link.freedrive(enable), summary=f"freedrive {'on' if enable else 'off'}"
         )
+
+    def robot_gripper(self, action: str, position: int | None = None) -> dict:
+        link = self._link()
+        label = f"gripper {action}" + (f" {position}" if position is not None else "")
+        return self._robot_action("gripper", lambda: link.gripper(action, position), summary=label)
 
     def doctor(self, *, robot: bool = True) -> dict:
         """The pre-flight report for this cockpit's cell. The camera is *this
@@ -1281,6 +1288,13 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._guarded(self.app.robot_stop)
         elif route == "/api/robot/freedrive":
             self._guarded(lambda: self.app.robot_freedrive(bool(payload.get("enable", False))))
+        elif route == "/api/robot/gripper":
+            self._guarded(
+                lambda: self.app.robot_gripper(
+                    str(payload.get("action", "status")),
+                    int(payload["position"]) if payload.get("position") is not None else None,
+                )
+            )
         elif route == "/api/cal/mark":
             self._guarded(self.app.cal_mark)
         elif route == "/api/cal/view":

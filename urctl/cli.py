@@ -331,6 +331,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="seconds to hold freedrive before it releases itself (default 600)",
     )
 
+    gr = sub.add_parser(
+        "gripper", help="Robotiq gripper via its URCap daemon: status/open/close/move/activate"
+    )
+    gr.add_argument("action", choices=["status", "open", "close", "move", "activate"])
+    gr.add_argument("--position", type=int, default=None, help="move target, 0 = open … 255 = closed")
+    gr.add_argument("--speed", type=int, default=255, help="0..255 (default 255)")
+    gr.add_argument("--force", type=int, default=100, help="0..255 (default 100)")
+    gr.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for the motion to settle")
+
     pu = sub.add_parser("popup", help="show a popup on the teach pendant")
     pu.add_argument("text")
 
@@ -531,6 +540,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "freedrive":
         kwargs = {} if args.hold is None else {"hold_s": args.hold}
         return _emit(robot.freedrive(args.state == "on", **kwargs))
+    if args.cmd == "gripper":
+        kwargs = {"speed": args.speed, "force": args.force, "timeout_s": args.timeout}
+        if args.position is not None:
+            kwargs["position"] = args.position
+        return _emit(robot.gripper(args.action, **kwargs))
     if args.cmd == "popup":
         return _emit(robot.popup(args.text))
     if args.cmd == "load":

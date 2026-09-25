@@ -62,6 +62,12 @@ class FakeController:
         self.tcp_offset = [0.0, 0.0, 0.12, 0.0, 0.0, 0.0]
         # Dashboard `get robot model` reply (an e-Series arm reports without the e).
         self.model = "UR10"
+        # Robotiq gripper daemon on the controller's loopback (None = no object in the way).
+        self.gripper_daemon = True
+        self.gripper_pos = 3
+        self.gripper_object: int | None = None  # the position at which the fingers meet something
+        self.gripper_fault = 0
+        self.gripper_sends: list[str] = []
 
     def install(self, monkeypatch) -> FakeController:
         from urctl import transport
@@ -125,6 +131,35 @@ class FakeController:
             lines = [f"urctl/path/leg{i}=[{v}]" for i, v in enumerate(vecs)]
             lines.append(f"urctl/path/done=[{vecs[-1]}]")
             return ("\n".join(lines) + "\n").encode()
+        if "urctl/rq" in body:
+            # The Robotiq daemon round-trip: the script echoes each GET as a marker.
+            self.gripper_sends.append(body)
+            if self.gripper_daemon is False:
+                return (
+                    b"urctl/rq/error=no gripper daemon on 127.0.0.1:63352 (is the Robotiq URCap running?)\n"
+                )
+            m = re.search(r'socket_send_line\("SET POS (\d+)"', body)
+            if m:
+                self.gripper_pos = int(m.group(1))
+                if self.gripper_object is not None and self.gripper_pos > self.gripper_object:
+                    self.gripper_pos = self.gripper_object  # the fingers stop on the object
+            obj = (
+                2
+                if (self.gripper_object is not None and self.gripper_pos == self.gripper_object and m)
+                else 3
+            )
+            st = {
+                "STA": 3,
+                "ACT": 1,
+                "POS": self.gripper_pos,
+                "PRE": self.gripper_pos,
+                "OBJ": obj,
+                "FLT": self.gripper_fault,
+            }
+            # the real daemon answers "VAR value" (UR3e + Hand-E, 2026-09-25: "PRE 000", "FLT 00")
+            return (
+                "".join(f"urctl/rq/{k}={k} {v:02d}\n" for k, v in st.items()) + "urctl/rq/done=1\n"
+            ).encode()
         if "urctl/freedrive" in body:
             # The hold/release programs echo their marker once freedrive flips.
             marker = "urctl/freedrive=on" if "while" in body else "urctl/freedrive=off"
@@ -1342,3 +1377,70 @@ class TestPrimaryBusy:
         with pytest.raises(OSError):
             robot.run_script('textmsg("hi")', capture=True)
         assert not robot.primary.busy
+
+
+class TestGripper:
+    def test_status_reads_the_daemon_and_estimates_the_opening(self, fake):
+        res = Robot(RobotConfig()).gripper("status")
+        assert res["ok"] and res["status"] == {"STA": 3, "ACT": 1, "POS": 3, "PRE": 3, "OBJ": 3, "FLT": 0}
+        assert res["at_position"] and not res["object_detected"] and res["opening_est_mm"] == 49.4
+        body = fake.gripper_sends[-1]
+        assert 'socket_open("127.0.0.1", 63352' in body and "SET" not in body
+        assert body.count("socket_send_line") == 6 and "def urctl_gripper" in body
+
+    def test_close_on_an_object_reports_it_held(self, fake):
+        fake.gripper_object = 140
+        res = Robot(RobotConfig()).gripper("close", force=80)
+        assert res["ok"] and res["object_detected"] and res["status"]["POS"] == 140
+        body = fake.gripper_sends[-1]
+        for line in ('SET SPE 255"', 'SET FOR 80"', 'SET POS 255"', 'SET GTO 1"', 'GET OBJ"'):
+            assert line in body, line
+        assert body.index("SET SPE") < body.index("SET FOR") < body.index("SET POS") < body.index("SET GTO")
+        res = Robot(RobotConfig()).gripper("open")
+        assert (
+            res["ok"] and res["status"]["POS"] == 0 and res["at_position"] and res["opening_est_mm"] == 50.0
+        )
+
+    def test_move_needs_a_position_and_validates_ranges(self, fake):
+        robot = Robot(RobotConfig())
+        with pytest.raises(ValueError, match="position"):
+            robot.gripper("move")
+        with pytest.raises(ValueError):
+            robot.gripper("move", position=300)
+        with pytest.raises(ValueError):
+            robot.gripper("open", speed=999)
+        with pytest.raises(ValueError):
+            robot.gripper("wiggle")
+        assert robot.gripper("move", position=120)["status"]["POS"] == 120
+
+    def test_missing_daemon_and_fault_are_not_ok(self, fake):
+        fake.gripper_daemon = False
+        res = Robot(RobotConfig()).gripper("status")
+        assert not res["ok"] and "no gripper daemon" in res["error"]
+        fake.gripper_daemon, fake.gripper_fault = True, 7
+        res = Robot(RobotConfig()).gripper("open")
+        assert not res["ok"] and "FLT=7" in res["error"]
+
+    def test_activate_waits_for_sta_3(self, fake):
+        res = Robot(RobotConfig()).gripper("activate")
+        body = fake.gripper_sends[-1]
+        assert res["ok"] and 'SET ACT 0"' in body and 'SET ACT 1"' in body and 'GET STA"' in body
+
+    def test_tool_and_dry_run(self, monkeypatch):
+        fake = FakeController().install(monkeypatch)
+        robot = Robot(RobotConfig())
+        assert (
+            urctl_tools.call_tool(robot, "ur_gripper", {"action": "move", "position": 50})["status"]["POS"]
+            == 50
+        )
+        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "ur_gripper")
+        assert schema["input_schema"]["properties"]["action"]["enum"] == [
+            "status",
+            "open",
+            "close",
+            "move",
+            "activate",
+        ]
+        sent = len(fake.gripper_sends)
+        res = Robot(RobotConfig(), dry_run=True).gripper("close")
+        assert res["ok"] and res["dry_run"] and len(fake.gripper_sends) == sent

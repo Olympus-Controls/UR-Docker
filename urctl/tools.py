@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .robot import Robot
+from .robot import GRIPPER_ACTIONS, Robot
 
 # A reusable schema fragment for a 6-element joint vector (radians).
 _JOINTS_SCHEMA = {
@@ -161,6 +161,11 @@ def _h_freedrive(robot: Robot, p: dict) -> dict:
     if p.get("hold_s") is not None:
         kwargs["hold_s"] = float(p["hold_s"])
     return robot.freedrive(p["enable"], **kwargs)
+
+
+def _h_gripper(robot: Robot, p: dict) -> dict:
+    kwargs = {k: p[k] for k in ("position", "speed", "force", "timeout_s") if p.get(k) is not None}
+    return robot.gripper(p["action"], **kwargs)
 
 
 def _h_popup(robot: Robot, p: dict) -> dict:
@@ -394,6 +399,24 @@ TOOLS: list[Tool] = [
             required=["enable"],
         ),
         _h_freedrive,
+    ),
+    Tool(
+        "ur_gripper",
+        "Drive the Robotiq gripper (Hand-E / 2F) on the tool flange through its URCap "
+        "daemon: status, open, close, move (position 0 = fully open … 255 = fully "
+        "closed), or activate. Waits for the motion to settle and returns the status "
+        "readback — object_detected is True when the fingers stopped on something.",
+        _object_schema(
+            {
+                "action": {"type": "string", "enum": list(GRIPPER_ACTIONS)},
+                "position": {"type": "integer", "minimum": 0, "maximum": 255},
+                "speed": {"type": "integer", "minimum": 0, "maximum": 255},
+                "force": {"type": "integer", "minimum": 0, "maximum": 255},
+                "timeout_s": {"type": "number", "minimum": 0.5, "maximum": 30},
+            },
+            required=["action"],
+        ),
+        _h_gripper,
     ),
     Tool(
         "ur_popup",

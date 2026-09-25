@@ -201,6 +201,8 @@
         <button id="bringUpBtn" class="primary" title="power on + brake release (needs Remote)">Bring up</button>
         <button id="stopBtn" class="crit" title="stop the running program / motion">STOP</button>
         <button id="freedriveBtn" title="hand-guide the arm">Freedrive</button>
+        <button id="gripOpenBtn" title="Robotiq gripper: open">Open</button>
+        <button id="gripCloseBtn" title="Robotiq gripper: close (stops on an object)">Close</button>
         <button id="doctorBtn" title="run the pre-flight checks">Doctor</button>
         <label style="margin-left:auto"><input id="livePoll" type="checkbox" checked> live</label>
       </div>
@@ -719,6 +721,8 @@
 
   $('bringUpBtn').onclick = () => pilot('/api/robot/bring_up', {}, 'bring up');
   $('stopBtn').onclick = () => pilot('/api/robot/stop', {}, 'stop');
+  $('gripOpenBtn').onclick = () => pilot('/api/robot/gripper', { action: 'open' }, 'gripper open');
+  $('gripCloseBtn').onclick = async () => { const j = await pilot('/api/robot/gripper', { action: 'close' }, 'gripper close'); if (j && j.ok) toast(j.object_detected ? 'gripper: object held' : 'gripper: closed on nothing', 3000); };
   $('freedriveBtn').onclick = async () => { freedriveOn = !freedriveOn; const j = await pilot('/api/robot/freedrive', { enable: freedriveOn }, `freedrive ${freedriveOn ? 'on' : 'off'}`); if (!j || j.ok === false) freedriveOn = !freedriveOn; $('freedriveBtn').className = freedriveOn ? 'primary' : ''; };
   $('doctorBtn').onclick = doctor; $('checks').onclick = () => { $('checks').hidden = true; };
   document.querySelectorAll('button[data-jog]').forEach(b => b.onclick = () => jog(b.dataset.jog));

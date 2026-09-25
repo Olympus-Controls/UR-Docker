@@ -45,6 +45,12 @@ TCP_LANDING_TOLERANCE = 0.002
 # How long a cockpit/CLI "freedrive on" keeps the arm hand-guidable before the
 # hold program releases it on its own (see :meth:`Robot.freedrive`).
 DEFAULT_FREEDRIVE_HOLD_S = 600.0
+# Robotiq gripper URCap: its daemon serves the ASCII GET/SET protocol on the
+# controller's loopback only (verified on the UR3e + Hand-E, 2026-09-25: closed
+# from the network, open from URScript), so the gripper is driven by a script.
+GRIPPER_DAEMON_HOST, GRIPPER_DAEMON_PORT = "127.0.0.1", 63352
+GRIPPER_ACTIONS = ("status", "open", "close", "move", "activate")
+GRIPPER_STATUS_VARS = ("STA", "ACT", "POS", "PRE", "OBJ", "FLT")
 
 
 def _sanitize_prompt(text: str, *, max_len: int = 200) -> str:
@@ -57,6 +63,22 @@ def _sanitize_prompt(text: str, *, max_len: int = 200) -> str:
     operator-facing text, not a trust boundary.
     """
     return " ".join(text.split()).replace('"', "'")[:max_len]
+
+
+def _parse_gripper_status(captured: list[str]) -> dict[str, int]:
+    """``urctl/rq/VAR=<reply>`` lines → ``{VAR: int}`` (the daemon answers a bare
+    value; a ``VAR value`` form is accepted too — the last integer wins)."""
+    import re
+
+    out: dict[str, int] = {}
+    for line in captured:
+        for var in GRIPPER_STATUS_VARS:
+            tag = f"urctl/rq/{var}="
+            if tag in line:
+                m = re.search(r"(-?\d+)\s*$", line.split(tag, 1)[1].strip())
+                if m:
+                    out[var] = int(m.group(1))
+    return out
 
 
 class Robot:
@@ -812,6 +834,141 @@ class Robot:
         # Disabling is best-effort by design (the program may already be gone):
         # report it ok and let ``confirmed`` say whether the controller echoed.
         return self._log("freedrive", args, ok=confirmed or not enable, result=result)
+
+    # ----- Robotiq gripper ---------------------------------------------------
+
+    def gripper(
+        self,
+        action: str,
+        *,
+        position: int | None = None,
+        speed: int = 255,
+        force: int = 100,
+        timeout_s: float = 5.0,
+    ) -> dict:
+        """Drive a Robotiq gripper (Hand-E / 2F) through its URCap daemon.
+
+        The Robotiq URCap runs a daemon on the controller that speaks a line
+        protocol — ``SET VAR value`` → ``ack``, ``GET VAR`` → the value — on
+        ``127.0.0.1:63352`` (Robotiq's own ``rq_*`` script functions use the
+        same socket). It listens on the loopback only, so this sends one
+        Primary program that opens the socket from *inside* the controller,
+        talks to the daemon, and echoes the answers as ``textmsg`` markers.
+
+        ``action``: ``status`` reads; ``open`` / ``close`` / ``move`` (to
+        ``position`` 0 = fully open … 255 = fully closed) set speed, force and
+        position, trigger the motion (``GTO``) and wait until the gripper
+        reports it stopped (``OBJ`` ≠ 0: 1/2 = contact = an object is held,
+        3 = at the requested position, nothing in the fingers); ``activate``
+        (re)runs the activation cycle and waits for ``STA`` 3. Every call ends
+        with the full status readback; ``ok`` is False when the daemon is
+        missing, a fault (``FLT``) is set, or a move never settled.
+        Protocol from Robotiq's socket example (dof.robotiq.com #2420).
+        """
+        if action not in GRIPPER_ACTIONS:
+            raise ValueError(f"action must be one of {GRIPPER_ACTIONS}, got {action!r}")
+        if action == "open":
+            position = 0
+        elif action == "close":
+            position = 255
+        elif action == "move":
+            if position is None:
+                raise ValueError("move needs position (0 = open … 255 = closed)")
+        if position is not None and not (0 <= int(position) <= 255):
+            raise ValueError("position must be within 0..255")
+        if not (0 <= int(speed) <= 255) or not (0 <= int(force) <= 255):
+            raise ValueError("speed and force must be within 0..255")
+        timeout = max(0.5, min(float(timeout_s), 30.0))
+        args = {"action": action, "speed": int(speed), "force": int(force), "timeout_s": timeout}
+        if position is not None:
+            args["position"] = int(position)
+        if self.dry_run:
+            return self._log("gripper", args, ok=True, result={"reply": "(dry-run)", "status": {}})
+
+        sock = "urctl_rq"
+        get = lambda var: (  # noqa: E731 — one GET round-trip echoed as a marker
+            f'socket_send_line("GET {var}", "{sock}")\n'
+            f'textmsg("urctl/rq/{var}=", socket_read_string("{sock}", timeout=2.0))\n'
+        )
+        set_ = lambda var, val: (  # noqa: E731
+            f'socket_send_line("SET {var} {int(val)}", "{sock}")\n'
+            f'urctl_rq_r = socket_read_string("{sock}", timeout=2.0)\n'
+        )
+        body = (
+            f'if socket_open("{GRIPPER_DAEMON_HOST}", {GRIPPER_DAEMON_PORT}, "{sock}") == False:\n'
+            f'  textmsg("urctl/rq/error=", "no gripper daemon on {GRIPPER_DAEMON_HOST}:{GRIPPER_DAEMON_PORT} '
+            f'(is the Robotiq URCap installed and running?)")\n'
+            "else:\n"
+        )
+        if action == "activate":
+            body += "".join("  " + line for line in (set_("ACT", 0) + set_("ACT", 1)).splitlines(True))
+            body += (
+                "  urctl_rq_t = 0.0\n"
+                f"  while (urctl_rq_t < {timeout:.1f}):\n"
+                f'    socket_send_line("GET STA", "{sock}")\n'
+                f'    urctl_rq_s = socket_read_string("{sock}", timeout=2.0)\n'
+                '    if str_find(urctl_rq_s, "3") >= 0:\n'
+                f"      urctl_rq_t = {timeout:.1f}\n"
+                "    else:\n"
+                "      sleep(0.2)\n"
+                "      urctl_rq_t = urctl_rq_t + 0.2\n"
+                "    end\n"
+                "  end\n"
+            )
+        elif position is not None:
+            moves = set_("SPE", speed) + set_("FOR", force) + set_("POS", position) + set_("GTO", 1)
+            body += "".join("  " + line for line in moves.splitlines(True))
+            body += (
+                "  sleep(0.2)\n"
+                "  urctl_rq_t = 0.0\n"
+                f"  while (urctl_rq_t < {timeout:.1f}):\n"
+                f'    socket_send_line("GET OBJ", "{sock}")\n'
+                f'    urctl_rq_o = socket_read_string("{sock}", timeout=2.0)\n'
+                '    if str_find(urctl_rq_o, "0") < 0:\n'
+                f"      urctl_rq_t = {timeout:.1f}\n"
+                "    else:\n"
+                "      sleep(0.1)\n"
+                "      urctl_rq_t = urctl_rq_t + 0.1\n"
+                "    end\n"
+                "  end\n"
+            )
+        body += "".join("  " + line for line in "".join(get(v) for v in GRIPPER_STATUS_VARS).splitlines(True))
+        body += f'  socket_close("{sock}")\n  textmsg("urctl/rq/done=", "1")\nend\n'
+
+        captured = self.primary.run_and_capture(
+            body,
+            fn_name="urctl_gripper",
+            marker="urctl/rq",
+            collect_for=timeout + 4.0,
+            stop_marker="urctl/rq/done=",
+        )
+        status = _parse_gripper_status(captured)
+        error = next(
+            (line.split("urctl/rq/error=", 1)[1].strip() for line in captured if "urctl/rq/error=" in line),
+            None,
+        )
+        done = any("urctl/rq/done=" in line for line in captured)
+        result: dict = {"status": status, "captured": captured[-8:]}
+        if error:
+            result["error"] = error
+        elif not done:
+            result["error"] = "no reply from the gripper program on the Primary broadcast"
+        elif status.get("FLT"):
+            result["error"] = f"gripper fault FLT={status['FLT']}"
+        elif status.get("ACT") == 0 or status.get("STA") not in (None, 3):
+            result["error"] = (
+                f"gripper not activated (ACT={status.get('ACT')}, STA={status.get('STA')}) — run activate"
+            )
+        obj = status.get("OBJ")
+        if obj is not None:
+            result["object_detected"] = obj in (1, 2)
+            result["at_position"] = obj == 3
+            result["moving"] = obj == 0
+        if status.get("POS") is not None:
+            result["opening_est_mm"] = round((255 - status["POS"]) / 255.0 * 50.0, 1)  # Hand-E: 50 mm stroke
+        if position is not None and "error" not in result and obj == 0:
+            result["error"] = f"the gripper was still moving after {timeout:.1f} s"
+        return self._log("gripper", args, ok="error" not in result, result=result)
 
     # ----- RTDE writes -------------------------------------------------------
 

@@ -421,6 +421,12 @@ class RobotLink:
     def freedrive(self, enable: bool) -> dict:
         return self._tool("ur_freedrive", {"enable": bool(enable)})
 
+    def gripper(self, action: str, position: int | None = None) -> dict:
+        params: dict = {"action": action}
+        if position is not None:
+            params["position"] = int(position)
+        return self._tool("ur_gripper", params)
+
     def rtde_state(self, deep: bool = False) -> dict:
         return self._tool("ur_rtde_state", {"deep": bool(deep)})
 
