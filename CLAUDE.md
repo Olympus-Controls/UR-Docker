@@ -100,6 +100,20 @@ cockpit because one process owns the USB camera. Windows bring-up:
 `docs/realsense-cell.html` current** — it is the demo/explainer and has a dated
 field log; append to it when something is verified or changes.
 
+**Pick cycle (`perception pick-cycle`, `perception/pickcycle.py`):** the
+heuristic, model-free routine — survey white blocks from one or more overlook
+poses (`--survey-pose x y z rx ry rz`, repeatable, merged by position; the camera
+must be ≥ 0.25 m from the parts, the D435 has no depth closer than ~0.2 m), fit
+each top face as the nearest 3-D plane, then per block: yaw the fingers across
+the short side, hover with the **fingertips** 40 mm over the top, descend to the
+edge and 15 mm further, close, lift an inch, set it back, release; `--drop` adds a
+pass that lets each block go from 120 mm up. A close on nothing opens and moves
+on; a protective stop unlocks, lifts and moves on. It is a client of the running
+cockpit (HTTP, like the MCP tools) and falls back to `urctl gripper` when the
+cockpit predates the gripper route. `--record DIR` saves the three feeds + the
+captioned events for `scripts/pilot/assemble.py`. First run 2026-09-25 on the
+UR3e + Hand-E.
+
 **Local GUI (`urctl gui` / `urctl-gui`):** a loopback-only web cockpit
 (`urctl/webapp.py` + `urctl/webui/index.html`, stdlib server, SSE telemetry at
 12.5 Hz, live FK arm view) whose every button dispatches through the same tool

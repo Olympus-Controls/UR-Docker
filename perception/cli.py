@@ -27,6 +27,7 @@ import sys
 
 from .cell import ENV_CELL, apply_cell, list_cells
 from .config import PerceptionConfig
+from .pickcycle import add_pick_cycle_args, run_pick_cycle
 from .pipeline import PerceptionPipeline
 from .tools import ToolError, call_tool, get_tool_schemas
 from .webapp import (
@@ -144,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     gu.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
     gu.add_argument("--demo", action="store_true", help="open the demo view: one picture, four big buttons")
 
+    pc = sub.add_parser(
+        "pick-cycle",
+        help="heuristic routine on a running cockpit: lift every block in view an inch and set it back "
+        "(--drop to shuffle)",
+    )
+    add_pick_cycle_args(pc)
     return ap
 
 
@@ -257,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(report.render())
         return 0 if report.ok else 1
+    if args.cmd == "pick-cycle":
+        return run_pick_cycle(args)
     if args.cmd in ("rs-info", "gui"):
         return _realsense_command(args)
     pipe = PerceptionPipeline(_config_from_args(args))
