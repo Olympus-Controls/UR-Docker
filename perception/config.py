@@ -62,6 +62,11 @@ DEFAULT_RS_LASER_POWER = "max"
 # enumeration, no preset/laser writes, global time off). A macOS experiment —
 # see perception.realsense.RealSenseCamera.lean.
 DEFAULT_RS_LEAN = False
+# Extra webcam viewpoints under the colour/depth pair (perception.views): device
+# names, comma-separated ("" = none), their capture size and rate.
+DEFAULT_VIEWS = ""
+DEFAULT_VIEW_RES = "640x480"
+DEFAULT_VIEW_FPS = 15
 
 # The stub depth estimator emits a normalized 0..1 map; near/far scale it into
 # metres so downstream consumers always see physical units. These bracket a
@@ -146,6 +151,9 @@ class PerceptionConfig:
     rs_preset: str = DEFAULT_RS_PRESET
     rs_laser_power: str = DEFAULT_RS_LASER_POWER
     rs_lean: bool = DEFAULT_RS_LEAN
+    views: str = DEFAULT_VIEWS
+    view_res: str = DEFAULT_VIEW_RES
+    view_fps: int = DEFAULT_VIEW_FPS
 
     @classmethod
     def from_env(cls, **overrides) -> PerceptionConfig:
@@ -177,6 +185,9 @@ class PerceptionConfig:
             "rs_preset": _env_str("PERCEPTION_RS_PRESET", DEFAULT_RS_PRESET),
             "rs_laser_power": _env_str("PERCEPTION_RS_LASER_POWER", DEFAULT_RS_LASER_POWER),
             "rs_lean": _env_bool("PERCEPTION_RS_LEAN", DEFAULT_RS_LEAN),
+            "views": _env_str("PERCEPTION_VIEWS", DEFAULT_VIEWS),
+            "view_res": _env_str("PERCEPTION_VIEW_RES", DEFAULT_VIEW_RES),
+            "view_fps": _env_int("PERCEPTION_VIEW_FPS", DEFAULT_VIEW_FPS),
         }
         values.update(overrides)
         return cls(**values)  # type: ignore[arg-type]

@@ -69,7 +69,10 @@ the arm: `ur_flange_pose` (new tool) + the bracket-nominal hand-eye seed
 base-frame point and an approach pose; **Move** is one `ur_move_tcp` through the
 same tool registry (`perception/robotlink.py`; `docs/realsense.md` §Sending a
 point to the robot). `urctl/pose.py` is the stdlib pose math (`pose_trans` /
-`pose_inv` semantics). **macOS needs `sudo`** to open the camera (libusb
+`pose_inv` semantics). **Extra viewpoints** (`--view DEVICE`, `PERCEPTION_VIEWS` in the
+cell): plain webcams under the colour/depth pair (2×2 grid) and in every snapshot,
+via ffmpeg (`perception/views.py`; macOS picks devices by AVFoundation name; launch
+from a local Terminal — SSH sessions are denied camera access by TCC). **macOS needs `sudo`** to open the camera (libusb
 must detach Apple's UVC driver — `failed to set power state` otherwise); Linux
 needs the udev rules. `--fake` runs everything on a synthetic scene. The
 target compute is a Jetson Orin next to the robot: `Dockerfile.perception` +

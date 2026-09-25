@@ -39,6 +39,7 @@ from .webapp import (
     add_robot_args,
     camera_from_args,
     robot_from_args,
+    views_from_args,
 )
 
 
@@ -225,6 +226,7 @@ def _realsense_command(args) -> int:
             open_browser=not args.no_browser,
             robot=robot_from_args(args),
             demo=args.demo,
+            views=views_from_args(args, config),
         )
         return 0
 

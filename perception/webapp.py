@@ -102,6 +102,7 @@ from .realsense import (
 from .rgbd import RgbdFrame, pack_rgbd
 from .robotlink import RobotLink
 from .segment import Mask, StubSegmenter, extract_features, normalize_box
+from .views import ViewSource, open_views, parse_view_size, parse_view_specs
 
 DEFAULT_PORT = 7621
 DEFAULT_CAPTURE_ROOT = "captures"
@@ -156,8 +157,123 @@ def reopen_delay(failures: int) -> float:
 _WEBUI = Path(__file__).parent / "webui" / "index.html"
 
 
+class ViewPump:
+    """One extra viewpoint (:mod:`perception.views`) behind its own thread:
+    the newest encoded image, a sequence number for long-polling, fps, and
+    the same open → read → back-off-on-failure loop as the RGB-D pump."""
+
+    def __init__(self, source: ViewSource, index: int, events: EventLog):
+        self.source = source
+        self.index = index
+        self.events = events
+        self._cond = threading.Condition()
+        self._latest: bytes | None = None
+        self._seq = 0
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self.last_error: str | None = None
+        self._last_logged_error: str | None = None
+        self.frames_read = 0
+        self._fps_window: list[float] = []
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._pump, name=f"view-pump-{self.index}", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        with self._cond:
+            self._cond.notify_all()
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+            self._thread = None
+        try:
+            self.source.close()
+        except Exception:
+            pass
+
+    def _pump(self) -> None:
+        opened = False
+        failures = 0
+        label = f"view {self.index} ({self.source.name})"
+        while self._running:
+            try:
+                if not opened:
+                    self.source.open()
+                    opened = True
+                    failures = 0
+                    self.last_error = None
+                    self._last_logged_error = None
+                    desc = self.source.describe()
+                    self.events.add(
+                        "view",
+                        f"{label}: opened {desc.get('kind')} {desc.get('device') or ''}".strip(),
+                        ok=True,
+                    )
+                data = self.source.read()
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                if self.last_error != self._last_logged_error:
+                    self.events.add("view", f"{label}: {self.last_error}", ok=False)
+                    self._last_logged_error = self.last_error
+                try:
+                    self.source.close()
+                except Exception:
+                    pass
+                opened = False
+                failures += 1
+                with self._cond:
+                    self._cond.wait(reopen_delay(failures))
+                continue
+            now = time.monotonic()
+            with self._cond:
+                self._latest = data
+                self._seq += 1
+                self.frames_read += 1
+                self._fps_window.append(now)
+                del self._fps_window[:-30]
+                self._cond.notify_all()
+
+    def fps(self) -> float:
+        w = self._fps_window
+        return (len(w) - 1) / (w[-1] - w[0]) if len(w) > 1 and w[-1] > w[0] else 0.0
+
+    def latest(self) -> tuple[int, bytes | None]:
+        with self._cond:
+            return self._seq, self._latest
+
+    def wait_frame(self, after: int | None, timeout_s: float) -> tuple[int, bytes | None]:
+        """Newest image with seq > ``after`` (blocks ≤ ``timeout_s``); else the newest."""
+        if after is None:
+            return self.latest()
+        deadline = time.monotonic() + timeout_s
+        with self._cond:
+            while self._running and self._seq <= after:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._cond.wait(remaining)
+            return self._seq, self._latest
+
+    def describe(self) -> dict:
+        seq, data = self.latest()
+        return {
+            **self.source.describe(),
+            "index": self.index,
+            "seq": seq,
+            "fps": round(self.fps(), 2),
+            "frames_read": self.frames_read,
+            "last_error": self.last_error,
+            "bytes": len(data) if data else 0,
+        }
+
+
 class ViewerApp:
-    """State behind the handlers: one camera, one pump thread, one segmenter."""
+    """State behind the handlers: one camera, one pump thread, one segmenter —
+    plus one :class:`ViewPump` per extra viewpoint (``views``)."""
 
     def __init__(
         self,
@@ -167,6 +283,7 @@ class ViewerApp:
         store: CaptureStore | None = None,
         segmenter=None,
         robot: RobotLink | None = None,
+        views: list[ViewSource] | None = None,
     ):
         self.camera = camera
         self.robot = robot
@@ -188,6 +305,7 @@ class ViewerApp:
         self.features: dict | None = None
         self._fps_window: list[float] = []
         self.events = EventLog()
+        self.views = [ViewPump(v, i, self.events) for i, v in enumerate(views or [])]
         self._last_logged_error: str | None = None
         # monocular scan (perception.sweep / locate2d): the newest frame's host stamp,
         # a tap that collects frames during a sweep, the last result, the table plane
@@ -207,6 +325,8 @@ class ViewerApp:
         self.started_at = time.time()
         self._thread = threading.Thread(target=self._pump, name="rgbd-pump", daemon=True)
         self._thread.start()
+        for view in self.views:
+            view.start()
 
     def stop(self) -> None:
         self._running = False
@@ -219,6 +339,15 @@ class ViewerApp:
             self.camera.close()
         except Exception:  # closing must never raise on shutdown
             pass
+        for view in self.views:
+            view.stop()
+
+    def view_frame(self, index: int, after: int | None, timeout_s: float) -> tuple[int, bytes | None, str]:
+        """``(seq, image bytes | None, content type)`` of view ``index`` (long-poll
+        semantics as :meth:`packed_frame`); ``IndexError`` for an unknown view."""
+        pump = self.views[index]  # IndexError → 404
+        seq, data = pump.wait_frame(after, timeout_s)
+        return seq, data, pump.source.content_type
 
     def _pump(self) -> None:
         opened = False
@@ -329,6 +458,7 @@ class ViewerApp:
             "robot": self.robot.describe() if self.robot is not None else None,
             "cell": describe_cell(),
             "events_seq": self.events.seq,
+            "views": [v.describe() for v in self.views],
         }
 
     # -- pilot: robot actions, doctor, events, snapshots -----------------------------
@@ -557,6 +687,21 @@ class ViewerApp:
             mask_path.write_bytes(self.mask.to_png())
             out["mask_png"] = str(mask_path)
             out["mask_seq"] = self.mask_seq
+        # every extra viewpoint that has a picture, as its own file (jpg or png)
+        views_out = []
+        for pump in self.views:
+            vseq, data = pump.latest()
+            entry: dict = {"index": pump.index, "name": pump.source.name, "seq": vseq}
+            if data:
+                ext = "jpg" if pump.source.content_type == "image/jpeg" else "png"
+                view_path = base / f"{stem}_view{pump.index}.{ext}"
+                view_path.write_bytes(data)
+                entry["path"] = str(view_path)
+            else:
+                entry["error"] = pump.last_error or "no frame yet"
+            views_out.append(entry)
+        if views_out:
+            out["views"] = views_out
         self.events.add("snapshot", f"snapshot → {color_path}", ok=True)
         return out
 
@@ -1038,6 +1183,35 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 )
             else:
                 self._send(blob, "application/octet-stream")
+        elif route.startswith("/api/view/"):
+            try:
+                index = int(route[len("/api/view/") :])
+                after = int(qs["after"][0]) if "after" in qs else None
+                timeout_ms = min(10000, max(0, int(qs.get("timeout_ms", ["1500"])[0])))
+            except ValueError:
+                self._send_json(
+                    {"ok": False, "error": "view index, after and timeout_ms must be integers"}, status=400
+                )
+                return
+            try:
+                seq, data, ctype = self.app.view_frame(index, after, timeout_ms / 1000.0)
+            except IndexError:
+                self._send_json({"ok": False, "error": f"no view {index}"}, status=404)
+                return
+            if data is None:
+                pump = self.app.views[index]
+                self._send_json(
+                    {"ok": False, "error": "no frame yet", "last_error": pump.last_error}, status=503
+                )
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Seq", str(seq))
+                self.send_header("X-Fps", f"{self.app.views[index].fps():.2f}")
+                self.end_headers()
+                self.wfile.write(data)
         else:
             self._send_json({"ok": False, "error": f"no route {route}"}, status=404)
 
@@ -1262,17 +1436,21 @@ def serve(
     open_browser: bool = True,
     robot: RobotLink | None = None,
     demo: bool = False,
+    views: list[ViewSource] | None = None,
 ) -> None:
     """Run the cockpit until interrupted (the ``perception gui`` entry point).
     ``demo`` opens the browser on the demo view (``/?demo=1``: one picture,
-    four buttons, one light; the header's *Developer view* toggles back)."""
-    app = ViewerApp(camera, config=config, store=CaptureStore(Path(capture_root)), robot=robot)
+    four buttons, one light; the header's *Developer view* toggles back).
+    ``views`` are the extra webcam viewpoints (:mod:`perception.views`)."""
+    app = ViewerApp(camera, config=config, store=CaptureStore(Path(capture_root)), robot=robot, views=views)
     server = ThreadingHTTPServer((bind, port), ViewerHandler)
     server.daemon_threads = True
     server.app = app  # type: ignore[attr-defined]
     host = "127.0.0.1" if bind in ("0.0.0.0", "") else bind
     url = f"http://{host}:{server.server_address[1]}/" + ("?demo=1" if demo else "")
     kind = camera.describe()["kind"]
+    if views:
+        kind += " + " + ", ".join(f"view {v.name}" for v in views)
     robot_desc = (
         f"robot: {robot.config.host}{' (dry-run)' if robot.dry_run else ''}"
         if robot is not None
@@ -1346,6 +1524,42 @@ def add_camera_args(ap) -> None:
         "writes, global time off (or PERCEPTION_RS_LEAN=1; the macOS claim-race experiment)",
     )
     ap.add_argument("--library", default=None, help="path to librealsense2 (default: $REALSENSE_LIB / auto)")
+    ap.add_argument(
+        "--view",
+        action="append",
+        default=None,
+        metavar="DEVICE",
+        help="an extra webcam viewpoint shown under the colour/depth pair and saved with every snapshot "
+        '(repeatable; macOS: a device name from `ffmpeg -f avfoundation -list_devices true -i ""`, '
+        "Linux: /dev/videoN, lavfi:testsrc for a synthetic one; "
+        "default: $PERCEPTION_VIEWS, comma-separated). "
+        "Needs ffmpeg on PATH; --fake makes them synthetic",
+    )
+    ap.add_argument(
+        "--view-res",
+        default=None,
+        metavar="WxH",
+        help="viewpoint capture size (default: $PERCEPTION_VIEW_RES, 640x480)",
+    )
+    ap.add_argument(
+        "--view-fps",
+        type=int,
+        default=None,
+        help="viewpoint capture rate (default: $PERCEPTION_VIEW_FPS, 15)",
+    )
+
+
+def views_from_args(args, config: PerceptionConfig) -> list[ViewSource]:
+    """The extra viewpoints named on the command line or in the cell (``PERCEPTION_VIEWS``)."""
+    specs = list(getattr(args, "view", None) or parse_view_specs(config.views))
+    if not specs:
+        return []
+    width, height = parse_view_size(getattr(args, "view_res", None) or config.view_res)
+    fps = getattr(args, "view_fps", None) or config.view_fps
+    fake = bool(getattr(args, "fake", False) or getattr(args, "fake_scan", False)) or _env_flag(
+        "PERCEPTION_FAKE"
+    )
+    return open_views(specs, fake=fake, width=width, height=height, fps=int(fps))
 
 
 def add_robot_args(ap) -> None:
@@ -1529,6 +1743,7 @@ def main(argv: list[str] | None = None) -> int:
         open_browser=not args.no_browser,
         robot=robot_from_args(args),
         demo=bool(getattr(args, "demo", False)),
+        views=views_from_args(args, config),
     )
     return 0
 
