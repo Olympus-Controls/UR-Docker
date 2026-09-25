@@ -334,6 +334,8 @@ TOOLS: list[Tool] = [
                             "velocity": _TCP_VELOCITY_SCHEMA,
                             "acceleration": _TCP_ACCELERATION_SCHEMA,
                             "dwell_s": {"type": "number", "minimum": 0, "maximum": 60},
+                            "blend_m": {"type": "number", "minimum": 0, "maximum": 0.1},
+                            "gripper": {"type": "string", "enum": ["open", "close"]},
                         },
                         required=["pose"],
                     ),

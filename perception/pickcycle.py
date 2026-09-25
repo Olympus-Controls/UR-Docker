@@ -44,7 +44,9 @@ import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from urctl.config import RobotConfig
 from urctl.pose import Transform
+from urctl.robot import Robot
 
 from .pngio import load_png
 
@@ -278,6 +280,7 @@ class Block:
 @dataclass
 class PickCycle:
     cockpit: Cockpit = field(default_factory=Cockpit)
+    robot: Robot | None = None  # direct drive: motion + gripper over Primary as compiled programs
     tip_m: float = DEFAULT_TIP_M
     hover_mm: float = 40.0
     look_mm: float = 90.0  # the second look: camera ≥ 0.25 m from the top (D435 range)
@@ -285,7 +288,10 @@ class PickCycle:
     lift_mm: float = 25.4
     clear_mm: float = 60.0
     drop_mm: float = 120.0
-    velocity: float = 0.06
+    velocity: float = 0.25  # transit (m/s); approach 0.10, grasp 0.05
+    accel: float = 0.8
+    min_radius_m: float = 0.0  # skip blocks closer than this to the base column (UR3e: ~0.25)
+    max_radius_m: float = 0.0  # skip blocks farther than this (default: the arm's reach less 50 mm)
     force: int = 80
     stroke_m: float = 0.05  # Hand-E
     finger_axis: str = "y"  # flange axis the fingers travel along
@@ -304,9 +310,16 @@ class PickCycle:
             print(f"[{ev['t']:6.1f}s] {text}", flush=True)
 
     def _state(self) -> dict:
+        if self.robot is not None:
+            return self.robot.get_state()
         return self.cockpit.post("/api/robot/state")
 
     def _flange(self) -> list[float]:
+        if self.robot is not None:
+            r = self.robot.get_flange_pose()
+            if not r.get("ok"):
+                raise CockpitError(r.get("error") or "no flange pose")
+            return list(r["flange"])
         r = self.cockpit.post(
             "/api/robot/locate", {"standoff_m": 0.2, "reference": "flange", "point_m": [0, 0, 0.3]}
         )
@@ -317,18 +330,57 @@ class PickCycle:
     def _move(self, pose: Sequence[float], v: float | None = None) -> dict:
         if self.dry_run:
             return {"ok": True, "landed": list(pose), "dry_run": True}
-        r = self.cockpit.post(
+        if self.robot is not None:
+            return self.robot.move_tcp(
+                list(pose), velocity=v or self.velocity, acceleration=self.accel, tcp=[0.0] * 6
+            )
+        return self.cockpit.post(
             "/api/robot/move", {"pose": list(pose), "velocity": v or self.velocity, "tcp": [0] * 6}
         )
-        return r
+
+    def _path(self, legs: list[dict]) -> dict:
+        """One compiled program: several legs, blends, inline gripper actions."""
+        if self.dry_run:
+            out_legs = []
+            for leg in legs:
+                entry = {**leg, "ok": True, "landed": leg["pose"]}
+                if leg.get("gripper"):
+                    closing = leg["gripper"] == "close"
+                    entry["gripper"] = {
+                        "action": leg["gripper"],
+                        "POS": 110 if closing else 3,
+                        "OBJ": 2 if closing else 3,
+                        "object_detected": closing,
+                    }
+                out_legs.append(entry)
+            return {"ok": True, "legs": out_legs, "dry_run": True}
+        if self.robot is not None:
+            return self.robot.move_tcp_path(legs, tcp=[0.0] * 6)
+        out = {"ok": True, "legs": []}
+        for leg in legs:  # no compiled path through the cockpit: leg by leg
+            r = self._move(leg["pose"], leg.get("velocity"))
+            entry = {**leg, "ok": bool(r.get("ok")), "landed": r.get("landed")}
+            if leg.get("gripper"):
+                g = self._gripper(leg["gripper"])
+                entry["gripper"] = {
+                    "action": leg["gripper"],
+                    **(g.get("status") or {}),
+                    "object_detected": g.get("object_detected"),
+                }
+            out["legs"].append(entry)
+            if not r.get("ok"):
+                out.update({"ok": False, "protective_stop": r.get("protective_stop")})
+                break
+        return out
 
     def _gripper(self, action: str) -> dict:
         if self.dry_run:
             return {"ok": True, "object_detected": action == "close", "status": {}}
+        if self.robot is not None:
+            return self.robot.gripper(action, force=self.force)
         r = self.cockpit.post("/api/robot/gripper", {"action": action})
         if r.get("ok") or "no route" not in (r.get("error") or ""):
             return r
-        # older cockpit without the gripper route: the CLI from a second process
         host = (self.cockpit.get("/api/robot").get("robot") or {}).get("host", "")
         out = subprocess.run(
             ["uv", "run", "urctl", "gripper", action, "--force", str(self.force)],
@@ -341,12 +393,45 @@ class PickCycle:
         except Exception:
             return {"ok": False, "error": out.stderr[-200:]}
 
+    def _bring_up(self) -> None:
+        if self.robot is not None:
+            self.robot.bring_up()
+        else:
+            self.cockpit.post("/api/robot/bring_up")
+
     def _recover(self, what: str) -> None:
         self.say(f"Protective stop during {what}: unlocking and lifting clear")
-        self.cockpit.post("/api/robot/bring_up")
-        time.sleep(2.0)
+        self._bring_up()
+        time.sleep(1.5)
         fl = self._flange()
-        self._move([fl[0], fl[1], fl[2] + self.clear_mm / 1000.0, *fl[3:]], 0.04)
+        zax = Transform.from_pose(fl).rotate((0.0, 0.0, 1.0))
+        self._move([fl[i] - zax[i] * self.clear_mm / 1000.0 for i in range(3)] + list(fl[3:]), 0.1)
+
+    def bail_out(self) -> None:
+        """Ctrl-C / kill: let go of whatever is held and back off along the tool axis."""
+        try:
+            self.say("Interrupted: opening the gripper and backing off")
+            self._gripper("open")
+            fl = self._flange()
+            zax = Transform.from_pose(fl).rotate((0.0, 0.0, 1.0))
+            self._move([fl[i] - zax[i] * self.clear_mm / 1000.0 for i in range(3)] + list(fl[3:]), 0.1)
+        except Exception as exc:  # best effort on the way out
+            self.say(f"bail-out incomplete: {exc}")
+
+    def ensure_gripper(self) -> bool:
+        """The Robotiq must be activated (STA 3) before a pick; activate it if not."""
+        st = self._gripper("status")
+        status = st.get("status") or {}
+        if st.get("ok") and status.get("ACT") == 1 and status.get("STA") == 3:
+            return True
+        if self.dry_run:
+            return True
+        self.say("Gripper not activated — running the activation cycle")
+        act = self._gripper("activate")
+        if not act.get("ok"):
+            self.say(f"Gripper activation failed: {act.get('error')}")
+            return False
+        return True
 
     def _ok_after(self, r: dict, what: str) -> bool:
         if r.get("ok"):
@@ -410,7 +495,7 @@ class PickCycle:
             )
         return reject_off_surface(blocks)
 
-    def refine(self, blk: Block, radius_m: float = 0.04) -> Block | None:
+    def refine(self, blk: Block, radius_m: float = 0.06) -> Block | None:
         """Re-detect ``blk`` from the current (closer) pose: the survey candidate whose
         top centre lies within ``radius_m`` of it, else None."""
         best = None
@@ -468,49 +553,97 @@ class PickCycle:
             )
         else:
             self.say(f"{label}: second look did not find it again — using the survey")
-        hover = along(self.hover_mm)
-        if not self._ok_after(self._move(hover, 0.04), f"{label} hover"):
-            return {"block": blk.index, "ok": False, "stage": "hover"}
-        self.say(f"{label}: fingertips {self.hover_mm:.0f} mm off the top along the tool axis, closing in")
-        if not self._ok_after(self._move(along(0.0), 0.03), f"{label} descent"):
-            return {"block": blk.index, "ok": False, "stage": "edge"}
-        grasp = along(-self.grasp_below_mm)
-        if not self._ok_after(self._move(grasp, 0.03), f"{label} grasp descent"):
-            return {"block": blk.index, "ok": False, "stage": "grasp"}
-        self.say(f"{label}: {self.grasp_below_mm:.0f} mm into the grasp, closing")
-        g = self._gripper("close")
-        if not g.get("object_detected"):
+        # the rest of the block is ONE program on the controller: blended transit, slow
+        # approach, close, lift, set down, open, clear — no host round trips in between
+        legs = [
+            {
+                "pose": along(self.hover_mm),
+                "velocity": self.velocity,
+                "acceleration": self.accel,
+                "blend_m": 0.01,
+            },
+            {"pose": along(0.0), "velocity": 0.10, "acceleration": 0.5},
+            {"pose": along(-self.grasp_below_mm), "velocity": 0.05, "acceleration": 0.3, "gripper": "close"},
+        ]
+        if drop:
+            legs += [
+                {
+                    "pose": along(self.drop_mm),
+                    "velocity": self.velocity,
+                    "acceleration": self.accel,
+                    "gripper": "open",
+                },
+                {"pose": along(self.drop_mm + 20.0), "velocity": self.velocity, "acceleration": self.accel},
+            ]
+            self.say(f"{label}: one program — in, close, {self.drop_mm:.0f} mm up the tool axis, let go")
+        else:
+            legs += [
+                {"pose": along(self.lift_mm), "velocity": 0.10, "acceleration": 0.5, "dwell_s": 0.4},
+                {
+                    "pose": along(-self.grasp_below_mm),
+                    "velocity": 0.05,
+                    "acceleration": 0.3,
+                    "gripper": "open",
+                },
+                {"pose": along(self.clear_mm), "velocity": self.velocity, "acceleration": self.accel},
+            ]
+            self.say(f"{label}: one program — in, close, up {self.lift_mm:.0f} mm, back down, open, clear")
+        r = self._path(legs)
+        legs_out = r.get("legs") or []
+        grip = legs_out[2].get("gripper") if len(legs_out) > 2 else None
+        grip = grip if isinstance(grip, dict) else {}
+        held = bool(grip.get("object_detected"))
+        pos = grip.get("POS")
+        if not r.get("ok"):
+            if r.get("protective_stop") or "PROTECTIVE" in (self._state().get("safety_mode") or ""):
+                self._recover(f"{label} program")
+                self._gripper("open")
+                return {"block": blk.index, "ok": False, "stage": "program", "held": held}
+            done = sum(1 for leg in r.get("legs") or [] if leg.get("ok"))
+            if done == 0:
+                self.say(
+                    f"{label}: the program never ran a leg — the controller refused the first move (reach?)"
+                )
+                self._gripper("open")
+                return {"block": blk.index, "ok": False, "stage": "refused"}
             self.say(
-                f"{label}: closed on nothing (POS {(g.get('status') or {}).get('POS')}) — opening, moving on"
+                f"{label}: program stopped after {done} of {len(legs)} legs: "
+                f"{r.get('error') or 'no completion'}"
             )
             self._gripper("open")
-            self._move(along(self.clear_mm))
-            return {"block": blk.index, "ok": False, "stage": "close", "gripper": g}
-        pos = (g.get("status") or {}).get("POS")
-        self.say(
-            f"{label}: held (Robotiq POS {pos}, "
-            f"about {(255 - (pos or 0)) / 255 * self.stroke_m * 1000:.0f} mm)"
-        )
-        if drop:
-            if not self._ok_after(self._move(along(self.drop_mm)), f"{label} lift"):
-                self._gripper("open")
-                return {"block": blk.index, "ok": False, "stage": "lift"}
-            self.say(f"{label}: {self.drop_mm:.0f} mm up the tool axis — dropping it to shuffle")
-            self._gripper("open")
-            time.sleep(0.5)
-            return {"block": blk.index, "ok": True, "stage": "dropped", "pos": pos}
-        if not self._ok_after(self._move(along(self.lift_mm), 0.03), f"{label} lift"):
-            self._gripper("open")
-            return {"block": blk.index, "ok": False, "stage": "lift"}
-        self.say(f"{label}: lifted {self.lift_mm:.0f} mm, setting it back down")
-        time.sleep(0.8)
-        self._move(grasp, 0.03)
-        self._gripper("open")
-        self.say(f"{label}: released, clearing")
-        self._move(along(self.clear_mm))
-        return {"block": blk.index, "ok": True, "stage": "replaced", "pos": pos}
+            return {"block": blk.index, "ok": False, "stage": "program", "held": held}
+        if held:
+            self.say(
+                f"{label}: held at Robotiq {pos} "
+                f"(about {(255 - (pos or 0)) / 255 * self.stroke_m * 1000:.0f} mm), "
+                + ("dropped" if drop else "lifted, set back, released")
+            )
+        else:
+            self.say(f"{label}: closed on nothing (POS {pos}) — the program carried on empty")
+        return {"block": blk.index, "ok": held, "stage": "dropped" if drop else "replaced", "pos": pos}
 
     # -- the whole run ----------------------------------------------------------------
+    def _out_of_band(self, blk: Block) -> str | None:
+        """Why this block is not for this arm: too close to the column, or beyond
+        its reach less a margin (the envelope checks the flange, the IK the whole
+        chain — a block at the edge fails on the controller, not in the envelope)."""
+        r = math.hypot(blk.centre_base[0], blk.centre_base[1])
+        if self.min_radius_m and r < self.min_radius_m:
+            return f"{r:.2f} m from the column — too close for this arm"
+        limit = self.max_radius_m
+        if not limit and self.robot is not None:
+            try:
+                probe = getattr(self.robot, "_ensure_reach", None)
+                if callable(probe):
+                    probe()  # the reach cap is sized from the model on first use
+                reach = self.robot.max_reach
+                limit = float(reach() if callable(reach) else reach) - 0.05
+            except Exception:
+                limit = 0.0
+        if limit and r > limit:
+            return f"{r:.2f} m out — beyond this arm's {limit:.2f} m working reach"
+        return None
+
     def survey_from(self, poses: Sequence[Sequence[float]] | None) -> list[Block]:
         """Survey from each pose in turn (None = from here) and merge blocks seen
         twice (top centres within 30 mm), keeping the better-supported view."""
@@ -549,6 +682,8 @@ class PickCycle:
         st = self._state()
         if "REMOTE" not in (st.get("control_mode") or "REMOTE"):
             raise CockpitError("robot is in Local control — motion needs Remote")
+        if not self.ensure_gripper():
+            raise CockpitError("gripper not ready")
         self.say(
             "Survey: white blocks in the wrist camera, each top face fitted as a plane "
             "and placed in the base frame"
@@ -557,6 +692,11 @@ class PickCycle:
         self.say(f"Found {len(blocks)} block(s)")
         results = []
         for blk in blocks[:max_blocks]:
+            why = self._out_of_band(blk)
+            if why:
+                self.say(f"block {blk.index + 1}: {why}, skipping")
+                results.append({"block": blk.index, "ok": False, "stage": "radius"})
+                continue
             results.append(self.cycle_block(blk))
         self.say(
             f"Pass 1 done: {sum(1 for r in results if r['ok'])} of {len(results)} lifted and replaced. "
@@ -568,6 +708,8 @@ class PickCycle:
             blocks = self.survey_from(survey_poses)
             self.say(f"Drop pass: {len(blocks)} block(s) — each one up {self.drop_mm:.0f} mm and let go")
             for blk in blocks[:max_blocks]:
+                if self._out_of_band(blk):
+                    continue
                 results.append(self.cycle_block(blk, drop=True))
                 self._move(start)
                 time.sleep(0.5)
@@ -698,14 +840,42 @@ def add_pick_cycle_args(ap) -> None:
         default="y",
         help="flange axis the fingers travel along (default y)",
     )
+    ap.add_argument(
+        "--via-cockpit",
+        action="store_true",
+        help="drive the robot through the cockpit's API leg by leg (default: direct — this process compiles "
+        "each block into one URScript program over Primary; the cockpit does vision only)",
+    )
+    ap.add_argument(
+        "--robot-host", default=None, help="controller address (default: the cockpit's robot, else UR_HOST)"
+    )
+    ap.add_argument(
+        "--min-radius-m", type=float, default=0.0, help="skip blocks closer than this to the base column"
+    )
+    ap.add_argument("--velocity", type=float, default=0.25, help="transit speed m/s (default 0.25)")
     ap.add_argument("--dry-run", action="store_true", help="survey and plan, send no motion")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
 
 
 def run_pick_cycle(args) -> int:
     cockpit = Cockpit(args.cockpit)
+    robot = None
+    if not args.via_cockpit:
+        host = args.robot_host
+        if not host:
+            try:
+                host = (cockpit.get("/api/robot").get("robot") or {}).get("host")
+            except Exception:
+                host = None
+        robot = Robot(
+            RobotConfig.from_env(host=host) if host else RobotConfig.from_env(), dry_run=args.dry_run
+        )
     cycle = PickCycle(
         cockpit,
+        robot=robot,
+        velocity=args.velocity,
+        min_radius_m=args.min_radius_m,
+        max_radius_m=args.max_radius_m,
         tip_m=args.tip_m,
         lift_mm=args.lift_mm,
         drop_mm=args.drop_mm,
@@ -719,6 +889,14 @@ def run_pick_cycle(args) -> int:
         rec = Recorder(cockpit, args.record, cycle.t0)
         rec.start()
         time.sleep(1.0)
+    import signal
+
+    def _bail(signum, frame):
+        cycle.bail_out()
+        raise SystemExit(130)
+
+    signal.signal(signal.SIGINT, _bail)
+    signal.signal(signal.SIGTERM, _bail)
     try:
         if args.dry_run:
             blocks = cycle.survey_from(args.survey_pose)

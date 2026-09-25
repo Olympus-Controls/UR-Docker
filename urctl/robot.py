@@ -610,7 +610,14 @@ class Robot:
         see CLAUDE.md "How fast can you actually drive it").
 
         Each leg is ``{"pose": [x,y,z,rx,ry,rz], "velocity"?, "acceleration"?,
-        "dwell_s"?}`` — the robot ``sleep``s ``dwell_s`` after landing that leg.
+        "dwell_s"?, "blend_m"?, "gripper"?}`` — the robot ``sleep``s ``dwell_s``
+        after landing that leg; ``blend_m`` > 0 rounds the corner into the next
+        leg (``movel(..., r=)``: the leg is not stopped at, so its landed check
+        is loosened to the blend radius; never on the last leg); ``gripper``
+        ``"open"``/``"close"`` runs the Robotiq daemon on the controller's
+        loopback (:meth:`gripper`) after the leg lands and echoes
+        ``urctl/path/grip<i>=POS OBJ`` — so a whole pick (hover → edge → grasp
+        → close → lift → set → open → clear) is **one** program.
         Every leg is validated against the envelope (reach, speed) up front with
         one mode check; nothing is sent if any leg fails. ``tcp`` runs
         ``set_tcp`` first (``[0]*6`` = the flange). Each leg echoes its landed
@@ -627,12 +634,20 @@ class Robot:
             dwell = float(leg.get("dwell_s", 0.0) or 0.0)
             if not math.isfinite(dwell) or dwell < 0.0 or dwell > 60.0:
                 raise ValueError(f"legs[{idx}].dwell_s must be within 0..60 s")
+            blend = float(leg.get("blend_m", 0.0) or 0.0)
+            if not math.isfinite(blend) or blend < 0.0 or blend > 0.1:
+                raise ValueError(f"legs[{idx}].blend_m must be within 0..0.1 m")
+            grip = leg.get("gripper")
+            if grip not in (None, "open", "close"):
+                raise ValueError(f"legs[{idx}].gripper must be open, close or absent")
             norm.append(
                 {
                     "pose": pose,
                     "velocity": float(leg.get("velocity", DEFAULT_TCP_VELOCITY)),
                     "acceleration": float(leg.get("acceleration", DEFAULT_TCP_ACCELERATION)),
                     "dwell_s": dwell,
+                    "blend_m": blend if idx < len(legs) - 1 else 0.0,
+                    "gripper": grip,
                 }
             )
         if tcp is not None:
@@ -663,13 +678,52 @@ class Robot:
         lines = []
         if tcp is not None:
             lines.append("set_tcp(p[" + ", ".join(str(v) for v in tcp) + "])")
+        uses_gripper = any(leg["gripper"] for leg in norm)
+        if uses_gripper:
+            lines.append(
+                f'urctl_rq_ok = socket_open("{GRIPPER_DAEMON_HOST}", {GRIPPER_DAEMON_PORT}, "urctl_rq")'
+            )
+            lines.append('textmsg("urctl/path/gripper=", urctl_rq_ok)')
         for idx, leg in enumerate(norm):
             literal = "p[" + ", ".join(str(x) for x in leg["pose"]) + "]"
-            lines.append(f"movel({literal}, a={leg['acceleration']}, v={leg['velocity']})")
-            lines.append("sync()")
-            lines.append(f'textmsg("urctl/path/leg{idx}=", get_actual_tcp_pose())')
+            r = f", r={leg['blend_m']}" if leg["blend_m"] > 0 else ""
+            lines.append(f"movel({literal}, a={leg['acceleration']}, v={leg['velocity']}{r})")
+            if leg["blend_m"] <= 0:
+                lines.append("sync()")
+                lines.append(f'textmsg("urctl/path/leg{idx}=", get_actual_tcp_pose())')
+            if leg["gripper"]:
+                pos = 255 if leg["gripper"] == "close" else 0
+                lines += [
+                    "if urctl_rq_ok:",
+                    f'  socket_send_line("SET POS {pos}", "urctl_rq")',
+                    '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                    '  socket_send_line("SET GTO 1", "urctl_rq")',
+                    '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                    "  sleep(0.2)",
+                    "  urctl_rq_t = 0.0",
+                    "  while (urctl_rq_t < 4.0):",
+                    '    socket_send_line("GET OBJ", "urctl_rq")',
+                    '    urctl_rq_o = socket_read_string("urctl_rq", timeout=2.0)',
+                    '    if str_find(urctl_rq_o, "0") < 0:',
+                    "      urctl_rq_t = 4.0",
+                    "    else:",
+                    "      sleep(0.05)",
+                    "      urctl_rq_t = urctl_rq_t + 0.05",
+                    "    end",
+                    "  end",
+                    '  socket_send_line("GET POS", "urctl_rq")',
+                    '  urctl_rq_p = socket_read_string("urctl_rq", timeout=2.0)',
+                    # the daemon's replies end in a newline: one value per marker line
+                    f'  textmsg("urctl/path/grip{idx}/pos=", urctl_rq_p)',
+                    f'  textmsg("urctl/path/grip{idx}/obj=", urctl_rq_o)',
+                    "end",
+                ]
             if leg["dwell_s"] > 0:
                 lines.append(f"sleep({leg['dwell_s']})")
+        if uses_gripper:
+            lines.append("if urctl_rq_ok:")
+            lines.append('  socket_close("urctl_rq")')
+            lines.append("end")
         lines.append('textmsg("urctl/path/done=", get_actual_tcp_pose())')
         body = "\n".join(lines) + "\n"
         captured = self.primary.run_and_capture(
@@ -679,18 +733,45 @@ class Robot:
             collect_for=timeout,
             stop_marker="urctl/path/done=",
         )
+        import re as _re
+
         from .primary import parse_vector
 
         leg_results = []
         for idx, leg in enumerate(norm):
-            landed = parse_vector(captured, f"urctl/path/leg{idx}=")
-            hit = landed is not None and (
-                max(abs(a - b) for a, b in zip(landed[:3], leg["pose"][:3], strict=False))
-                < TCP_LANDING_TOLERANCE
-            )
-            leg_results.append({"pose": leg["pose"], "landed": landed, "ok": hit, "dwell_s": leg["dwell_s"]})
+            entry: dict = {"pose": leg["pose"], "dwell_s": leg["dwell_s"], "blend_m": leg["blend_m"]}
+            if leg["blend_m"] > 0:
+                # a blended leg is passed through, not stopped at: it lands if the program went on
+                later = any(
+                    f"urctl/path/leg{j}=" in line for j in range(idx + 1, len(norm)) for line in captured
+                )
+                entry.update({"landed": None, "ok": later or any("urctl/path/done=" in c for c in captured)})
+            else:
+                landed = parse_vector(captured, f"urctl/path/leg{idx}=")
+                hit = landed is not None and (
+                    max(abs(a - b) for a, b in zip(landed[:3], leg["pose"][:3], strict=False))
+                    < TCP_LANDING_TOLERANCE
+                )
+                entry.update({"landed": landed, "ok": hit})
+            if leg["gripper"]:
+                grip: dict = {"action": leg["gripper"]}
+                for key in ("pos", "obj"):
+                    tag = f"urctl/path/grip{idx}/{key}="
+                    for line in captured:
+                        if tag in line:
+                            m = _re.search(r"(-?\d+)\s*$", line.split(tag, 1)[1].strip())
+                            if m:
+                                grip[key.upper()] = int(m.group(1))
+                if "OBJ" in grip:
+                    grip["object_detected"] = grip["OBJ"] in (1, 2)
+                if "POS" not in grip:
+                    grip["error"] = "no gripper readback (daemon missing, or the program stopped before it)"
+                entry["gripper"] = grip
+            leg_results.append(entry)
         final = parse_vector(captured, "urctl/path/done=")
         ok = final is not None and all(r["ok"] for r in leg_results)
+        if uses_gripper and not any("urctl/path/gripper=True" in c for c in captured):
+            ok = False
         result = {
             "legs": leg_results,
             "completed_legs": sum(1 for r in leg_results if r["landed"] is not None),

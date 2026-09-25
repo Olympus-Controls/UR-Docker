@@ -126,9 +126,26 @@ class FakeController:
                 return b"urctl/reteach=cancel\n"
             return f"urctl/confirm={self.confirm_answer}\n".encode()
         if "urctl/path/" in body:
-            # A multi-leg TCP path echoes each leg's landed pose, then the final marker.
+            # A multi-leg TCP path echoes each leg's landed pose (blended legs echo nothing),
+            # gripper legs echo "POS OBJ" from the daemon, then the final marker.
+            lines = []
+            if 'socket_open("127.0.0.1", 63352' in body:
+                lines.append(f"urctl/path/gripper={'True' if self.gripper_daemon else 'False'}")
+            for i, m in enumerate(
+                re.finditer(r"movel\(p\[([^\]]+)\](?:, a=[^,]+, v=[^,)]+)(, r=[^)]+)?\)", body)
+            ):
+                if not m.group(2):
+                    lines.append(f"urctl/path/leg{i}=[{m.group(1)}]")
+            requests = [int(v) for v in re.findall(r"SET POS (\d+)", body)]
+            for k, m in enumerate(re.finditer(r"urctl/path/grip(\d+)/pos=", body)):
+                if self.gripper_daemon:
+                    pos = requests[k] if k < len(requests) else 0
+                    if self.gripper_object is not None and pos > self.gripper_object:
+                        pos = self.gripper_object
+                    obj = 2 if (self.gripper_object is not None and pos == self.gripper_object) else 3
+                    lines.append(f"urctl/path/grip{m.group(1)}/pos=POS {pos:03d}")
+                    lines.append(f"urctl/path/grip{m.group(1)}/obj=OBJ {obj}")
             vecs = re.findall(r"movel\(p\[([^\]]+)\]", body)
-            lines = [f"urctl/path/leg{i}=[{v}]" for i, v in enumerate(vecs)]
             lines.append(f"urctl/path/done=[{vecs[-1]}]")
             return ("\n".join(lines) + "\n").encode()
         if "urctl/rq" in body:
@@ -1444,3 +1461,51 @@ class TestGripper:
         sent = len(fake.gripper_sends)
         res = Robot(RobotConfig(), dry_run=True).gripper("close")
         assert res["ok"] and res["dry_run"] and len(fake.gripper_sends) == sent
+
+
+class TestPathWithGripperAndBlends:
+    def test_blended_transit_and_inline_gripper_in_one_program(self, fake):
+        fake.gripper_object = 140
+        legs = [
+            {"pose": [0.3, 0.2, 0.2, 0, 3.14, 0], "velocity": 0.25, "blend_m": 0.02},
+            {"pose": [0.3, 0.2, 0.1, 0, 3.14, 0], "velocity": 0.05},
+            {"pose": [0.3, 0.2, 0.085, 0, 3.14, 0], "velocity": 0.05, "gripper": "close"},
+            {"pose": [0.3, 0.2, 0.11, 0, 3.14, 0], "velocity": 0.05},
+            {"pose": [0.3, 0.2, 0.085, 0, 3.14, 0], "velocity": 0.05, "gripper": "open"},
+            {
+                "pose": [0.3, 0.2, 0.2, 0, 3.14, 0],
+                "velocity": 0.25,
+                "blend_m": 0.05,
+            },  # last leg: blend dropped
+        ]
+        res = Robot(RobotConfig()).move_tcp_path(legs, tcp=[0] * 6)
+        assert res["ok"], res
+        body = fake.primary_sends[-1]
+        assert body.count("movel(") == 6 and body.count("r=0.02") == 1 and "r=0.05" not in body
+        assert 'socket_open("127.0.0.1", 63352' in body and body.count("SET POS") == 2 and "GET OBJ" in body
+        assert body.index("SET POS 255") < body.index("SET POS 0")
+        r = res["legs"]
+        assert r[0]["blend_m"] == 0.02 and r[0]["landed"] is None and r[0]["ok"]
+        assert r[2]["gripper"] == {"action": "close", "POS": 140, "OBJ": 2, "object_detected": True}
+        assert (
+            r[4]["gripper"]["action"] == "open"
+            and r[4]["gripper"]["POS"] == 0
+            and not r[4]["gripper"]["object_detected"]
+        )
+        assert r[5]["blend_m"] == 0.0 and r[5]["landed"] is not None
+
+    def test_missing_daemon_fails_the_program_honestly(self, fake):
+        fake.gripper_daemon = False
+        res = Robot(RobotConfig()).move_tcp_path([{"pose": [0.3, 0.2, 0.1, 0, 3.14, 0], "gripper": "close"}])
+        assert not res["ok"] and "no gripper readback" in res["legs"][0]["gripper"]["error"]
+
+    def test_leg_validation(self, fake):
+        robot = Robot(RobotConfig())
+        with pytest.raises(ValueError, match="blend_m"):
+            robot.move_tcp_path(
+                [{"pose": [0.3, 0.2, 0.1, 0, 3.14, 0], "blend_m": 0.5}, {"pose": [0.3, 0.2, 0.1, 0, 3.14, 0]}]
+            )
+        with pytest.raises(ValueError, match="gripper"):
+            robot.move_tcp_path([{"pose": [0.3, 0.2, 0.1, 0, 3.14, 0], "gripper": "squeeze"}])
+        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "ur_move_tcp_path")
+        assert "blend_m" in json.dumps(schema) and "gripper" in json.dumps(schema)

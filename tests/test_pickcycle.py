@@ -176,7 +176,7 @@ def test_dry_run_survey_and_cycle_through_a_cockpit(cockpit):
     assert b.centre_base[2] < 0.5
     out = cycle.run(drop=True)
     assert out["ok"] and [r["stage"] for r in out["results"]] == ["replaced", "dropped"]
-    assert any("closing" in ev["text"] for ev in cycle.log) and cycle.log[-1]["text"] == "Done"
+    assert any("one program" in ev["text"] for ev in cycle.log) and cycle.log[-1]["text"] == "Done"
     assert json.dumps(out, default=str)
 
 
