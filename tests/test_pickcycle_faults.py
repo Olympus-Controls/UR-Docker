@@ -164,12 +164,36 @@ def test_near_column_blocks_are_skipped_when_asked(rig, monkeypatch):
     assert not [b for b in fake.primary_sends if "urctl/path/" in b]
 
 
-def test_bail_out_opens_and_backs_off(rig):
+def test_bail_out_stops_the_program_first_then_opens_then_backs_off(rig):
     fake, cycle, events = rig
+    n_dash, n_prim = len(fake.dashboard_sends), len(fake.primary_sends)
     cycle.bail_out()
-    assert any("SET POS 0" in b for b in fake.primary_sends)
-    assert any("movel(" in b for b in fake.primary_sends)
-    assert any("Interrupted" in e for e in events)
+    assert any("stop" in s.splitlines() for s in fake.dashboard_sends[n_dash:]), (
+        "Dashboard stop must come first"
+    )
+    sent = fake.primary_sends[n_prim:]
+    assert any("SET POS 0" in b for b in sent) and any("movel(" in b for b in sent)
+    assert sent.index(next(b for b in sent if "SET POS 0" in b)) < sent.index(
+        next(b for b in sent if "movel(" in b)
+    )
+    assert any("Backed off" in e for e in events)
+
+
+def test_interrupt_during_the_run_reaches_the_bail_out(monkeypatch, tmp_path):
+    from perception import pickcycle as pc
+
+    calls = []
+    monkeypatch.setattr(pc.PickCycle, "run", lambda self, **kw: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(pc.PickCycle, "bail_out", lambda self: calls.append("bail"))
+    monkeypatch.setattr(
+        pc.Cockpit, "get", lambda self, path: {"ok": True, "robot": {"host": "fake-ur.invalid"}}
+    )
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    pc.add_pick_cycle_args(ap)
+    args = ap.parse_args(["--robot-host", "fake-ur.invalid"])
+    assert pc.run_pick_cycle(args) == 130 and calls == ["bail"]
 
 
 def test_phantom_above_the_surface_is_filtered_out(rig):

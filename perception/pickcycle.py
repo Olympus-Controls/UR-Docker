@@ -408,13 +408,21 @@ class PickCycle:
         self._move([fl[i] - zax[i] * self.clear_mm / 1000.0 for i in range(3)] + list(fl[3:]), 0.1)
 
     def bail_out(self) -> None:
-        """Ctrl-C / kill: let go of whatever is held and back off along the tool axis."""
+        """Ctrl-C / kill, once the interrupted call has unwound: stop whatever program is
+        still running on the controller (Dashboard, not Primary — the in-flight program
+        must die first), let go of whatever is held, back off along the tool axis."""
         try:
-            self.say("Interrupted: opening the gripper and backing off")
+            self.say("Interrupted: stopping the program, opening the gripper and backing off")
+            if self.robot is not None:
+                self.robot.stop()
+            else:
+                self.cockpit.post("/api/robot/stop")
+            time.sleep(0.5)
             self._gripper("open")
             fl = self._flange()
             zax = Transform.from_pose(fl).rotate((0.0, 0.0, 1.0))
             self._move([fl[i] - zax[i] * self.clear_mm / 1000.0 for i in range(3)] + list(fl[3:]), 0.1)
+            self.say("Backed off; the gripper is open")
         except Exception as exc:  # best effort on the way out
             self.say(f"bail-out incomplete: {exc}")
 
@@ -897,12 +905,11 @@ def run_pick_cycle(args) -> int:
         time.sleep(1.0)
     import signal
 
-    def _bail(signum, frame):
-        cycle.bail_out()
-        raise SystemExit(130)
+    def _interrupt(signum, frame):
+        raise KeyboardInterrupt  # unwinds the blocked Primary call (releasing its lock) first
 
-    signal.signal(signal.SIGINT, _bail)
-    signal.signal(signal.SIGTERM, _bail)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
     try:
         if args.dry_run:
             blocks = cycle.survey_from(args.survey_pose)
@@ -914,7 +921,10 @@ def run_pick_cycle(args) -> int:
                 )
         else:
             out = cycle.run(drop=args.drop, survey_poses=args.survey_pose)
-    except (CockpitError, urllib.error.URLError) as exc:
+    except KeyboardInterrupt:
+        cycle.bail_out()
+        return 130
+    except (CockpitError, urllib.error.URLError, OSError) as exc:
         print(f"pick-cycle: {exc}", file=sys.stderr)
         return 1
     finally:
