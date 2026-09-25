@@ -44,3 +44,14 @@ Built and verified on the synthetic rig; parked until there is time at the UR3e.
 - Model-based edge matching for non-box parts (the box fit uses the OBB corners; use the CAD hull's silhouette).
 - Stable-pose analysis from the convex hull (resting poses are OBB-based now: exact for boxes only).
 - NVIDIA Thor: CUDA SGBM / SAM; `Dockerfile.perception` retarget.
+
+## Open questions for Nick — pruning plan (2026-09-25)
+
+- Prune scope A (delete): the 2-D `perceive` pipeline (pipeline/tools/depth/blobs/sources/backends blob_cv+depth_anything, CLI synthetic/capture/image/call, `depth` extra), the monocular-scan experiment (scan_cli, monocam, posestream, sweep, locate2d, boxfit, tableplane, depthcheck, touch, charuco, latency, partlib, charuco-board hardware, parts/, mono-scan.md, cockpit Scan panel, cam_scan*/cell_table_from_depth), dead bits (urctl/urp.py, RealSenseSource, programs/Showcase, docs story/index/dossier/console png, empty `mcp` extra, rs_probe.sh, pilot wiggle/orbit_cal*.py once folded in). ~9k of 19k lines. OK to go?
+- Guided/inspect wizard + LiveReloader placers + InspectionBot/Dance/AppleStack/PickPlace programs + ur-pick-from-image skill: delete, or keep as an optional UR-only module? (urp_convert + urp_builder + NodeTreeDemo + MotionDemo stay: loading programs is core control.)
+- One GUI: retire `urctl-gui` (urctl/webapp.py + its index.html) in favour of the cockpit?
+- sysinfo/installation + `ur_system_snapshot`/`ur_list_programs` (SSH/docker filesystem introspection): delete? The UR3e has no SSH; RTDE deep state + codes stay.
+- CaptureStore (RealSenseTrainer dataset captures: `rs-capture`, /api/capture, cam_capture): delete, leaving /api/snapshot?
+- Demo view (`--demo`) and docs/realsense-cell.html: keep through the demo, prune after?
+- Restructure: introduce a `Controller` interface (state/bring_up/move_joints/move_tcp/path/stop/freedrive/program/native_script) with the UR implementation first, a `Gripper` interface (Robotiq-over-URCap first), and drop the `ur_` prefix from tool names (with aliases)? This is the precondition for Fanuc and for keeping PolyScope X a config switch.
+- SAM extra: keep the hook for a GPU box, or drop until then?
