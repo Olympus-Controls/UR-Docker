@@ -388,3 +388,29 @@ def test_robotlink_approach_cycle_refuses_out_of_reach_and_bad_params(monkeypatc
     for kw in ({"clearance_m": 2.0}, {"hold_s": -1}, {"velocity": 0}, {"velocity": 5}):
         with pytest.raises(ValueError):
             link.approach_cycle((0.0, 0.0, 0.3), **kw)
+
+
+def test_robotlink_locate_takes_the_controllers_ik_over_the_sphere(monkeypatch):
+    # 2026-09-27: every click on the UR3e cell read OUT OF REACH against the 0.5 m
+    # sphere, though the controller's own IK solved the poses. Its verdict wins now.
+    fake = FakeController().install(monkeypatch)
+    link = RobotLink(RobotConfig(host="fake", robot_model="UR3e"))
+    asked = []
+    fake.ik = lambda pose, tcp: asked.append((pose, tcp)) or True
+    loc = link.locate((0.0, 0.0, 1.0), reference="flange")  # far past the sphere
+    assert loc["ok"] and loc["commanded_distance_m"] > 0.5
+    assert loc["reachable"] is True and loc["reach_check"] == "controller_ik"
+    # the flange target is judged with the TCP forced to the flange, as it will be moved
+    ((pose, tcp),) = asked
+    assert pose == pytest.approx(loc["flange_target_pose"], abs=1e-5) and tcp == [0.0] * 6
+
+    fake.ik = lambda pose, tcp: False
+    near = link.locate((0.0, 0.0, 0.05), reference="tcp")
+    assert near["reachable"] is False and near["reach_check"] == "controller_ik"
+    res = link.approach_cycle((0.0, 0.0, 0.05), reference="tcp")
+    assert not res["ok"] and "inverse-kinematics" in res["error"]
+    assert not any("movel(" in s for s in fake.primary_sends)
+
+    fake.ik = None  # no answer: the sphere, and it says so
+    loc = link.locate((0.0, 0.0, 1.0), reference="flange")
+    assert loc["reachable"] is False and loc["reach_check"] == "sphere"

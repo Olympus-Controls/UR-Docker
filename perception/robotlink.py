@@ -57,6 +57,20 @@ DEFAULT_CYCLE_HOLD_S = 1.0
 FLANGE_TCP = [0.0] * 6
 
 
+def reach_note(loc: Mapping) -> str:
+    """Why a located target is out of reach, in the words of whichever check judged it."""
+    dist = loc.get("commanded_distance_m")
+    where = f"approach {dist:.3f} m from base" if isinstance(dist, int | float) else "the approach"
+    if loc.get("reach_check") == "controller_ik":
+        return (
+            f"the controller has no inverse-kinematics solution for {where} "
+            "(raise the standoff, or move the part closer)"
+        )
+    reach = loc.get("max_reach_m")
+    cap = f"reaches {reach:.2f} m" if isinstance(reach, int | float) else "cannot reach it"
+    return f"{where}, {loc.get('model') or 'arm'} {cap}; move the part closer"
+
+
 class RobotLink:
     def __init__(
         self,
@@ -135,6 +149,7 @@ class RobotLink:
             tcp_offset=fp.get("tcp_offset"),
         )
         result["ok"] = True
+        self._controller_reach(result)
         result["model"] = self.robot.safety.model or None
         result["robot"] = {
             k: fp.get(k)
@@ -241,7 +256,7 @@ class RobotLink:
         commanded = flange_target if ref == "flange" else target
         dist = math.sqrt(sum(v * v for v in commanded[:3]))
         max_reach = self.robot.max_reach()
-        return {
+        result = {
             "ok": True,
             "point_base_m": pt,
             "along": n,
@@ -263,6 +278,24 @@ class RobotLink:
             "point_flange_m": None,
             "view_ray_base": None,
         }
+        self._controller_reach(result)
+        return result
+
+    def _controller_reach(self, result: dict) -> None:
+        """Replace the datasheet-sphere ``reachable`` with the controller's own
+        inverse kinematics for the pose that will be commanded (the flange target
+        with the TCP overridden to the flange, or the approach pose under the active
+        TCP). The sphere stays when the controller gives no answer."""
+        flange = result.get("reference") == "flange"
+        pose = result.get("flange_target_pose") if flange else result.get("approach_pose")
+        verdict = None
+        if pose:
+            verdict = self.robot.ik_has_solution([list(pose)], tcp=FLANGE_TCP if flange else None)[0]
+        if verdict is None:
+            result["reach_check"] = "sphere"
+        else:
+            result["reachable"] = verdict
+            result["reach_check"] = "controller_ik"
 
     def tcp_offset(self) -> list[float] | None:
         """The active flange→TCP offset (UR pose) from one ``flange_pose`` read."""
@@ -300,8 +333,7 @@ class RobotLink:
         if loc.get("reachable") is False:
             return {
                 "ok": False,
-                "error": f"out of reach: approach {loc['commanded_distance_m']:.3f} m from base, "
-                f"{loc.get('model') or 'arm'} reaches {loc['max_reach_m']:.2f} m — move the part closer",
+                "error": "out of reach: " + reach_note(loc),
                 "locate": loc,
             }
         if loc["reference"] == "flange":

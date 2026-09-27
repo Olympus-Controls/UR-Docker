@@ -249,6 +249,7 @@ class SafetyEnvelope:
         acceleration: float,
         relative: bool = False,
         robot_mode: str | None = None,
+        ik_reachable: bool | None = None,
     ) -> SafetyVerdict:
         """Validate a Cartesian ``movel`` request against the envelope.
 
@@ -256,6 +257,12 @@ class SafetyEnvelope:
         radians. When ``relative`` is True it is a base-frame delta added to the
         current TCP pose; otherwise it is an absolute pose in the base frame.
         Speed/acceleration are in m/s and m/s^2 (distinct from the joint caps).
+
+        ``ik_reachable`` is the controller's own verdict on an absolute target
+        (``get_inverse_kin_has_solution``, :meth:`Robot.ik_has_solution`). It
+        replaces the reach sphere, which is only a datasheet radius: it rejects
+        poses the arm reaches (a UR3e flange 0.53 m out, 2026-09-27) and passes
+        ones it can't. ``None`` (no controller answer, dry-run) keeps the sphere.
         """
         violations: list[SafetyViolation] = []
 
@@ -282,7 +289,15 @@ class SafetyEnvelope:
                             "(unit error? metres, not inches/mm)",
                         )
                     )
-                elif not relative and dist > self.max_reach:
+                elif not relative and ik_reachable is False:
+                    violations.append(
+                        SafetyViolation(
+                            "ik_reach",
+                            f"the controller's inverse kinematics has no solution for the target "
+                            f"({dist:.4f} m from base)",
+                        )
+                    )
+                elif not relative and ik_reachable is None and dist > self.max_reach:
                     violations.append(
                         SafetyViolation(
                             "tcp_reach",

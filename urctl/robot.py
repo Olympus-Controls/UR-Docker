@@ -502,6 +502,62 @@ class Robot:
     def move_home(self, **kwargs) -> dict:
         return self.move_joints(HOME_JOINTS, **kwargs)
 
+    def ik_has_solution(
+        self,
+        poses: list[list[float]],
+        *,
+        tcp: list[float] | None = None,
+        collect_for: float = 3.0,
+    ) -> list[bool | None]:
+        """Ask the controller whether each base-frame pose has an inverse-kinematics
+        solution (URScript ``get_inverse_kin_has_solution``; verified on a
+        PolyScope 5.25.1 UR3e, 2026-09-27) — for the active TCP, or for ``tcp``
+        (``[0]*6`` = the flange) without changing it. One Primary round-trip for
+        all poses; no motion, so it answers in Local mode on e-Series. ``None``
+        per pose when there is no answer: dry-run, Primary busy/unreachable, or
+        PolyScope X in Local mode (which ignores Primary scripts)."""
+        try:
+            clean = [[float(v) for v in p] for p in poses]
+        except (TypeError, ValueError):
+            return [None] * len(poses)  # the envelope names the bad value
+        if (
+            self.dry_run
+            or not clean
+            or any(len(p) != 6 or not all(math.isfinite(v) for v in p) for p in clean)
+        ):
+            return [None] * len(clean)
+        tcp_arg = ""
+        if tcp is not None:
+            t = [float(v) for v in tcp]
+            if len(t) != 6 or not all(math.isfinite(v) for v in t):
+                raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
+            tcp_arg = ", tcp=p[" + ", ".join(str(v) for v in t) + "]"
+        lines = []
+        for i, p in enumerate(clean):
+            literal = "p[" + ", ".join(str(v) for v in p) + "]"
+            lines.append(f'textmsg("urctl/ik/{i}=", get_inverse_kin_has_solution({literal}{tcp_arg}))\n')
+        body = "".join(lines) + 'textmsg("urctl/ik/done=", 1)\n'
+        try:
+            captured = self.primary.run_and_capture(
+                body,
+                fn_name="urctl_ik_check",
+                marker="urctl/ik",
+                collect_for=collect_for,
+                stop_marker="urctl/ik/done=",
+            )
+        except OSError:
+            return [None] * len(clean)
+        answers: list[bool | None] = [None] * len(clean)
+        for line in captured:
+            for i in range(len(clean)):
+                tag = f"urctl/ik/{i}="
+                if tag in line:
+                    value = line.split(tag, 1)[1].strip().lower()
+                    answers[i] = (
+                        True if value.startswith("true") else False if value.startswith("false") else None
+                    )
+        return answers
+
     def move_tcp(
         self,
         pose: list[float],
@@ -543,14 +599,17 @@ class Robot:
             if len(tcp) != 6 or not all(math.isfinite(v) for v in tcp):
                 raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
             args["tcp"] = tcp
+        ik = None
         if not relative:
             self._ensure_reach()
+            ik = self.ik_has_solution([pose], tcp=tcp)[0] if len(pose) == 6 else None
         verdict: SafetyVerdict = self.safety.validate_move_tcp(
             pose,
             velocity=velocity,
             acceleration=acceleration,
             relative=relative,
             robot_mode=None if self.dry_run else self.dashboard.robot_mode(),
+            ik_reachable=ik,
         )
         if not verdict.ok:
             return self._log("move_tcp", args, ok=False, safety=verdict.as_dict())
@@ -665,6 +724,7 @@ class Robot:
         args = {"legs": norm, "tcp": tcp}
         self._ensure_reach()
         robot_mode = None if self.dry_run else self.dashboard.robot_mode()
+        iks = self.ik_has_solution([leg["pose"] for leg in norm], tcp=tcp)
         verdicts = []
         for idx, leg in enumerate(norm):
             verdict = self.safety.validate_move_tcp(
@@ -673,6 +733,7 @@ class Robot:
                 acceleration=leg["acceleration"],
                 relative=False,
                 robot_mode=robot_mode,
+                ik_reachable=iks[idx],
             )
             if not verdict.ok:
                 safety = verdict.as_dict()
