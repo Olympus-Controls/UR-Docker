@@ -130,6 +130,8 @@ def build_manifest(props: dict[str, str], packages: list[str]) -> bytes:
         ("Bundle-Vendor", props["Bundle-Vendor"]),
         ("Bundle-Version", props["Bundle-Version"]),
         ("Bundle-Activator", props["Bundle-Activator"]),
+        # PolyScope 5's installer refuses a jar without it (URCapsServiceImpl.isValidFile).
+        ("Bundle-Category", "URCap"),
         ("Bundle-RequiredExecutionEnvironment", "JavaSE-1.8"),
         ("Import-Package", import_package(packages)),
         ("URCapCompatibility-CB3", props["URCapCompatibility-CB3"]),

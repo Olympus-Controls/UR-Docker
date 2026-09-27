@@ -123,6 +123,22 @@ def test_the_downloadable_urcap_is_built_from_the_current_sources():
     assert "<artifactId>api</artifactId>" in bundle["pom"]
 
 
+def test_the_downloadable_urcap_passes_polyscope_5s_install_checks():
+    # PolyScope 5.26's installer (Settings → System → URCaps → +) runs
+    # URCapsServiceImpl.isValidFile before it will touch OSGi, in this order: a manifest,
+    # Bundle-Category equal to "urcap" ignoring case (else "the BundleCategory attribute in
+    # the manifest file must be present and have the value URCap"), the manifest among the
+    # first two zip entries, a non-empty Bundle-SymbolicName and Bundle-Version. Read off
+    # polyscope-internal-urcap-10.30.21.jar in the ursim_e-series:5.26.0 image. Dropping the
+    # jar into /urcaps (the VM's install-urcap) skips all of it — that is how a bundle with
+    # no category loaded in the VM and was refused on the UR3e (2026-09-27).
+    bundle = urcap5.read_bundle(DIST)
+    h = bundle["headers"]
+    assert h.get("Bundle-Category", "").lower() == "urcap"
+    assert "META-INF/MANIFEST.MF" in bundle["names"][:2]
+    assert h.get("Bundle-SymbolicName") and h.get("Bundle-Version")
+
+
 @pytest.mark.skipif(not (JAVAC and HAS_SDK), reason="needs a JDK and `urcap5.py sdk`")
 def test_package_is_reproducible(tmp_path):
     a = urcap5.package(SRC, tmp_path / "a")
