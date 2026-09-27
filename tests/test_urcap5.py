@@ -39,7 +39,7 @@ HAS_SDK = all(any(urcap5.SDK_DIR.glob(p + "*.jar")) for p in urcap5.SDK_JARS)
 
 
 def test_properties_require_identity_and_a_valid_compatibility():
-    good = (SRC / "bundle.properties").read_text()
+    good = (SRC / "bundle.properties").read_text(encoding="utf-8")
     props = urcap5.read_properties(good)
     assert props["URCapCompatibility-eSeries"] == "true"
     with pytest.raises(urcap5.Urcap5Error, match="Bundle-Activator"):
@@ -86,7 +86,7 @@ def test_import_package_never_imports_java_and_ranges_the_urcap_api():
 def test_embedded_pom_names_the_api_version_the_way_polyscope_reads_it():
     # PolyScope 5's PomXMLAPIVersionParser: <dependencies><dependency> groupId com.ur.urcap,
     # artifactId api -> <version>. Parse it the same way.
-    props = urcap5.read_properties((SRC / "bundle.properties").read_text())
+    props = urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8"))
     path, body = urcap5.pom_xml(props)
     assert path == "META-INF/maven/com.olympuscontrols/realsensepilot/pom.xml"
     ns = {"m": "http://maven.apache.org/POM/4.0.0"}
@@ -109,7 +109,7 @@ def test_the_downloadable_urcap_is_built_from_the_current_sources():
     assert bundle["sources_sha256"] == urcap5.sources_digest(SRC), (
         f"{DIST.relative_to(ROOT)} is stale — run `make urcap5-package` and commit it"
     )
-    props = urcap5.read_properties((SRC / "bundle.properties").read_text())
+    props = urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8"))
     h = bundle["headers"]
     for key in ("Bundle-SymbolicName", "Bundle-Version", "Bundle-Activator"):
         assert h[key] == props[key], key
@@ -186,7 +186,9 @@ public class Harness {
             }
             default: throw new IllegalArgumentException(a[0]);
         }
-        System.out.print(Json.write(out));
+        // bytes, not print(): the JVM's default charset is cp1252 on Windows
+        System.out.write(Json.write(out).getBytes("UTF-8"));
+        System.out.flush();
     }
 }
 """
@@ -199,7 +201,7 @@ def java_client(tmp_path_factory):
     root = tmp_path_factory.mktemp("java")
     pkg = root / "src" / "com" / "olympuscontrols" / "realsensepilot"
     pkg.mkdir(parents=True)
-    (pkg / "Harness.java").write_text(HARNESS)
+    (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
     for name in ("Json.java", "Cockpit.java"):
         shutil.copy(JAVA / name, pkg / name)
     classes = root / "classes"
@@ -214,11 +216,10 @@ def java_client(tmp_path_factory):
         proc = subprocess.run(
             ["java", "-cp", str(classes), "com.olympuscontrols.realsensepilot.Harness", *args],
             capture_output=True,
-            text=True,
             timeout=60,
         )
-        assert proc.returncode == 0, proc.stderr
-        return json.loads(proc.stdout)
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+        return json.loads(proc.stdout.decode("utf-8"))
 
     return run
 

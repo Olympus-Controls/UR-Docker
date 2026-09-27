@@ -40,17 +40,17 @@ NODE = shutil.which("node")
 
 
 def test_manifest_contribution_and_sources_agree():
-    meta = urcapx.read_manifest((URCAP / "manifest.yaml").read_text())
+    meta = urcapx.read_manifest((URCAP / "manifest.yaml").read_text(encoding="utf-8"))
     assert meta["vendorID"] == "olympus-controls" and meta["urcapID"] == "realsense-pilot"
     assert meta["folders"] == ["realsense-pilot-frontend"]
-    contribution = json.loads((FRONTEND / "contribution.json").read_text())
+    contribution = json.loads((FRONTEND / "contribution.json").read_text(encoding="utf-8"))
     (node,) = contribution["applicationNodes"]
     tag = node["componentTagName"]
     assert (FRONTEND / node["presenterURI"]).is_file() and (FRONTEND / node["behaviorURI"]).is_file()
-    main_js = (FRONTEND / node["presenterURI"]).read_text()
-    worker_js = (FRONTEND / node["behaviorURI"]).read_text()
+    main_js = (FRONTEND / node["presenterURI"]).read_text(encoding="utf-8")
+    worker_js = (FRONTEND / node["behaviorURI"]).read_text(encoding="utf-8")
     assert f'const TAG = "{tag}"' in main_js and f'const NODE_TYPE = "{tag}"' in worker_js
-    i18n = json.loads((FRONTEND / node["translationPath"] / "en.json").read_text())
+    i18n = json.loads((FRONTEND / node["translationPath"] / "en.json").read_text(encoding="utf-8"))
     assert i18n["application"]["nodes"][tag]["title"] == "RealSense Pilot"
     for key in ("programNodes", "smartSkills", "sidebarItems", "operatorScreens"):
         assert contribution[key] == []
@@ -86,7 +86,8 @@ def test_package_refuses_a_missing_folder(tmp_path):
     src.mkdir()
     (src / "manifest.yaml").write_text(
         'metadata:\n  vendorID: "vend"\n  urcapID: "urc"\n  version: 1.0.0\nartifacts:\n  webArchives:\n'
-        '  - id: "f"\n    folder: "f"\n'
+        '  - id: "f"\n    folder: "f"\n',
+        encoding="utf-8",
     )
     with pytest.raises(urcapx.UrcapError, match="not in"):
         urcapx.package(src, tmp_path / "out")
@@ -113,7 +114,7 @@ def test_changed_source_changes_the_timestamp(tmp_path):
     with tarfile.open(before, "r:gz") as tar:
         old = tar.getmember("manifest.yaml").mtime
     main = src / "realsense-pilot-frontend" / "main.js"
-    main.write_text(main.read_text() + "\n// edit\n")
+    main.write_text(main.read_text(encoding="utf-8") + "\n// edit\n", encoding="utf-8")
     after = urcapx.package(src, tmp_path / "b")
     with tarfile.open(after, "r:gz") as tar:
         assert tar.getmember("manifest.yaml").mtime != old
@@ -333,7 +334,7 @@ const send = (m) => listeners.forEach((fn) => fn({ data: m }));
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_worker_speaks_the_threads_protocol(tmp_path):
     harness = tmp_path / "harness.js"
-    harness.write_text(WORKER_HARNESS)
+    harness.write_text(WORKER_HARNESS, encoding="utf-8")
     proc = subprocess.run(
         [NODE, str(harness), str(FRONTEND / "realsense-pilot-node.worker.js")],
         capture_output=True,
@@ -364,7 +365,7 @@ def test_worker_speaks_the_threads_protocol(tmp_path):
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_presenter_parses_and_defines_the_element():
     subprocess.run([NODE, "--check", str(FRONTEND / "main.js")], check=True, timeout=30)
-    src = (FRONTEND / "main.js").read_text()
+    src = (FRONTEND / "main.js").read_text(encoding="utf-8")
     assert re.search(r"customElements\.define\(TAG, RealSensePilot\)", src)
     for prop in ("applicationNode", "applicationAPI", "robotSettings", "robotContext"):
         assert f"set {prop}(" in src, prop
@@ -531,7 +532,7 @@ def test_cockpit_field_shorthand_is_never_fetched_relative_to_polyscope(tmp_path
     # Regression (2026-09-27): a saved ":7621" was fetched as a path under PolyScope's
     # own page; PolyScope's 404 was then reported as "the cockpit predates the URCap routes".
     harness = tmp_path / "harness.js"
-    harness.write_text(COCKPIT_BASE_HARNESS)
+    harness.write_text(COCKPIT_BASE_HARNESS, encoding="utf-8")
     cases = {
         "": "http://localhost:7621",
         None: "http://localhost:7621",
@@ -589,7 +590,7 @@ def test_move_polyscope_targets_polyscopes_own_tcp(tmp_path):
     offsets = [[0, 0, 0, 0, 0, 0], [0.0, -0.035, 0.22, 0.257, -0.41, 1.432], [0.01, 0.02, 0.15, 0, 0, 3.1]]
     t0s = [pose_trans(SIM_FLANGE_AT_ZERO, off) for off in offsets]
     harness = tmp_path / "harness.js"
-    harness.write_text(POLYSCOPE_TARGET_HARNESS)
+    harness.write_text(POLYSCOPE_TARGET_HARNESS, encoding="utf-8")
     proc = subprocess.run(
         [
             NODE,
@@ -615,7 +616,7 @@ def test_move_polyscope_targets_polyscopes_own_tcp(tmp_path):
 
 
 def test_page_tells_a_cors_refusal_from_an_unreachable_cockpit():
-    main_js = (FRONTEND / "main.js").read_text()
+    main_js = (FRONTEND / "main.js").read_text(encoding="utf-8")
     assert 'mode: "no-cors"' in main_js and "refuses this page" in main_js
     assert "nothing answers at" in main_js and "--bind 0.0.0.0" in main_js
     # an HTTP status is not re-diagnosed as a network failure

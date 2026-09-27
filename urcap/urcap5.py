@@ -256,7 +256,7 @@ def referenced_packages(classes: Path, classpath: list[Path]) -> list[str]:
 
 def package(src: str | Path, out_dir: str | Path, *, sdk_dir: Path = SDK_DIR) -> Path:
     src, out_dir = Path(src), Path(out_dir)
-    props = read_properties((src / "bundle.properties").read_text())
+    props = read_properties((src / "bundle.properties").read_text(encoding="utf-8"))
     java = sorted((src / "src").rglob("*.java"))
     if not java:
         raise Urcap5Error(f"no Java sources under {src / 'src'}")
