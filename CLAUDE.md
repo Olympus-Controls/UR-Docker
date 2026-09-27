@@ -93,7 +93,11 @@ has a Pilot panel (bring-up/stop/freedrive, capped jog pad, events log) and
 is touch-and-click (`perception/calibrate.py`; cockpit "Calibrate hand-eye",
 `cal_*` tools): record the mark with the tool tip, 4–6 clicked views from
 varied wrist poses, LM solve seeded from the bracket, Apply + save to
-`captures/calibration/handeye_<cell>.json` (env > file > seed). `perception-mcp` (`.mcp.json`)
+`captures/calibration/handeye_<cell>.json` (env > file > seed). **Mark-less:**
+`perception calibrate` orbits the block under the camera (3 ranges × 13 views,
+found by identity, trimmed) and clicks every view into the cockpit's session;
+`--apply` saves it (`perception/orbitcal.py`, `docs/realsense.md` §Hand-eye
+without a mark; unverified on hardware as of 2026-09-26). `perception-mcp` (`.mcp.json`)
 serves robot + `cam_*`/`cell_*` tools; the camera tools proxy the running
 cockpit because one process owns the USB camera. Windows bring-up:
 `scripts/setup-windows.ps1` + `scripts/cockpit.ps1`. **Keep

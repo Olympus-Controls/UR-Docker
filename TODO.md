@@ -10,7 +10,7 @@
 
 ## Code (no robot needed)
 
-- 2026-09-25 — Fold the mark-less **orbit hand-eye** (`scripts/pilot/orbit_cal6.py` + its `orbit_cal4.py`/`orbit_cal.py` helpers) into a `perception` command; `calibrate.py` already solves with `mark=None`, the missing part is the orbit planner + auto-click driver. Then delete the scratch scripts and `wiggle.py`. `pick.py`/`place.py` are superseded by `pick-cycle`; `record.py`/`show.py`/`assemble.py` are the timelapse tooling (keep, or fold into `pick-cycle --record`). `place.py`'s lesson carries: a place spot needs the same clearance check as a pick (the rail-corner set-down protective-stopped).
+- 2026-09-26 — `perception calibrate` (orbit hand-eye) is built and tested on the fake cell; **run it once on the UR3e** (`--dry-run` first), then delete `scripts/pilot/orbit_cal*.py` + `wiggle.py`. `record.py`/`show.py`/`assemble.py` stay as the timelapse tooling. `place.py`'s lesson carries: a place spot needs the same clearance check as a pick.
 
 ## Open questions for Nick
 

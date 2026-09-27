@@ -27,6 +27,7 @@ import sys
 
 from .cell import ENV_CELL, apply_cell, list_cells
 from .config import PerceptionConfig
+from .orbitcal import add_calibrate_args, run_calibrate
 from .pickcycle import add_pick_cycle_args, run_pick_cycle
 from .pipeline import PerceptionPipeline
 from .tools import ToolError, call_tool, get_tool_schemas
@@ -151,6 +152,14 @@ def build_parser() -> argparse.ArgumentParser:
         "(--drop to shuffle)",
     )
     add_pick_cycle_args(pc)
+
+    cb = sub.add_parser(
+        "calibrate",
+        help="mark-less hand-eye calibration on a running cockpit: orbit the block under the camera, "
+        "click its top-face centre into the cockpit's calibration at every view, solve, trim "
+        "(--apply to keep)",
+    )
+    add_calibrate_args(cb)
     return ap
 
 
@@ -266,6 +275,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if report.ok else 1
     if args.cmd == "pick-cycle":
         return run_pick_cycle(args)
+    if args.cmd == "calibrate":
+        return run_calibrate(args)
     if args.cmd in ("rs-info", "gui"):
         return _realsense_command(args)
     pipe = PerceptionPipeline(_config_from_args(args))

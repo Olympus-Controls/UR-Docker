@@ -331,6 +331,30 @@ wrist orbits it, and every view is a click on that centre through
 Then `POST /api/cal/apply` puts it in force and saves `handeye_<cell>.json`;
 paste the `env_line` into the cell file.
 
+**The command (2026-09-26, `perception/orbitcal.py`):** centre one block under
+the camera at about 0.3 m, then
+
+```bash
+uv run perception --cell ur3 calibrate --dry-run   # find the mark, print the 39-view plan, move nothing
+uv run perception --cell ur3 calibrate             # orbit, click every view in, solve, trim; prints the env_line
+uv run perception --cell ur3 calibrate --apply     # …and put it in force + save handeye_<cell>.json
+```
+
+It drives the arm directly over Primary (`tcp=[0]*6`, 0.08 m/s; `--via-cockpit`
+to go through the cockpit's API instead) and uses the running cockpit for vision
+and for the calibration session itself (`/api/cal/*`), so the cockpit's Calibrate
+panel shows the views arriving. Each range is planned from the *current* solve —
+the seed, then the running solve once four views are in — so a seed centimetres
+off still lands (fake cell: 70 mm / 6° seed → 1.4 mm). The block is found again at
+every view by identity (nearest top-face centroid to the predicted mark, 120 mm
+gate before the first solve, 40 mm after). A protective stop unlocks and moves
+on; a view the envelope refuses or the arm can't reach is skipped and named; the
+worst view is dropped while any residual exceeds `--trim-mm` (9). Ctrl-C stops
+the program. `tests/test_orbitcal.py` runs it end to end on a fake cell (a
+rendered block, a real `CalibrationSession` from a wrong seed) plus the fault
+campaign; **not yet run on the UR3e** — the `scripts/pilot/orbit_cal*.py`
+scratch scripts stay as the proven fallback until it is.
+
 ## Picking with the Hand-E
 
 The Robotiq URCap daemon speaks on the controller's loopback only
