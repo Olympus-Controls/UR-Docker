@@ -90,13 +90,17 @@ def test_package_refuses_a_missing_folder(tmp_path):
         urcapx.package(src, tmp_path / "out")
 
 
-# -- installing against a Robot-API look-alike ----------------------------------------------------
+# -- installing against a urservice look-alike ----------------------------------------------------
 
 
-class RobotApiStub(BaseHTTPRequestHandler):
+class UrserviceStub(BaseHTTPRequestHandler):
+    """What the 10.13.0 sim's /universal-robots/urservice/api/v1/urcaps did on
+    2026-09-26: a plain JSON array on GET, 201 on a multipart POST of urcapxFile,
+    409 already_installed on a duplicate, 200 on DELETE /<vendor>/<urcap>."""
+
     installed: list[dict] = []
     requests: list[dict] = []
-    status = 200
+    status_override: int | None = None
 
     def log_message(self, *a):
         pass
@@ -110,43 +114,72 @@ class RobotApiStub(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802
-        RobotApiStub.requests.append({"method": "GET", "path": self.path})
-        self._reply({"message": json.dumps(RobotApiStub.installed)})
+        UrserviceStub.requests.append({"method": "GET", "path": self.path})
+        self._reply(UrserviceStub.installed)
 
-    def _upload(self):
+    def do_POST(self):  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length)
         msg = email.parser.BytesParser().parsebytes(
             f"Content-Type: {self.headers['Content-Type']}\r\n\r\n".encode() + raw
         )
         parts = [p for p in msg.walk() if p.get_filename()]
-        RobotApiStub.requests.append(
+        fields = [(p.get_param("name", header="content-disposition"), p.get_filename()) for p in parts]
+        UrserviceStub.requests.append(
             {
-                "method": self.command,
+                "method": "POST",
                 "path": self.path,
-                "fields": [
-                    (p.get_param("name", header="content-disposition"), p.get_filename()) for p in parts
-                ],
+                "fields": fields,
                 "size": sum(len(p.get_payload(decode=True)) for p in parts),
             }
         )
-        self._reply({"message": "ok"}, status=RobotApiStub.status)
-
-    do_POST = _upload  # noqa: N815
-    do_PUT = _upload  # noqa: N815
+        if UrserviceStub.status_override:
+            self._reply(
+                {"errors": [{"code": "forced", "message": "forced"}]}, status=UrserviceStub.status_override
+            )
+            return
+        if not fields or fields[0][0] != "urcapxFile":
+            self._reply(
+                {
+                    "errors": [
+                        {
+                            "code": "internal_error",
+                            "message": "did not find 'urcapxFile' in multipart form request",
+                        }
+                    ]
+                },
+                status=500,
+            )
+            return
+        ident = {"vendorID": "olympus-controls", "urcapID": "realsense-pilot"}
+        if any(it["id"] == ident for it in UrserviceStub.installed):
+            self._reply(
+                {"errors": [{"code": "already_installed", "message": "urcap already installed"}]}, status=409
+            )
+            return
+        UrserviceStub.installed.append({"id": ident, "version": "0.1.0", "urcapName": "RealSense Pilot"})
+        self._reply({"metadata": {"id": ident}}, status=201)
 
     def do_DELETE(self):  # noqa: N802
-        RobotApiStub.requests.append({"method": "DELETE", "path": self.path})
-        RobotApiStub.installed = []
-        self._reply({"message": "deleted"})
+        UrserviceStub.requests.append({"method": "DELETE", "path": self.path})
+        vendor, urcap = self.path.rstrip("/").split("/")[-2:]
+        before = len(UrserviceStub.installed)
+        UrserviceStub.installed = [
+            it
+            for it in UrserviceStub.installed
+            if (it["id"]["vendorID"], it["id"]["urcapID"]) != (vendor, urcap)
+        ]
+        self._reply(
+            {"statusCode": 200} if len(UrserviceStub.installed) < before else {"errors": []}, status=200
+        )
 
 
 @pytest.fixture
-def robot_api():
-    RobotApiStub.installed = []
-    RobotApiStub.requests = []
-    RobotApiStub.status = 200
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), RobotApiStub)
+def urservice():
+    UrserviceStub.installed = []
+    UrserviceStub.requests = []
+    UrserviceStub.status_override = None
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), UrserviceStub)
     srv.daemon_threads = True
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
@@ -155,44 +188,55 @@ def robot_api():
     srv.server_close()
 
 
-def test_install_posts_the_file_as_urcapx_file_then_updates_with_put(tmp_path, robot_api):
-    host, port = robot_api
+def test_install_posts_urcapxfile_then_409_then_replace_deletes_first(tmp_path, urservice):
+    host, port = urservice
     out = urcapx.package(URCAP, tmp_path)
     res = urcapx.install(out, host, port)
-    assert res["status"] == 200 and res["updated"] is False
-    upload = [r for r in RobotApiStub.requests if r["method"] in ("POST", "PUT")][-1]
-    assert upload["method"] == "POST" and upload["path"] == urcapx.API_PATH
-    assert upload["fields"] == [("urcapx_file", out.name)] and upload["size"] == out.stat().st_size
-    # now it is installed: the same call becomes an update
-    RobotApiStub.installed = [
-        {"id": {"vendorID": "olympus-controls", "urcapID": "realsense-pilot"}, "version": "0.1.0"}
-    ]
+    assert res["ok"] and res["status"] == 201 and res["replaced"] is False
+    upload = [r for r in UrserviceStub.requests if r["method"] == "POST"][-1]
+    assert upload["path"] == urcapx.API_PATH
+    assert upload["fields"] == [("urcapxFile", out.name)] and upload["size"] == out.stat().st_size
+    assert urcapx.is_installed(host, port, "olympus-controls", "realsense-pilot")
+    # a second install is a 409 with the --replace hint, and nothing changed
     res = urcapx.install(out, host, port)
-    assert res["updated"] is True
-    assert [r for r in RobotApiStub.requests if r["method"] in ("POST", "PUT")][-1]["method"] == "PUT"
-    # --replace deletes first and installs fresh
+    assert not res["ok"] and res["status"] == 409 and "--replace" in res["hint"]
+    # --replace: GET, DELETE, POST
     res = urcapx.install(out, host, port, replace=True)
-    methods = [r["method"] for r in RobotApiStub.requests[-3:]]
-    assert methods == ["GET", "DELETE", "POST"] and res["updated"] is False
+    assert res["ok"] and res["replaced"] is True
+    assert [r["method"] for r in UrserviceStub.requests[-3:]] == ["GET", "DELETE", "POST"]
+    assert UrserviceStub.requests[-2]["path"].endswith("/olympus-controls/realsense-pilot")
+    assert len(UrserviceStub.installed) == 1
 
 
-def test_install_names_the_remote_mode_gate_on_403(tmp_path, robot_api):
-    host, port = robot_api
-    RobotApiStub.status = 403
+def test_install_names_the_remote_mode_gate_on_403(tmp_path, urservice):
+    host, port = urservice
+    UrserviceStub.status_override = 403
     out = urcapx.package(URCAP, tmp_path)
     res = urcapx.install(out, host, port)
-    assert res["status"] == 403 and "Remote" in res["hint"]
+    assert not res["ok"] and res["status"] == 403 and "Remote" in res["hint"]
 
 
 def test_install_reports_an_unreachable_robot(tmp_path):
     out = urcapx.package(URCAP, tmp_path)
-    with pytest.raises(urcapx.UrcapError, match="GET http"):
+    with pytest.raises(urcapx.UrcapError, match="POST http|GET http"):
         urcapx.install(out, "127.0.0.1", 9)  # discard port: nothing listens
 
 
-def test_cli_list_and_package(tmp_path, robot_api, capsys):
-    host, port = robot_api
-    RobotApiStub.installed = [
+def test_list_accepts_the_robot_api_wrapping_too(monkeypatch):
+    monkeypatch.setattr(
+        urcapx,
+        "_request",
+        lambda url, **kw: {
+            "status": 200,
+            "payload": {"message": json.dumps([{"id": {"vendorID": "v", "urcapID": "u"}}])},
+        },
+    )
+    assert urcapx.list_urcaps("h", 1) == [{"id": {"vendorID": "v", "urcapID": "u"}}]
+
+
+def test_cli_list_and_package(tmp_path, urservice, capsys):
+    host, port = urservice
+    UrserviceStub.installed = [
         {
             "id": {"vendorID": "universal-robots", "urcapID": "web-frontend-app"},
             "version": "1.2.0",
@@ -203,6 +247,17 @@ def test_cli_list_and_package(tmp_path, robot_api, capsys):
     assert "universal-robots/web-frontend-app  1.2.0" in capsys.readouterr().out
     assert urcapx.main(["package", str(URCAP), "--out", str(tmp_path)]) == 0
     assert (tmp_path / "realsense-pilot-0.1.0.urcapx").is_file()
+    assert (
+        urcapx.main(
+            ["install", str(tmp_path / "realsense-pilot-0.1.0.urcapx"), "--host", host, "--port", str(port)]
+        )
+        == 0
+    )
+    assert (
+        urcapx.main(["delete", "olympus-controls", "realsense-pilot", "--host", host, "--port", str(port)])
+        == 0
+    )
+    assert UrserviceStub.installed == [UrserviceStub.installed[0]] and len(UrserviceStub.installed) == 1
 
 
 # -- the worker under node ----------------------------------------------------------------------

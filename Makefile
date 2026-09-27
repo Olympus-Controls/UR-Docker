@@ -84,8 +84,8 @@ simx-bring-up:  ## Power on + brake release the PolyScope X robot (needs Remote 
 urcap-package:  ## Build urcap/realsense-pilot into target/realsense-pilot-<ver>.urcapx (no npm).
 	$(PYTHON) scripts/urcapx.py package urcap/realsense-pilot --out target
 
-urcap-install: urcap-package  ## Install it into the PolyScope X sim on :8000 (sim must be in Remote mode).
-	$(PYTHON) scripts/urcapx.py install target/realsense-pilot-*.urcapx --port 8000
+urcap-install: urcap-package  ## Install (or replace) it in the PolyScope X sim on :8000; then refresh the page.
+	$(PYTHON) scripts/urcapx.py install target/realsense-pilot-*.urcapx --port 8000 --replace
 
 urcap-cockpit:  ## A synthetic cockpit on :7622 the URCap page may call from the sim's origin.
 	$(PYTHON) -m perception gui --fake --no-browser --port 7622 --cors http://localhost:8000,http://127.0.0.1:8000

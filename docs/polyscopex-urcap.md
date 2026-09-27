@@ -39,15 +39,19 @@ targets 10.14):
   `dist/worker/index.js`) — `tests/test_urcap.py` runs it under node.
 - **`.urcapx` is a gzipped tar with `manifest.yaml` first** (`package-urcap.js`
   + `tar-helper.js`); `scripts/urcapx.py package` does the same.
-- **Install goes through the Robot-API**: multipart `POST` (new) / `PUT`
-  (update) of field `urcapx_file` to
-  `/universal-robots/robot-api/urcaps/v1/urcaps/` (`urservice-helper.js`).
-  **The robot must be in Remote mode** — the sim answers 403 otherwise, even
-  for requests from inside the container ("must be in remote mode or originate
-  from an internal URCap"). The SDK's own `run-simulator` sets `DEVMODE=true`;
-  our compose passes `URSIM_PX_DEVMODE` through (recreating the container
-  resets the Services toggles and Remote mode, so flip Remote in the UI instead
-  when the sim is already set up).
+- **Two install endpoints.** The SDK's CLI posts field `urcapx_file` to the
+  Robot-API (`/universal-robots/robot-api/urcaps/v1/urcaps/`,
+  `urservice-helper.js`), which answers **403 unless the robot is in Remote
+  mode** — from inside the container too ("must be in remote mode or originate
+  from an internal URCap"). PolyScope's own System Manager (an internal URCap)
+  uses `/universal-robots/urservice/api/v1/urcaps` instead, and that one
+  accepted the package from the host in Local mode (2026-09-26, 10.13.0 sim):
+  multipart `POST` of field **`urcapxFile`** → 201, a duplicate → 409
+  `already_installed`, `DELETE …/<vendor>/<urcap>` → 200, `GET` → a plain
+  JSON array. `scripts/urcapx.py` uses that endpoint (`--replace` = delete +
+  install; there is no update verb). The SDK's `run-simulator` sets
+  `DEVMODE=true` for the Robot-API path; our compose passes `URSIM_PX_DEVMODE`
+  through, but it only matters at container creation.
 - **The page is same-origin with PolyScope** (nginx serves web archives from
   `/var/urcaps`; no CSP on the 10.13 sim), so `fetch` to another host works
   the way any page's does: the **cockpit must send CORS headers** for
@@ -64,13 +68,15 @@ targets 10.14):
 ```bash
 make simx-up                       # PolyScope X 10.13.0 on http://localhost:8000
 make urcap-cockpit                 # a synthetic cockpit on :7622, CORS for the sim's origin
-make urcap-install                 # package + install (sim in Remote mode first: Safety screen, password `operator`)
+make urcap-install                 # package + install (no Remote mode needed; --replace if already there)
 ```
 
-Then in PolyScope X: refresh the browser, **Application** → the node list →
-**RealSense Pilot**. Set the cockpit URL to `http://localhost:7622` (Save), and
-the feed appears; hover reads depth, a click marks a target and prints the base
-point + approach pose + reach.
+Then in PolyScope X: refresh the browser, **Application** → **RealSense
+Pilot**. Set the cockpit URL to `http://localhost:7622` (Save; it persists in
+the node), and the feed appears; hover reads depth, a click marks the pixel,
+segments and calls locate. The fake cockpit has no robot behind it, so locate
+answers "robot unreachable" there — the base point, approach pose, reach and
+the Move buttons need a cockpit with a robot link (below).
 
 For the real camera: restart your cockpit with CORS, e.g.
 
@@ -92,8 +98,11 @@ on *that* robot.
 | Install: POST when absent, PUT when present, `--replace` deletes first, 403 named | test against a Robot-API look-alike |
 | Worker speaks the threads protocol (init/running/result/error) | test under node |
 | Cockpit CORS (allow-listed origins only, preflight, exposed `X-Seq`) + `GET /api/color.png` | test |
-| The sim accepts the package format | **not yet** — blocked on Remote mode (403 from outside and inside) |
-| The node renders in PolyScope X, IK + auto-move work, `Pose.orientation` is a rotation vector | **not yet** — needs the install above |
+| The sim accepts the package (201), lists it, deletes it, serves the four frontend files | `scripts/urcapx.py install --replace` against `ursim_polyscopex:10.13.0` |
+| The node loads in PolyScope X: worker + presenter fetched, element present, i18n title shown | headless Chromium on the sim (Playwright) |
+| Feed live from a CORS-enabled cockpit, hover depth, click → segment → locate, cockpit URL persisted through `updateNode` and a reload | same, against `make urcap-cockpit` |
+| Locate → base point / approach / reach, Move (cockpit) | **not yet** — needs a cockpit with a robot link (your live one with `--cors`) |
+| Move (PolyScope): IK + auto-move accept the pose, `Pose.orientation` is a rotation vector | **not yet** — needs the PolyScope X arm powered and a located target |
 
 Open: `Pose.orientation` for `getInverseKinematics` is assumed to be the UR
 rotation vector (the SDK's `Pose` doc says only "x, y, z components"); a

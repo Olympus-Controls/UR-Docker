@@ -10,8 +10,7 @@
 
 ## PolyScope X URCap (2026-09-26, `docs/polyscopex-urcap.md`)
 
-- **Install into the sim** — blocked on Remote mode: flip it on the sim's Safety screen (password `operator`), then `make urcap-install` (package is built: `target/realsense-pilot-0.1.0.urcapx`); the fake cockpit for it is `make urcap-cockpit` (:7622, CORS for :8000). Then: does the node appear under Application, does the feed show, does a click locate, does IK + auto-move accept the pose (is `Pose.orientation` a rotation vector?).
-- Real camera in the URCap: restart the live cockpit with `--cors http://localhost:8000` (your `Quickstart` line + that flag) and set the node's cockpit URL to `http://localhost:7621`.
+- Installed in the sim and verified headless (node loads, feed/hover/click against `make urcap-cockpit` on :7622). **Still owed:** a cockpit with a robot behind it — restart your live one with `--cors http://localhost:8000` (your `Quickstart` line + that flag), set the node's cockpit URL to `http://localhost:7621`, click a block: base point + approach + reach, then **Move (cockpit)** on the UR3e. **Move (PolyScope)** (IK + auto-move; is `Pose.orientation` a rotation vector?) needs the sim's arm powered + Remote, or the real PolyScope X cell.
 - Later, on the robot: a backend-container packaging of the cockpit (`containers:` + `devices: video` + `services: urcontrol-primary`) so the pendant needs no external host.
 
 ## Code (no robot needed)

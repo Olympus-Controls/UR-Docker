@@ -139,10 +139,14 @@ Primary. Plain JavaScript, no npm: `scripts/urcapx.py package|install|list|delet
 (gzipped tar, manifest first; multipart to the Robot-API's `urcaps/v1/urcaps/`);
 `make urcap-package|urcap-install|urcap-cockpit`. The cockpit must be started
 with `--cors <PolyScope origin>` (`PERCEPTION_CORS`) and serves `GET
-/api/color.png` for it. Installing needs the robot/sim in **Remote** mode
-(403 otherwise, from inside the container too); the sim's Development Mode is
-`URSIM_PX_DEVMODE=true` at container creation. Built against SDK 6.5.65 (the
-10.13 pairing) — the worker speaks threads.js's protocol directly.
+/api/color.png` for it. The installer posts `urcapxFile` to the **urservice**
+endpoint System Manager itself uses (`/universal-robots/urservice/api/v1/urcaps`;
+201 / 409 / DELETE, no Remote mode needed) — the SDK's Robot-API path answers
+403 unless the robot is in Remote mode, from inside the container too. Built
+against SDK 6.5.65 (the 10.13 pairing) — the worker speaks threads.js's
+protocol directly. Verified 2026-09-26 in the 10.13.0 sim (headless Chromium):
+node loads, feed + hover + click-to-segment work against the fake cockpit;
+locate/move still need a cockpit with a robot link.
 
 **Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
