@@ -8,6 +8,7 @@ endpoint that the URCap page depends on."""
 from __future__ import annotations
 
 import email.parser
+import gzip
 import json
 import re
 import shutil
@@ -126,7 +127,10 @@ def test_the_downloadable_package_is_the_current_source(tmp_path):
     fresh = urcapx.package(URCAP, tmp_path)
     shipped = DIST / fresh.name
     assert shipped.is_file(), f"{shipped.relative_to(ROOT)} missing — run `make urcap-package` and commit it"
-    assert shipped.read_bytes() == fresh.read_bytes(), (
+    # Compare the tar inside, not the gzip bytes: the same tar deflates to different
+    # bytes under a different zlib build (windows-latest CI differed from byte 12 —
+    # inside the deflate stream — while macOS/Linux matched, 2026-09-27).
+    assert gzip.decompress(shipped.read_bytes()) == gzip.decompress(fresh.read_bytes()), (
         f"{shipped.relative_to(ROOT)} is stale — run `make urcap-package` and commit it"
     )
     stale = sorted(p.name for p in DIST.glob("*.urcapx") if p.name != fresh.name)
