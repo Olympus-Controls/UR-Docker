@@ -17,6 +17,14 @@ name: URCap release track
 on:
   schedule:
     - cron: "11 6 * * 3" # Wednesdays 06:11 UTC
+  # A change to the tracker runs the whole pipeline against the live sources, dry:
+  # it updates the workspace and tests, but opens no PR and files no issue.
+  pull_request:
+    paths:
+      - "urcap/track.py"
+      - "urcap/e2e.py"
+      - "urcap/target.json"
+      - ".github/workflows/urcap-track.yml"
   workflow_dispatch:
     inputs:
       force:
@@ -60,8 +68,9 @@ jobs:
         env:
           CHANGED: ${{ steps.track.outputs.changed }}
           FORCE: ${{ inputs.force }}
+          EVENT: ${{ github.event_name }}
         run: |
-          if [ "$CHANGED" = "true" ] || [ "$FORCE" = "true" ]; then
+          if [ "$CHANGED" = "true" ] || [ "$FORCE" = "true" ] || [ "$EVENT" = "pull_request" ]; then
             echo "test=true" >> "$GITHUB_OUTPUT"
           else
             echo "test=false" >> "$GITHUB_OUTPUT"
@@ -102,6 +111,18 @@ jobs:
             track-report.md
           if-no-files-found: ignore
 
+      - name: Fail a PR run that would have filed an issue
+        if: >
+          always() && github.event_name == 'pull_request' && (steps.track.outputs.exit != '0' ||
+          steps.unit.outputs.status != '0' || steps.e2e.outputs.status != '0')
+        env:
+          TRACK: ${{ steps.track.outputs.exit }}
+          UNIT: ${{ steps.unit.outputs.status }}
+          E2E: ${{ steps.e2e.outputs.status }}
+        run: |
+          echo "::error::track=$TRACK unit+compat=$UNIT e2e=$E2E"
+          exit 1
+
       - name: Compose the PR body
         if: steps.track.outputs.changed == 'true'
         run: |
@@ -130,7 +151,7 @@ jobs:
 
       - name: Open the PR retargeting the URCap
         if: >
-          steps.track.outputs.changed == 'true' &&
+          github.event_name != 'pull_request' && steps.track.outputs.changed == 'true' &&
           steps.unit.outputs.status == '0' && steps.e2e.outputs.status == '0'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
@@ -146,7 +167,7 @@ jobs:
 
       - name: File an issue when it could not update itself
         if: >
-          always() && (steps.track.outputs.exit != '0' ||
+          always() && github.event_name != 'pull_request' && (steps.track.outputs.exit != '0' ||
           (steps.go.outputs.test == 'true' && (steps.unit.outputs.status != '0' || steps.e2e.outputs.status != '0')))
         env:
           GH_TOKEN: ${{ github.token }}

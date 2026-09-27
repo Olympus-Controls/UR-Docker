@@ -147,6 +147,8 @@ weekly and opens a PR (with the notes' breaking changes and URCap/API sections)
 when all pass, or a `urcap-attention` issue when something needs a person — an API
 member gone, a new manifest rule, a `threads` bump, a node that no longer loads.
 `.github/workflows/urcap-e2e.yml` runs the e2e on every change under `urcap/`.
+A PR that touches the tracker (`track.py`, `e2e.py`, `target.json`, the workflow) runs
+the tracker workflow dry: live sources, full tests, no PR or issue.
 A patch UR ships without a simulator build (10.13.1 had none) is tested on the
 minor's newest simulator; a minor whose SDK or simulator is not out yet waits, and
 becomes an issue after three weeks.
