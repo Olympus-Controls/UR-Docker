@@ -403,10 +403,12 @@ def test_robotlink_locate_takes_the_controllers_ik_over_the_sphere(monkeypatch):
     # the flange target is judged with the TCP forced to the flange, as it will be moved
     ((pose, tcp),) = asked
     assert pose == pytest.approx(loc["flange_target_pose"], abs=1e-5) and tcp == [0.0] * 6
+    assert loc["joint_target"] == pytest.approx(pose, abs=1e-5)  # the fake "solves" to the pose
 
     fake.ik = lambda pose, tcp: False
     near = link.locate((0.0, 0.0, 0.05), reference="tcp")
     assert near["reachable"] is False and near["reach_check"] == "controller_ik"
+    assert near["joint_target"] is None
     res = link.approach_cycle((0.0, 0.0, 0.05), reference="tcp")
     assert not res["ok"] and "inverse-kinematics" in res["error"]
     assert not any("movel(" in s for s in fake.primary_sends)

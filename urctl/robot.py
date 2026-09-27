@@ -509,23 +509,37 @@ class Robot:
         tcp: list[float] | None = None,
         collect_for: float = 3.0,
     ) -> list[bool | None]:
-        """Ask the controller whether each base-frame pose has an inverse-kinematics
-        solution (URScript ``get_inverse_kin_has_solution``; verified on a
-        PolyScope 5.25.1 UR3e, 2026-09-27) — for the active TCP, or for ``tcp``
-        (``[0]*6`` = the flange) without changing it. One Primary round-trip for
-        all poses; no motion, so it answers in Local mode on e-Series. ``None``
-        per pose when there is no answer: dry-run, Primary busy/unreachable, or
-        PolyScope X in Local mode (which ignores Primary scripts)."""
+        """Whether each base-frame pose has an inverse-kinematics solution on the
+        controller — the verdicts of :meth:`inverse_kin`."""
+        return [a["reachable"] for a in self.inverse_kin(poses, tcp=tcp, collect_for=collect_for)]
+
+    def inverse_kin(
+        self,
+        poses: list[list[float]],
+        *,
+        tcp: list[float] | None = None,
+        collect_for: float = 3.0,
+    ) -> list[dict]:
+        """Ask the controller to solve each base-frame pose (URScript
+        ``get_inverse_kin_has_solution``, then ``get_inverse_kin`` nearest the live
+        joints; both verified on a PolyScope 5.25.1 UR3e, 2026-09-27) — for the
+        active TCP, or for ``tcp`` (``[0]*6`` = the flange) without changing it.
+        One Primary round-trip for all poses; no motion, so it answers in Local
+        mode on e-Series. Each answer is ``{"reachable": bool | None, "joints":
+        [6 rad] | None}``; ``reachable`` is ``None`` when there is no answer:
+        dry-run, Primary busy/unreachable, or PolyScope X in Local mode (which
+        ignores Primary scripts)."""
+        none = {"reachable": None, "joints": None}
         try:
             clean = [[float(v) for v in p] for p in poses]
         except (TypeError, ValueError):
-            return [None] * len(poses)  # the envelope names the bad value
+            return [dict(none) for _ in poses]  # the envelope names the bad value
         if (
             self.dry_run
             or not clean
             or any(len(p) != 6 or not all(math.isfinite(v) for v in p) for p in clean)
         ):
-            return [None] * len(clean)
+            return [dict(none) for _ in clean]
         tcp_arg = ""
         if tcp is not None:
             t = [float(v) for v in tcp]
@@ -534,8 +548,14 @@ class Robot:
             tcp_arg = ", tcp=p[" + ", ".join(str(v) for v in t) + "]"
         lines = []
         for i, p in enumerate(clean):
-            literal = "p[" + ", ".join(str(v) for v in p) + "]"
-            lines.append(f'textmsg("urctl/ik/{i}=", get_inverse_kin_has_solution({literal}{tcp_arg}))\n')
+            target = "p[" + ", ".join(str(v) for v in p) + "]" + tcp_arg
+            lines.append(
+                f"if get_inverse_kin_has_solution({target}):\n"
+                f'  textmsg("urctl/ik/{i}=", get_inverse_kin({target}))\n'
+                "else:\n"
+                f'  textmsg("urctl/ik/{i}=", False)\n'
+                "end\n"
+            )
         body = "".join(lines) + 'textmsg("urctl/ik/done=", 1)\n'
         try:
             captured = self.primary.run_and_capture(
@@ -546,16 +566,20 @@ class Robot:
                 stop_marker="urctl/ik/done=",
             )
         except OSError:
-            return [None] * len(clean)
-        answers: list[bool | None] = [None] * len(clean)
-        for line in captured:
-            for i in range(len(clean)):
-                tag = f"urctl/ik/{i}="
-                if tag in line:
-                    value = line.split(tag, 1)[1].strip().lower()
-                    answers[i] = (
-                        True if value.startswith("true") else False if value.startswith("false") else None
-                    )
+            return [dict(none) for _ in clean]
+        from .primary import parse_vector
+
+        answers = [dict(none) for _ in clean]
+        for i in range(len(clean)):
+            tag = f"urctl/ik/{i}"
+            joints = parse_vector(captured, tag + "=")
+            if joints is not None and len(joints) == 6:
+                answers[i] = {"reachable": True, "joints": joints}
+            elif any(
+                (tag + "=") in line and line.split(tag + "=", 1)[1].strip().lower().startswith("false")
+                for line in captured
+            ):
+                answers[i] = {"reachable": False, "joints": None}
         return answers
 
     def move_tcp(

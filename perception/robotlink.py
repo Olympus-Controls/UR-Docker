@@ -288,13 +288,16 @@ class RobotLink:
         TCP). The sphere stays when the controller gives no answer."""
         flange = result.get("reference") == "flange"
         pose = result.get("flange_target_pose") if flange else result.get("approach_pose")
-        verdict = None
+        answer = {"reachable": None, "joints": None}
         if pose:
-            verdict = self.robot.ik_has_solution([list(pose)], tcp=FLANGE_TCP if flange else None)[0]
-        if verdict is None:
+            answer = self.robot.inverse_kin([list(pose)], tcp=FLANGE_TCP if flange else None)[0]
+        # the controller's own joint solution (nearest the live joints) — what a
+        # joint-space move screen (PolyScope 5's requestUserToMoveRobot) is handed
+        result["joint_target"] = answer["joints"]
+        if answer["reachable"] is None:
             result["reach_check"] = "sphere"
         else:
-            result["reachable"] = verdict
+            result["reachable"] = answer["reachable"]
             result["reach_check"] = "controller_ik"
 
     def tcp_offset(self) -> list[float] | None:

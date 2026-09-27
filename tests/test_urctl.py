@@ -132,14 +132,16 @@ class FakeController:
             if self.ik is None:
                 return b""
             out = []
-            for m in re.finditer(
-                r'textmsg\("urctl/ik/(\d+)=", get_inverse_kin_has_solution\('
-                r"p\[([^\]]+)\](?:, tcp=p\[([^\]]+)\])?\)\)",
-                body,
-            ):
-                pose = [float(v) for v in m.group(2).split(",")]
-                tcp = [float(v) for v in m.group(3).split(",")] if m.group(3) else None
-                out.append(f"urctl/ik/{m.group(1)}={'True' if self.ik(pose, tcp) else 'False'}")
+            rx = (
+                r"if get_inverse_kin_has_solution\(p\[([^\]]+)\](?:, tcp=p\[([^\]]+)\])?\):\s*"
+                r'textmsg\("urctl/ik/(\d+)="'
+            )
+            for m in re.finditer(rx, body):
+                pose = [float(v) for v in m.group(1).split(",")]
+                tcp = [float(v) for v in m.group(2).split(",")] if m.group(2) else None
+                # a solvable pose "solves" to joints that echo it, so tests can tell them apart
+                answer = "[" + ",".join(str(v) for v in pose) + "]" if self.ik(pose, tcp) else "False"
+                out.append(f"urctl/ik/{m.group(3)}={answer}")
             return ("\n".join(out) + "\nurctl/ik/done=1\n").encode()
         if "urctl/path/" in body:
             # A multi-leg TCP path echoes each leg's landed pose (blended legs echo nothing),
@@ -1543,6 +1545,7 @@ class TestControllerIkReach:
         assert res["ok"], res
         (ik,) = [s for s in fake.primary_sends if "get_inverse_kin_has_solution" in s]
         assert "tcp=p[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]" in ik and "movel(" not in ik
+        assert ik.count("tcp=p[0.0") == 2  # the solve uses the same TCP as the check
         assert any("movel(" in s for s in fake.primary_sends)
 
     def test_controller_no_refuses_inside_the_sphere_and_sends_nothing(self, monkeypatch):
@@ -1581,14 +1584,18 @@ class TestControllerIkReach:
         assert [v["rule"] for v in res["safety"]["violations"]] == ["ik_reach"]
         ik = [s for s in fake.primary_sends if "get_inverse_kin_has_solution" in s]
         assert len(ik) == 1 and ik[0].count("get_inverse_kin_has_solution") == 2
+        assert ik[0].count("get_inverse_kin(") == 2
         assert not any("movel(" in s for s in fake.primary_sends)
 
     def test_answers_are_matched_by_index_not_substring(self, monkeypatch):
         fake = FakeController().install(monkeypatch)
         poses = [[0.1 + i / 100, 0.1, 0.1, 0, 3.14, 0] for i in range(12)]
         fake.ik = lambda pose, tcp: round((pose[0] - 0.1) * 100) % 2 == 0
-        got = Robot(RobotConfig(robot_model="UR3e")).ik_has_solution(poses)
-        assert got == [i % 2 == 0 for i in range(12)]
+        robot = Robot(RobotConfig(robot_model="UR3e"))
+        assert robot.ik_has_solution(poses) == [i % 2 == 0 for i in range(12)]
+        solved = robot.inverse_kin(poses)
+        for i, (pose, ans) in enumerate(zip(poses, solved, strict=True)):
+            assert ans["joints"] == (pytest.approx(pose) if i % 2 == 0 else None)
 
     def test_bad_input_is_no_answer_not_a_crash(self, monkeypatch):
         FakeController().install(monkeypatch)
