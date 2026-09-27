@@ -1,0 +1,179 @@
+# Weekly watch on UR's PolyScope X releases, built like amr-emulator's spec
+# scrapers: the mechanical half updates itself. `urcap/track.py update` finds
+# the newest minor's newest release (release notes), the simulator image that
+# is that release (Docker Hub, pinned by digest) and the URCap SDK UR titled for
+# it (GitHub), and rewrites urcap/target.json + the docs' target lines. Then the
+# URCap is judged against exactly that environment: the unit suite, `track.py
+# compat` (the contribution-api members it calls, its manifest against the new
+# manifest spec, the worker's threads protocol) and `urcap/e2e.py` (install +
+# load the node in the pinned simulator, headless). Green → a PR carrying the
+# release notes' URCap/API sections; anything else → a urcap-attention issue.
+#
+# Only the newest minor is ever targeted: a new minor replaces the pin, it is
+# never added beside it. No credentials: every source is public.
+
+name: URCap release track
+
+on:
+  schedule:
+    - cron: "11 6 * * 3" # Wednesdays 06:11 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run compat + e2e even when the pin is current"
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: urcap-track
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Re-resolve the newest PolyScope X release
+        id: track
+        env:
+          GH_TOKEN: ${{ github.token }} # GitHub API rate limit only; the SDK repo is public
+        run: |
+          set +e
+          python3 urcap/track.py update --report track-report.md 2> track-problems.txt
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          cat track-problems.txt
+
+      - name: Decide whether to test
+        id: go
+        env:
+          CHANGED: ${{ steps.track.outputs.changed }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          if [ "$CHANGED" = "true" ] || [ "$FORCE" = "true" ]; then
+            echo "test=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "test=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Unit suite + compat against the pinned SDK
+        id: unit
+        if: steps.go.outputs.test == 'true'
+        run: |
+          uv sync --locked
+          set +e
+          uv run pytest -q tests/test_urcap.py tests/test_urcap_track.py 2>&1 | tail -25 > unit-tail.txt
+          unit=${PIPESTATUS[0]}
+          python3 urcap/track.py compat 2> compat-problems.txt
+          compat=$?
+          cat unit-tail.txt compat-problems.txt
+          if [ "$unit" = 0 ] && [ "$compat" = 0 ]; then echo "status=0" >> "$GITHUB_OUTPUT"; else echo "status=1" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Install the headless browser
+        if: steps.go.outputs.test == 'true'
+        run: uv run --with playwright==1.63.0 playwright install --with-deps chromium
+
+      - name: The URCap in the pinned simulator (install, load, click)
+        id: e2e
+        if: steps.go.outputs.test == 'true'
+        run: |
+          set +e
+          uv run --with playwright==1.63.0 python urcap/e2e.py --artifacts e2e-artifacts --report e2e.json
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.go.outputs.test == 'true'
+        with:
+          name: urcap-e2e
+          path: |
+            e2e-artifacts/
+            e2e.json
+            track-report.md
+          if-no-files-found: ignore
+
+      - name: Compose the PR body
+        if: steps.track.outputs.changed == 'true'
+        run: |
+          {
+            cat track-report.md
+            echo "### Tested against that release"
+            echo
+            echo "- unit suite + \`track.py compat\`: $([ -s compat-problems.txt ] && echo 'problems below' || echo ok)"
+            python3 - <<'EOF'
+          import json, pathlib
+          p = pathlib.Path("e2e.json")
+          if p.exists():
+              r = json.loads(p.read_text())
+              print(f"- `urcap/e2e.py` against `{r['image']}`: {'passed' if r['passed'] else 'FAILED'}")
+              print()
+              print("| check | | detail |")
+              print("| --- | --- | --- |")
+              for c in r["checks"]:
+                  d = c["detail"].replace("|", "\\|").replace("\n", " ")[:160]
+                  print(f"| {c['check']} | {'ok' if c['ok'] else '**FAIL**'} | {d} |")
+          EOF
+            if [ -s compat-problems.txt ]; then echo; echo '```'; head -c 2000 compat-problems.txt; echo '```'; fi
+            echo
+            echo "Screenshots + the simulator log are in this run's \`urcap-e2e\` artifact."
+          } > pr-body.md
+
+      - name: Open the PR retargeting the URCap
+        if: >
+          steps.track.outputs.changed == 'true' &&
+          steps.unit.outputs.status == '0' && steps.e2e.outputs.status == '0'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: urcap-track/polyscope-x
+          add-paths: |
+            urcap/target.json
+            urcap/README.md
+            urcap/DEVELOPING.md
+          commit-message: "urcap: target PolyScope X ${{ steps.track.outputs.release }}"
+          title: "URCap: target PolyScope X ${{ steps.track.outputs.release }}"
+          body-path: pr-body.md
+          labels: urcap, automated
+
+      - name: File an issue when it could not update itself
+        if: >
+          always() && (steps.track.outputs.exit != '0' ||
+          (steps.go.outputs.test == 'true' && (steps.unit.outputs.status != '0' || steps.e2e.outputs.status != '0')))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEASE: ${{ steps.track.outputs.release }}
+        run: |
+          gh label create urcap-attention --repo "$REPO" --color d93f0b \
+            --description "the URCap release track needs a human" 2>/dev/null || true
+          {
+            echo "The weekly URCap release track ($RUN_URL) could not retarget the URCap${RELEASE:+ to PolyScope X $RELEASE} on its own."
+            echo
+            if [ -s track-problems.txt ]; then echo "\`track.py update\`:"; echo '```'; head -c 1500 track-problems.txt; echo '```'; fi
+            if [ -s compat-problems.txt ]; then echo "\`track.py compat\`:"; echo '```'; head -c 1500 compat-problems.txt; echo '```'; fi
+            if [ -f e2e.json ]; then
+              echo "\`urcap/e2e.py\` failed at:"; echo '```'
+              python3 -c 'import json; r=json.load(open("e2e.json")); [print(c["check"], "—", c["detail"][:300]) for c in r["checks"] if not c["ok"]]'
+              echo '```'
+            fi
+            [ -f track-report.md ] && cat track-report.md
+            echo
+            echo "Locally: \`python3 urcap/track.py update && python3 urcap/track.py compat && uv run --with playwright==1.63.0 python urcap/e2e.py\`; patch urcap/realsense-pilot/ until all three pass (\`make urcap-package\` + commit dist/ after a source change)."
+          } > issue-body.md
+          existing=$(gh issue list --repo "$REPO" --label urcap-attention --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body-file issue-body.md
+          else
+            gh issue create --repo "$REPO" --title "URCap release track needs attention" \
+              --label urcap-attention --body-file issue-body.md
+          fi
