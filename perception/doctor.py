@@ -498,6 +498,7 @@ def check_flange_and_handeye(report: Report, robot, handeye: HandEye, env=None) 
             data={"tcp_offset": off, "flange": fp.get("flange")},
         )
     )
+    report.add(approach_check(off))
     if mag > 0.001:
         report.add(
             Check(
@@ -508,6 +509,46 @@ def check_flange_and_handeye(report: Report, robot, handeye: HandEye, env=None) 
                 severity="info",
             )
         )
+
+
+def approach_check(active_offset, env=None) -> Check:
+    """What the cockpit's moves put where: the approach reference and, for the
+    fingertip default, the tool length every move runs with — against the
+    controller's active TCP, which those moves override."""
+    import os
+
+    from .handeye import DEFAULT_APPROACH_REFERENCE, ENV_APPROACH_REFERENCE, ENV_TIP_M, tip_m_from_env
+
+    env = os.environ if env is None else env
+    ref = (env.get(ENV_APPROACH_REFERENCE) or DEFAULT_APPROACH_REFERENCE).lower()
+    try:
+        tip = tip_m_from_env(env)
+    except ValueError as exc:
+        return Check("approach", False, str(exc), fix=f"set {ENV_TIP_M} to the flange→fingertip length in m")
+    off = [float(v) for v in (active_offset or [0.0] * 6)]
+    if ref != "fingertip":
+        return Check(
+            "approach",
+            None,
+            f"standoff measured from the {ref}, not the fingertips",
+            fix=f"{ENV_APPROACH_REFERENCE}=fingertip (and {ENV_TIP_M}) so the gripper stops above the part",
+            severity="warn",
+            data={"reference": ref},
+        )
+    same = all(abs(a - b) < 0.002 for a, b in zip(off, [0.0, 0.0, tip, 0.0, 0.0, 0.0], strict=True))
+    detail = f"fingertips {tip * 1000:.0f} mm along the flange axis; every move runs with that TCP"
+    if not same:
+        detail += (
+            f" (the controller's active TCP [{', '.join(f'{v:.3f}' for v in off)}] differs and is overridden"
+            f" — measure the tool if {ENV_TIP_M} is a guess)"
+        )
+    return Check(
+        "approach",
+        True,
+        detail,
+        severity="info",
+        data={"reference": ref, "tip_m": tip, "active_tcp_offset": off, "matches_active_tcp": same},
+    )
 
 
 def check_cockpit(report: Report, url: str) -> None:

@@ -24,9 +24,9 @@ jobs:
       - name: install deps
         run: uv sync --extra perception
       - name: ruff check
-        run: uv run ruff check urctl perception scripts tests
+        run: uv run ruff check urctl perception scripts urcap tests
       - name: ruff format
-        run: uv run ruff format --check urctl perception scripts tests
+        run: uv run ruff format --check urctl perception scripts urcap tests
       - name: shellcheck
         run: |
           sudo apt-get update -qq

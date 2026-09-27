@@ -502,6 +502,86 @@ class Robot:
     def move_home(self, **kwargs) -> dict:
         return self.move_joints(HOME_JOINTS, **kwargs)
 
+    def ik_has_solution(
+        self,
+        poses: list[list[float]],
+        *,
+        tcp: list[float] | None = None,
+        collect_for: float = 3.0,
+    ) -> list[bool | None]:
+        """Whether each base-frame pose has an inverse-kinematics solution on the
+        controller — the verdicts of :meth:`inverse_kin`."""
+        return [a["reachable"] for a in self.inverse_kin(poses, tcp=tcp, collect_for=collect_for)]
+
+    def inverse_kin(
+        self,
+        poses: list[list[float]],
+        *,
+        tcp: list[float] | None = None,
+        collect_for: float = 3.0,
+    ) -> list[dict]:
+        """Ask the controller to solve each base-frame pose (URScript
+        ``get_inverse_kin_has_solution``, then ``get_inverse_kin`` nearest the live
+        joints; both verified on a PolyScope 5.25.1 UR3e, 2026-09-27) — for the
+        active TCP, or for ``tcp`` (``[0]*6`` = the flange) without changing it.
+        One Primary round-trip for all poses; no motion, so it answers in Local
+        mode on e-Series. Each answer is ``{"reachable": bool | None, "joints":
+        [6 rad] | None}``; ``reachable`` is ``None`` when there is no answer:
+        dry-run, Primary busy/unreachable, or PolyScope X in Local mode (which
+        ignores Primary scripts)."""
+        none = {"reachable": None, "joints": None}
+        try:
+            clean = [[float(v) for v in p] for p in poses]
+        except (TypeError, ValueError):
+            return [dict(none) for _ in poses]  # the envelope names the bad value
+        if (
+            self.dry_run
+            or not clean
+            or any(len(p) != 6 or not all(math.isfinite(v) for v in p) for p in clean)
+        ):
+            return [dict(none) for _ in clean]
+        tcp_arg = ""
+        if tcp is not None:
+            t = [float(v) for v in tcp]
+            if len(t) != 6 or not all(math.isfinite(v) for v in t):
+                raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
+            tcp_arg = ", tcp=p[" + ", ".join(str(v) for v in t) + "]"
+        lines = []
+        for i, p in enumerate(clean):
+            target = "p[" + ", ".join(str(v) for v in p) + "]" + tcp_arg
+            lines.append(
+                f"if get_inverse_kin_has_solution({target}):\n"
+                f'  textmsg("urctl/ik/{i}=", get_inverse_kin({target}))\n'
+                "else:\n"
+                f'  textmsg("urctl/ik/{i}=", False)\n'
+                "end\n"
+            )
+        body = "".join(lines) + 'textmsg("urctl/ik/done=", 1)\n'
+        try:
+            captured = self.primary.run_and_capture(
+                body,
+                fn_name="urctl_ik_check",
+                marker="urctl/ik",
+                collect_for=collect_for,
+                stop_marker="urctl/ik/done=",
+            )
+        except OSError:
+            return [dict(none) for _ in clean]
+        from .primary import parse_vector
+
+        answers = [dict(none) for _ in clean]
+        for i in range(len(clean)):
+            tag = f"urctl/ik/{i}"
+            joints = parse_vector(captured, tag + "=")
+            if joints is not None and len(joints) == 6:
+                answers[i] = {"reachable": True, "joints": joints}
+            elif any(
+                (tag + "=") in line and line.split(tag + "=", 1)[1].strip().lower().startswith("false")
+                for line in captured
+            ):
+                answers[i] = {"reachable": False, "joints": None}
+        return answers
+
     def move_tcp(
         self,
         pose: list[float],
@@ -543,14 +623,17 @@ class Robot:
             if len(tcp) != 6 or not all(math.isfinite(v) for v in tcp):
                 raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
             args["tcp"] = tcp
+        ik = None
         if not relative:
             self._ensure_reach()
+            ik = self.ik_has_solution([pose], tcp=tcp)[0] if len(pose) == 6 else None
         verdict: SafetyVerdict = self.safety.validate_move_tcp(
             pose,
             velocity=velocity,
             acceleration=acceleration,
             relative=relative,
             robot_mode=None if self.dry_run else self.dashboard.robot_mode(),
+            ik_reachable=ik,
         )
         if not verdict.ok:
             return self._log("move_tcp", args, ok=False, safety=verdict.as_dict())
@@ -665,6 +748,7 @@ class Robot:
         args = {"legs": norm, "tcp": tcp}
         self._ensure_reach()
         robot_mode = None if self.dry_run else self.dashboard.robot_mode()
+        iks = self.ik_has_solution([leg["pose"] for leg in norm], tcp=tcp)
         verdicts = []
         for idx, leg in enumerate(norm):
             verdict = self.safety.validate_move_tcp(
@@ -673,6 +757,7 @@ class Robot:
                 acceleration=leg["acceleration"],
                 relative=False,
                 robot_mode=robot_mode,
+                ik_reachable=iks[idx],
             )
             if not verdict.ok:
                 safety = verdict.as_dict()

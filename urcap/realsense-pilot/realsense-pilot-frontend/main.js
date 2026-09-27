@@ -64,7 +64,66 @@
     });
   }
 
+  // -- pose math (UR pose = [x, y, z, rx, ry, rz], rotation vector; 4x4 row-major) ----------
+  function poseToMat(p) {
+    const th = Math.hypot(p[3], p[4], p[5]);
+    const [x, y, z] = th < 1e-12 ? [0, 0, 1] : [p[3] / th, p[4] / th, p[5] / th];
+    const c = Math.cos(th), s = Math.sin(th), v = 1 - c;
+    return [
+      [c + x * x * v, x * y * v - z * s, x * z * v + y * s, p[0]],
+      [y * x * v + z * s, c + y * y * v, y * z * v - x * s, p[1]],
+      [z * x * v - y * s, z * y * v + x * s, c + z * z * v, p[2]],
+      [0, 0, 0, 1],
+    ];
+  }
+  function matToPose(m) {
+    const cos = Math.min(1, Math.max(-1, (m[0][0] + m[1][1] + m[2][2] - 1) / 2));
+    const th = Math.acos(cos);
+    let r = [0, 0, 0];
+    if (th > 1e-9 && Math.PI - th > 1e-6) {
+      const k = th / (2 * Math.sin(th));
+      r = [(m[2][1] - m[1][2]) * k, (m[0][2] - m[2][0]) * k, (m[1][0] - m[0][1]) * k];
+    } else if (th > 1e-9) {
+      // ~180°: the axis from the diagonal, signed by the largest component
+      const ax = [0, 1, 2].map((i) => Math.sqrt(Math.max(0, (m[i][i] + 1) / 2)));
+      const i = ax.indexOf(Math.max(...ax));
+      for (let j = 0; j < 3; j++) if (j !== i) ax[j] = Math.sign(m[i][j] + m[j][i] || 1) * ax[j];
+      r = ax.map((a) => a * th);
+    }
+    return [m[0][3], m[1][3], m[2][3], ...r];
+  }
+  function matMul(a, b) {
+    return a.map((row) => [0, 1, 2, 3].map((j) => row.reduce((acc, v, k) => acc + v * b[k][j], 0)));
+  }
+  function matInv(m) {
+    const R = [0, 1, 2].map((i) => [0, 1, 2].map((j) => m[j][i]));
+    const t = [0, 1, 2].map((i) => -(R[i][0] * m[0][3] + R[i][1] * m[1][3] + R[i][2] * m[2][3]));
+    return [[...R[0], t[0]], [...R[1], t[1]], [...R[2], t[2]], [0, 0, 0, 1]];
+  }
+  // Flange pose at the given joint angles from PolyScope's own DH table
+  // (robotPositionService.getKinematicInfo(): [{DHTheta, DHa, DHd, DHAlpha}] × 6).
+  function flangeMat(dh, q) {
+    let T = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+    dh.forEach((j, i) => {
+      const th = q[i] + (j.DHTheta || 0), ct = Math.cos(th), st = Math.sin(th);
+      const ca = Math.cos(j.DHAlpha), sa = Math.sin(j.DHAlpha);
+      T = matMul(T, [[ct, -st * ca, st * sa, j.DHa * ct], [st, ct * ca, -ct * sa, j.DHa * st], [0, sa, ca, j.DHd], [0, 0, 0, 1]]);
+    });
+    return T;
+  }
+  const withTimeout = (p, ms, why) =>
+    Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(why)), ms))]);
+
   class RealSensePilot extends HTMLElement {
+    // PolyScope's IK solves for *PolyScope's* active TCP, which is not the TCP the cockpit's
+    // controller reported (a different robot while testing in the sim; a stale training
+    // offset on a real one). So the cockpit's flange target is re-expressed in PolyScope's
+    // TCP: offset = FK_flange(0)⁻¹ · TCP(0), both from PolyScope at the zero joint vector.
+    static polyScopeTarget(flangeTarget, dh, tcpAtZeroPose) {
+      const offset = matMul(matInv(flangeMat(dh, [0, 0, 0, 0, 0, 0])), poseToMat(tcpAtZeroPose));
+      return matToPose(matMul(poseToMat(flangeTarget), offset));
+    }
+
     constructor() {
       super();
       this._node = null;
@@ -99,9 +158,26 @@
 
     // -- cockpit --------------------------------------------------------------------
     cockpitUrl() {
-      const saved = (this._node && this._node.cockpitUrl ? String(this._node.cockpitUrl) : "").trim();
-      if (saved) return saved.replace(/\/+$/, "");
-      return `${location.protocol}//${location.hostname}:${DEFAULT_COCKPIT_PORT}`;
+      return RealSensePilot.cockpitBase(this._node && this._node.cockpitUrl, location);
+    }
+
+    // The saved field as an absolute base URL. Shorthand is completed against this page's
+    // host — ":7621" / "7621" → http://<page host>:7621, "host[:port]" → http://host[:port],
+    // a bare host gets :7621. Anything without a scheme would otherwise be fetched *relative
+    // to PolyScope's own page*, and PolyScope's 404 read as "the cockpit is outdated".
+    static cockpitBase(saved, loc) {
+      const raw = (saved ? String(saved) : "").trim().replace(/\/+$/, "");
+      const pageHost = `${loc.protocol}//${loc.hostname}`;
+      if (!raw) return `${pageHost}:${DEFAULT_COCKPIT_PORT}`;
+      const port = /^:?(\d{1,5})$/.exec(raw);
+      if (port) return `${pageHost}:${port[1]}`;
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return raw;
+      const withScheme = `http://${raw}`;
+      try {
+        const u = new URL(withScheme);
+        if (!u.port && u.pathname === "/") return `${withScheme}:${DEFAULT_COCKPIT_PORT}`;
+      } catch (e) { /* diagnose() names the bad value */ }
+      return withScheme;
     }
 
     // "Failed to fetch" is all the browser says, whether the cockpit refused this page's
@@ -253,8 +329,11 @@
             continue;
           }
           if (!r.ok) {
-            const e = new Error(`the cockpit at ${this.cockpitUrl()} answered HTTP ${r.status} on /api/color.png` +
-              (r.status === 404 ? " — it predates the URCap routes; update it and restart." : "."));
+            const isPolyScope = new URL(this.cockpitUrl()).origin === location.origin;
+            const e = new Error(isPolyScope
+              ? `${this.cockpitUrl()} is PolyScope itself, not the cockpit — the cockpit listens on port ${DEFAULT_COCKPIT_PORT}.`
+              : `the cockpit at ${this.cockpitUrl()} answered HTTP ${r.status} on /api/color.png` +
+                (r.status === 404 ? " — it predates the URCap routes; update it and restart." : "."));
             e.http = r.status;
             throw e;
           }
@@ -344,8 +423,15 @@
         const reach = loc.reachable === false ? "OUT OF REACH" : loc.reachable === true ? "reachable" : "reach unknown";
         this.$("target").textContent =
           `object  base ${fmtVec(loc.point_base_m)} m  (${fmt(loc.point_distance_m, 2)} m from the base)\n` +
-          `approach ${fmtVec(loc.approach_pose)}  standoff ${fmt(loc.standoff_m, 2)} m  ${reach}` +
-          (loc.max_reach_m ? `  (cap ${fmt(loc.max_reach_m, 2)} m${loc.model ? `, ${loc.model}` : ""})` : "");
+          (loc.reference === "fingertip"
+            ? `fingertips ${fmtVec(loc.approach_pose)}  ${fmt(loc.standoff_m, 3)} m above the object (tool ${fmt(loc.tip_m, 3)} m)\n`
+            : loc.reference === "flange" && loc.flange_target_pose
+              ? `flange   ${fmtVec(loc.flange_target_pose)}  standoff ${fmt(loc.standoff_m, 2)} m above the object\n`
+              : `approach ${fmtVec(loc.approach_pose)}  standoff ${fmt(loc.standoff_m, 2)} m\n`) +
+          `${reach}` +
+          (loc.reach_check === "controller_ik"
+            ? "  (the controller's inverse kinematics)"
+            : loc.max_reach_m ? `  (${fmt(loc.max_reach_m, 2)} m datasheet radius${loc.model ? `, ${loc.model}` : ""} — no IK answer)` : "");
         const offer = loc.reachable !== false;
         this.$("move-ps").disabled = !offer;
         this.$("move-ck").disabled = !offer;
@@ -374,17 +460,29 @@
         this.setStatus("PolyScope's move services are not on this API — use Move (cockpit)", "warn");
         return;
       }
-      const pose = loc.approach_pose;
+      const rps = api.robotPositionService;
       try {
         this.setStatus("asking PolyScope for the joint solution…");
-        const qNear = await firstValue(api.robotPositionService.getJointPositions());
-        const joints = await api.robotPositionService.getInverseKinematics(
-          { position: [pose[0], pose[1], pose[2]], orientation: [pose[3], pose[4], pose[5]] },
-          qNear,
+        const qNear = await firstValue(rps.getJointPositions());
+        let pose = loc.approach_pose;
+        if (Array.isArray(loc.flange_target_pose) && typeof rps.getKinematicInfo === "function") {
+          const dh = await rps.getKinematicInfo();
+          const zero = { base: 0, shoulder: 0, elbow: 0, wrist1: 0, wrist2: 0, wrist3: 0 };
+          const t0 = await rps.convertJointPositionsToTcpPose(zero);
+          pose = RealSensePilot.polyScopeTarget(loc.flange_target_pose, dh, [...t0.position, ...t0.orientation]);
+        }
+        // PolyScope's IK does not reject an unsolvable pose, it never answers (10.13 sim).
+        const joints = await withTimeout(
+          rps.getInverseKinematics(
+            { position: [pose[0], pose[1], pose[2]], orientation: [pose[3], pose[4], pose[5]] },
+            qNear,
+          ),
+          8000,
+          `PolyScope found no joint solution for [${fmtVec(pose)}] in 8 s — unreachable for its IK`,
         );
-        this.setStatus("opening PolyScope's auto-move screen — hold to move", "ok");
+        // autoMove resolves as soon as PolyScope's screen opens (10.13 sim), not when the arm arrives
         await api.robotMoveService.autoMove(joints);
-        this.setStatus("auto-move finished", "ok");
+        this.setStatus("PolyScope's move screen is open — hold Move To Position to go there", "ok");
       } catch (err) {
         this.setStatus(`PolyScope move: ${err && err.message ? err.message : err}`, "err");
       }

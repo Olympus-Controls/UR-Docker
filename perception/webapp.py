@@ -96,7 +96,7 @@ from .realsense import (
     platform_hint,
 )
 from .rgbd import RgbdFrame, pack_rgbd
-from .robotlink import RobotLink
+from .robotlink import RobotLink, reach_note
 from .segment import Mask, StubSegmenter, extract_features, normalize_box
 from .views import ViewSource, open_views, parse_view_size, parse_view_specs
 
@@ -759,12 +759,7 @@ class ViewerApp:
             summary=lambda r: (
                 "locate → base "
                 + str([round(v, 3) for v in r.get("point_base_m", [])] if r.get("ok") else "failed")
-                + (
-                    f" — OUT OF REACH: approach {r['commanded_distance_m']:.3f} m from base, "
-                    f"{r.get('model') or 'arm'} reaches {r['max_reach_m']:.2f} m; move the part closer"
-                    if r.get("ok") and r.get("reachable") is False
-                    else ""
-                )
+                + (" — OUT OF REACH: " + reach_note(r) if r.get("ok") and r.get("reachable") is False else "")
             ),
         )
 

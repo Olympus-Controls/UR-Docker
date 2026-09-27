@@ -48,10 +48,10 @@ from urctl.config import RobotConfig
 from urctl.pose import Transform
 from urctl.robot import Robot
 
+from .handeye import DEFAULT_TIP_M, tip_m_from_env
 from .pngio import load_png
 
 DEFAULT_COCKPIT = "http://127.0.0.1:7621"
-DEFAULT_TIP_M = 0.163
 WHITE_MIN, WHITE_CHROMA = 180, 60  # foam reads bluish-white under a cool white balance (207,227,251)
 
 # -- image heuristics ----------------------------------------------------------------------
@@ -812,8 +812,8 @@ def add_pick_cycle_args(ap) -> None:
     ap.add_argument(
         "--tip-m",
         type=float,
-        default=DEFAULT_TIP_M,
-        help="flange-to-fingertip length (default 0.163: Hand-E + adapter)",
+        default=None,
+        help="flange-to-fingertip length (default: the cell's PERCEPTION_TIP_M, else 0.163 Hand-E + adapter)",
     )
     ap.add_argument("--lift-mm", type=float, default=25.4, help="in-place lift (default 25.4 = one inch)")
     ap.add_argument("--drop-mm", type=float, default=120.0, help="release height for the drop pass")
@@ -890,7 +890,7 @@ def run_pick_cycle(args) -> int:
         velocity=args.velocity,
         min_radius_m=args.min_radius_m,
         max_radius_m=args.max_radius_m,
-        tip_m=args.tip_m,
+        tip_m=tip_m_from_env() if args.tip_m is None else args.tip_m,
         lift_mm=args.lift_mm,
         drop_mm=args.drop_mm,
         grasp_below_mm=args.grasp_below_mm,

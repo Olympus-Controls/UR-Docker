@@ -68,6 +68,9 @@ class FakeController:
         self.gripper_object: int | None = None  # the position at which the fingers meet something
         self.gripper_fault = 0
         self.gripper_sends: list[str] = []
+        # get_inverse_kin_has_solution: None = the controller never answers (the
+        # default, as on PolyScope X in Local); else a callable (pose, tcp|None) -> bool.
+        self.ik = None
 
     def install(self, monkeypatch) -> FakeController:
         from urctl import transport
@@ -125,6 +128,21 @@ class FakeController:
                     return b"urctl/reteach/pose=[1,2,3,4,5,6]\n"
                 return b"urctl/reteach=cancel\n"
             return f"urctl/confirm={self.confirm_answer}\n".encode()
+        if "urctl/ik/" in body:
+            if self.ik is None:
+                return b""
+            out = []
+            rx = (
+                r"if get_inverse_kin_has_solution\(p\[([^\]]+)\](?:, tcp=p\[([^\]]+)\])?\):\s*"
+                r'textmsg\("urctl/ik/(\d+)="'
+            )
+            for m in re.finditer(rx, body):
+                pose = [float(v) for v in m.group(1).split(",")]
+                tcp = [float(v) for v in m.group(2).split(",")] if m.group(2) else None
+                # a solvable pose "solves" to joints that echo it, so tests can tell them apart
+                answer = "[" + ",".join(str(v) for v in pose) + "]" if self.ik(pose, tcp) else "False"
+                out.append(f"urctl/ik/{m.group(3)}={answer}")
+            return ("\n".join(out) + "\nurctl/ik/done=1\n").encode()
         if "urctl/path/" in body:
             # A multi-leg TCP path echoes each leg's landed pose (blended legs echo nothing),
             # gripper legs echo "POS OBJ" from the daemon, then the final marker.
@@ -1509,3 +1527,80 @@ class TestPathWithGripperAndBlends:
             robot.move_tcp_path([{"pose": [0.3, 0.2, 0.1, 0, 3.14, 0], "gripper": "squeeze"}])
         schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "move_tcp_path")
         assert "blend_m" in json.dumps(schema) and "gripper" in json.dumps(schema)
+
+
+# ----- reach: the controller's inverse kinematics over the datasheet sphere ---
+
+
+class TestControllerIkReach:
+    # 2026-09-27, UR3e (PolyScope 5.25.1): a flange 0.533 m from the base is reachable
+    # (get_inverse_kin_has_solution -> True) though the datasheet sphere says 0.5 m.
+    FAR_BUT_REACHABLE = [-0.247, 0.456, -0.125, 3.14159, 0.0, 0.0]
+    NEAR_BUT_NOT = [0.05, 0.05, 0.05, 3.14159, 0.0, 0.0]  # inside the sphere, no IK solution
+
+    def test_controller_yes_beats_the_sphere(self, monkeypatch):
+        fake = FakeController().install(monkeypatch)
+        fake.ik = lambda pose, tcp: True
+        res = Robot(RobotConfig(robot_model="UR3e")).move_tcp(self.FAR_BUT_REACHABLE, tcp=[0] * 6)
+        assert res["ok"], res
+        (ik,) = [s for s in fake.primary_sends if "get_inverse_kin_has_solution" in s]
+        assert "tcp=p[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]" in ik and "movel(" not in ik
+        assert ik.count("tcp=p[0.0") == 2  # the solve uses the same TCP as the check
+        assert any("movel(" in s for s in fake.primary_sends)
+
+    def test_controller_no_refuses_inside_the_sphere_and_sends_nothing(self, monkeypatch):
+        fake = FakeController().install(monkeypatch)
+        fake.ik = lambda pose, tcp: False
+        res = Robot(RobotConfig(robot_model="UR3e")).move_tcp(self.NEAR_BUT_NOT)
+        assert not res["ok"]
+        assert [v["rule"] for v in res["safety"]["violations"]] == ["ik_reach"]
+        assert not any("movel(" in s for s in fake.primary_sends)
+        # no tcp override -> the controller is asked about its active TCP
+        (ik,) = [s for s in fake.primary_sends if "get_inverse_kin_has_solution" in s]
+        assert "tcp=" not in ik
+
+    def test_no_answer_falls_back_to_the_sphere(self, monkeypatch):
+        fake = FakeController().install(monkeypatch)  # fake.ik is None: silence
+        res = Robot(RobotConfig(robot_model="UR3e")).move_tcp(self.FAR_BUT_REACHABLE)
+        assert not res["ok"] and [v["rule"] for v in res["safety"]["violations"]] == ["tcp_reach"]
+        assert not any("movel(" in s for s in fake.primary_sends)
+
+    def test_relative_and_dry_run_never_ask(self, monkeypatch):
+        fake = FakeController().install(monkeypatch)
+        fake.ik = lambda pose, tcp: pytest.fail("asked the controller")
+        Robot(RobotConfig(robot_model="UR3e")).move_tcp([0, 0.01, 0, 0, 0, 0], relative=True)
+        assert Robot(RobotConfig(robot_model="UR3e"), dry_run=True).move_tcp(self.NEAR_BUT_NOT)["ok"]
+        assert not any("get_inverse_kin_has_solution" in s for s in fake.primary_sends)
+
+    def test_path_asks_once_for_every_leg_and_names_the_bad_one(self, monkeypatch):
+        fake = FakeController().install(monkeypatch)
+        fake.ik = lambda pose, tcp: pose[2] > 0.0
+        legs = [
+            {"pose": self.FAR_BUT_REACHABLE[:2] + [0.1] + self.FAR_BUT_REACHABLE[3:]},
+            {"pose": self.FAR_BUT_REACHABLE[:2] + [-0.2] + self.FAR_BUT_REACHABLE[3:]},
+        ]
+        res = Robot(RobotConfig(robot_model="UR3e")).move_tcp_path(legs, tcp=[0] * 6)
+        assert not res["ok"] and res["safety"]["leg"] == 1
+        assert [v["rule"] for v in res["safety"]["violations"]] == ["ik_reach"]
+        ik = [s for s in fake.primary_sends if "get_inverse_kin_has_solution" in s]
+        assert len(ik) == 1 and ik[0].count("get_inverse_kin_has_solution") == 2
+        assert ik[0].count("get_inverse_kin(") == 2
+        assert not any("movel(" in s for s in fake.primary_sends)
+
+    def test_answers_are_matched_by_index_not_substring(self, monkeypatch):
+        fake = FakeController().install(monkeypatch)
+        poses = [[0.1 + i / 100, 0.1, 0.1, 0, 3.14, 0] for i in range(12)]
+        fake.ik = lambda pose, tcp: round((pose[0] - 0.1) * 100) % 2 == 0
+        robot = Robot(RobotConfig(robot_model="UR3e"))
+        assert robot.ik_has_solution(poses) == [i % 2 == 0 for i in range(12)]
+        solved = robot.inverse_kin(poses)
+        for i, (pose, ans) in enumerate(zip(poses, solved, strict=True)):
+            assert ans["joints"] == (pytest.approx(pose) if i % 2 == 0 else None)
+
+    def test_bad_input_is_no_answer_not_a_crash(self, monkeypatch):
+        FakeController().install(monkeypatch)
+        robot = Robot(RobotConfig(robot_model="UR3e"))
+        assert robot.ik_has_solution([["x", 0, 0, 0, 0, 0]]) == [None]
+        assert robot.ik_has_solution([[float("nan"), 0, 0, 0, 0, 0]]) == [None]
+        with pytest.raises(ValueError):
+            robot.ik_has_solution([[0.1] * 6], tcp=[0, 0])

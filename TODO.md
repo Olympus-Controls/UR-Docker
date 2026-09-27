@@ -8,7 +8,7 @@
 - 2026-09-25 — Mac Studio + D435: `--rs-lean` streams (first open errors once, the back-off re-open holds). Open: why the *first* open still loses — shave one more reset, or accept the one retry. Ruled out: software drift, headless-vs-desktop, a fresh daemon, the webcams, Spotify. The Mac is a dev box, not a camera host; Windows laptop (WSL2, verified 09-23) and Jetson are.
 - 2026-09-12 — The native Windows path (`scripts/setup-windows.ps1`, `scripts/cockpit.ps1`, `REALSENSE_LIB` at the SDK's default `bin\x64\realsense2.dll`) has not been run on a Windows box. First run on the work laptop is the verification; paste the doctor output (`uv run perception --cell ur20 doctor --stream --json`) if anything fails.
 
-## PolyScope X URCap (2026-09-26, `docs/polyscopex-urcap.md`)
+## PolyScope X URCap (2026-09-26, `urcap/DEVELOPING.md`)
 
 - Installed in the sim and verified headless (node loads, feed/hover/click against `make urcap-cockpit` on :7622). **Still owed:** a cockpit with a robot behind it — restart your live one with `--cors http://localhost:8000` (your `Quickstart` line + that flag), set the node's cockpit URL to `http://localhost:7621`, click a block: base point + approach + reach, then **Move (cockpit)** on the UR3e. **Move (PolyScope)** (IK + auto-move; is `Pose.orientation` a rotation vector?) needs the sim's arm powered + Remote, or the real PolyScope X cell.
 - Later, on the robot: a backend-container packaging of the cockpit (`containers:` + `devices: video` + `services: urcontrol-primary`) so the pendant needs no external host.
@@ -25,6 +25,9 @@
 - 2026-09-25 — One GUI: retire `urctl-gui` (`urctl/webapp.py` + its `index.html`) in favour of the cockpit?
 - 2026-09-25 — `sysinfo`/`installation` + `ur_system_snapshot`/`ur_list_programs` (SSH/docker filesystem introspection): delete? Neither the UR3e nor PolyScope X exposes SSH; RTDE deep state + `codes` stay.
 - 2026-09-25 — SAM extra: keep the hook for the Jetson, or drop until it exists?
+- 2026-09-27 — `get_flange_pose` failed twice (12:49:06–:15) with *no TCP pose/offset surfaced on the Primary broadcast* on the UR3e (Remote, RUNNING/NORMAL, idle), then recovered; cause unknown (no audit log, SSH :22 closed). Add a Dashboard snapshot (robotmode/safetymode/programState/remote + wait time) and the `captured` tail to the failure so the next one explains itself?
+- 2026-09-27 — URCap package verification: the reproducible `urcap/dist/` build (new tar headers) hasn't been installed in the sim yet — the sim was in use. OK to `make urcap-install` (replaces the installed 0.1.0), and to open a **draft** PR for this branch (it touches `ci.yml` lint paths)? `urcap/README.md` tells people to clone `main`, which has no `urcap/` until this merges.
+- 2026-09-27 — First PolyScope 5 load of `urcap/dist/realsense-pilot-ps5-0.1.0.urcap` (the e-Series sim can't run on the Mac): install it on the UR3e from USB (asked 2026-09-27 "install it now": no network path — SSH closed, no install API; needs the stick) (Settings → System → URCaps → +, restarts PolyScope; removable from the same screen) — before or after Monday's demo? Or add a CI step that copies it into URSim's `/urcaps` and asserts `polyscope.log` loads it (a `ci.yml` edit → draft PR)?
 
 ## Decisions (so they don't get re-asked)
 
@@ -47,3 +50,4 @@
 - 2026-09-12 — D435 USB-C is on an **end face** of Nick's unit (not the back as in Intel's mesh); bracket clears it, spec §6 A1 updated.
 - 2026-09-12 — SAM backend stays "wired, unverified" until a GPU box exists; the demo uses the stub segmenter.
 - 2026-09-12 — Dependabot ignores `universalrobots/ursim_polyscopex` bumps (pinned 10.13.0; re-test new tags by hand).
+- 2026-09-27 — **Approach by the fingertips, always** ("the tool offset is critical"): the default approach reference is `fingertip` (`PERCEPTION_TIP_M`, 0.163 m on the UR3e's Hand-E), moves run with that TCP, the controller's active TCP is never used for it.

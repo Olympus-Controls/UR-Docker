@@ -392,7 +392,10 @@ def test_robot_locate_then_move_round_trip(robot_server):
     assert code == 200 and loc["ok"], loc
     assert loc["point_cam_m"] == pytest.approx(seg["features"]["point_m"], abs=1e-9)
     assert len(loc["approach_pose"]) == 6 and loc["standoff_m"] == 0.05
-    assert loc["approach_pose"][3:] == pytest.approx(fake.tcp_pose[3:], abs=1e-6)  # orientation kept
+    from urctl.pose import rotvec_to_matrix
+
+    got, want = rotvec_to_matrix(loc["approach_pose"][3:]), rotvec_to_matrix(fake.tcp_pose[3:])
+    assert [v for r in got for v in r] == pytest.approx([v for r in want for v in r], abs=1e-6)  # kept
     assert loc["robot"]["tcp_offset"] == pytest.approx(fake.tcp_offset, abs=1e-6)
     assert len([s for s in fake.primary_sends if "urctl/flange" in s]) == 1
     # an explicit point overrides the segment's
@@ -403,6 +406,8 @@ def test_robot_locate_then_move_round_trip(robot_server):
     assert code == 200 and mv["ok"] and mv["action"] == "move_tcp" and mv["safety"]["ok"], mv
     movel = [s for s in fake.primary_sends if "movel(" in s]
     assert len(movel) == 1 and "pose_add" not in movel[0] and "v=0.1" in movel[0]
+    # a client that sends only the pose still moves the fingertips there (the default reference)
+    assert "set_tcp(p[0.0, 0.0, 0.163, 0.0, 0.0, 0.0])" in movel[0]
     code, mv2 = post(base, "/api/robot/move", {"pose": loc["approach_pose"], "velocity": 0.05})
     assert code == 200 and "v=0.05" in [s for s in fake.primary_sends if "movel(" in s][-1]
     # state passes through the registry too
@@ -663,7 +668,7 @@ def test_robot_locate_accepts_a_reference(robot_server):
     assert code == 200 and loc["ok"] and loc["reference"] == "flange", loc
     assert loc["flange_target_pose"] and loc["tcp_offset"] == pytest.approx(fake.tcp_offset, abs=1e-6)
     code, loc2 = post(base, "/api/robot/locate", {"point_m": [0.0, 0.0, 0.3]})
-    assert code == 200 and loc2["reference"] == "tcp"
+    assert code == 200 and loc2["reference"] == "fingertip" and loc2["tcp"][2] == pytest.approx(0.163)
     code, bad = post(base, "/api/robot/locate", {"point_m": [0.0, 0.0, 0.3], "reference": "wrist"})
     assert code == 400, bad
     code, bad = post(base, "/api/robot/locate", {"point_m": [0.0, 0.0, 0.3], "reference": 7})

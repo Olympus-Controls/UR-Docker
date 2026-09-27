@@ -1,5 +1,6 @@
 """The PolyScope X URCap (urcap/realsense-pilot): its source tree agrees with itself,
-scripts/urcapx.py packages it the way UR's urcap-utils does and installs it the way
+urcap/urcapx.py packages it reproducibly (and the downloadable urcap/dist/ copy is
+that build, byte for byte) the way UR's urcap-utils does and installs it the way
 the Robot-API expects (against a real HTTP server), the behavior worker speaks the
 threads.js protocol (run under node when present), and the cockpit's CORS + colour
 endpoint that the URCap page depends on."""
@@ -7,6 +8,7 @@ endpoint that the URCap page depends on."""
 from __future__ import annotations
 
 import email.parser
+import gzip
 import json
 import re
 import shutil
@@ -25,11 +27,12 @@ from perception.config import PerceptionConfig
 from perception.realsense import SyntheticRgbdCamera
 from perception.webapp import ViewerApp, ViewerHandler
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "urcap"))
 import urcapx  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 URCAP = ROOT / "urcap" / "realsense-pilot"
+DIST = ROOT / "urcap" / "dist"
 FRONTEND = URCAP / "realsense-pilot-frontend"
 NODE = shutil.which("node")
 
@@ -38,17 +41,17 @@ NODE = shutil.which("node")
 
 
 def test_manifest_contribution_and_sources_agree():
-    meta = urcapx.read_manifest((URCAP / "manifest.yaml").read_text())
+    meta = urcapx.read_manifest((URCAP / "manifest.yaml").read_text(encoding="utf-8"))
     assert meta["vendorID"] == "olympus-controls" and meta["urcapID"] == "realsense-pilot"
     assert meta["folders"] == ["realsense-pilot-frontend"]
-    contribution = json.loads((FRONTEND / "contribution.json").read_text())
+    contribution = json.loads((FRONTEND / "contribution.json").read_text(encoding="utf-8"))
     (node,) = contribution["applicationNodes"]
     tag = node["componentTagName"]
     assert (FRONTEND / node["presenterURI"]).is_file() and (FRONTEND / node["behaviorURI"]).is_file()
-    main_js = (FRONTEND / node["presenterURI"]).read_text()
-    worker_js = (FRONTEND / node["behaviorURI"]).read_text()
+    main_js = (FRONTEND / node["presenterURI"]).read_text(encoding="utf-8")
+    worker_js = (FRONTEND / node["behaviorURI"]).read_text(encoding="utf-8")
     assert f'const TAG = "{tag}"' in main_js and f'const NODE_TYPE = "{tag}"' in worker_js
-    i18n = json.loads((FRONTEND / node["translationPath"] / "en.json").read_text())
+    i18n = json.loads((FRONTEND / node["translationPath"] / "en.json").read_text(encoding="utf-8"))
     assert i18n["application"]["nodes"][tag]["title"] == "RealSense Pilot"
     for key in ("programNodes", "smartSkills", "sidebarItems", "operatorScreens"):
         assert contribution[key] == []
@@ -84,10 +87,58 @@ def test_package_refuses_a_missing_folder(tmp_path):
     src.mkdir()
     (src / "manifest.yaml").write_text(
         'metadata:\n  vendorID: "vend"\n  urcapID: "urc"\n  version: 1.0.0\nartifacts:\n  webArchives:\n'
-        '  - id: "f"\n    folder: "f"\n'
+        '  - id: "f"\n    folder: "f"\n',
+        encoding="utf-8",
     )
     with pytest.raises(urcapx.UrcapError, match="not in"):
         urcapx.package(src, tmp_path / "out")
+
+
+def test_package_is_reproducible_and_normalised(tmp_path):
+    a = urcapx.package(URCAP, tmp_path / "a").read_bytes()
+    b = urcapx.package(URCAP, tmp_path / "b").read_bytes()
+    assert a == b
+    with tarfile.open(tmp_path / "a" / "realsense-pilot-0.1.0.urcapx", "r:gz") as tar:
+        infos = tar.getmembers()
+    assert {(i.uid, i.gid, i.uname, i.gname) for i in infos} == {(0, 0, "", "")}
+    assert len({i.mtime for i in infos}) == 1 and infos[0].mtime > 1_600_000_000
+    assert {i.mode for i in infos if i.isfile()} == {0o644}
+
+
+def test_changed_source_changes_the_timestamp(tmp_path):
+    """One fixed mtime per build would give an updated main.js the old
+    Last-Modified/ETag on an installer that keeps tar mtimes (the 10.13 sim's
+    stamps the install time instead), and the browser would keep the stale copy."""
+    src = tmp_path / "src"
+    shutil.copytree(URCAP, src)
+    before = urcapx.package(src, tmp_path / "a")
+    with tarfile.open(before, "r:gz") as tar:
+        old = tar.getmember("manifest.yaml").mtime
+    main = src / "realsense-pilot-frontend" / "main.js"
+    main.write_text(main.read_text(encoding="utf-8") + "\n// edit\n", encoding="utf-8")
+    after = urcapx.package(src, tmp_path / "b")
+    with tarfile.open(after, "r:gz") as tar:
+        assert tar.getmember("manifest.yaml").mtime != old
+
+
+def test_the_downloadable_package_is_the_current_source(tmp_path):
+    """urcap/dist/ is what people download: it must be exactly what the source
+    builds to now. Edited the URCap? `make urcap-package` and commit urcap/dist/."""
+    fresh = urcapx.package(URCAP, tmp_path)
+    shipped = DIST / fresh.name
+    assert shipped.is_file(), f"{shipped.relative_to(ROOT)} missing — run `make urcap-package` and commit it"
+    # Compare the tar inside, not the gzip bytes: the same tar deflates to different
+    # bytes under a different zlib build (windows-latest CI differed from byte 12 —
+    # inside the deflate stream — while macOS/Linux matched, 2026-09-27).
+    assert gzip.decompress(shipped.read_bytes()) == gzip.decompress(fresh.read_bytes()), (
+        f"{shipped.relative_to(ROOT)} is stale — run `make urcap-package` and commit it"
+    )
+    stale = sorted(p.name for p in DIST.glob("*.urcapx") if p.name != fresh.name)
+    assert not stale, f"old packages left in urcap/dist/: {stale} (the README links one version)"
+    readme = (ROOT / "urcap" / "README.md").read_text(encoding="utf-8")
+    assert f"dist/{fresh.name}" in readme, f"urcap/README.md doesn't link dist/{fresh.name}"
+    linked = set(re.findall(r"realsense-pilot-\d+\.\d+\.\d+\.urcapx", readme))
+    assert linked == {fresh.name}, f"urcap/README.md names other versions: {sorted(linked - {fresh.name})}"
 
 
 # -- installing against a urservice look-alike ----------------------------------------------------
@@ -287,7 +338,7 @@ const send = (m) => listeners.forEach((fn) => fn({ data: m }));
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_worker_speaks_the_threads_protocol(tmp_path):
     harness = tmp_path / "harness.js"
-    harness.write_text(WORKER_HARNESS)
+    harness.write_text(WORKER_HARNESS, encoding="utf-8")
     proc = subprocess.run(
         [NODE, str(harness), str(FRONTEND / "realsense-pilot-node.worker.js")],
         capture_output=True,
@@ -318,7 +369,7 @@ def test_worker_speaks_the_threads_protocol(tmp_path):
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_presenter_parses_and_defines_the_element():
     subprocess.run([NODE, "--check", str(FRONTEND / "main.js")], check=True, timeout=30)
-    src = (FRONTEND / "main.js").read_text()
+    src = (FRONTEND / "main.js").read_text(encoding="utf-8")
     assert re.search(r"customElements\.define\(TAG, RealSensePilot\)", src)
     for prop in ("applicationNode", "applicationAPI", "robotSettings", "robotContext"):
         assert f"set {prop}(" in src, prop
@@ -469,8 +520,107 @@ def test_private_network_preflight_is_answered_only_for_allowed_origins(cockpit)
     assert "Access-Control-Allow-Origin" not in headers
 
 
+COCKPIT_BASE_HARNESS = r"""
+let defined = null;
+globalThis.HTMLElement = class {};
+globalThis.window = { customElements: { get: () => undefined, define: (tag, cls) => { defined = cls; } } };
+require(process.argv[2]);
+const loc = { protocol: "http:", hostname: "localhost", origin: "http://localhost:8001" };
+const cases = JSON.parse(process.argv[3]);
+process.stdout.write(JSON.stringify(cases.map((c) => defined.cockpitBase(c, loc))));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_cockpit_field_shorthand_is_never_fetched_relative_to_polyscope(tmp_path):
+    # Regression (2026-09-27): a saved ":7621" was fetched as a path under PolyScope's
+    # own page; PolyScope's 404 was then reported as "the cockpit predates the URCap routes".
+    harness = tmp_path / "harness.js"
+    harness.write_text(COCKPIT_BASE_HARNESS, encoding="utf-8")
+    cases = {
+        "": "http://localhost:7621",
+        None: "http://localhost:7621",
+        ":7621": "http://localhost:7621",
+        "7621": "http://localhost:7621",
+        " :7622/ ": "http://localhost:7622",
+        "127.0.0.1:7621": "http://127.0.0.1:7621",
+        "192.168.3.10": "http://192.168.3.10:7621",
+        "jetson.local/": "http://jetson.local:7621",
+        "http://127.0.0.1:7621//": "http://127.0.0.1:7621",
+        "https://cam.example:8443": "https://cam.example:8443",
+    }
+    proc = subprocess.run(
+        [NODE, str(harness), str(FRONTEND / "main.js"), json.dumps(list(cases))],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    got = json.loads(proc.stdout)
+    assert dict(zip(cases, got, strict=True)) == cases
+    assert all("://" in g for g in got)
+
+
+POLYSCOPE_TARGET_HARNESS = r"""
+let defined = null;
+globalThis.HTMLElement = class {};
+globalThis.window = { customElements: { get: () => undefined, define: (tag, cls) => { defined = cls; } } };
+require(process.argv[2]);
+const { flange, dh, t0s } = JSON.parse(process.argv[3]);
+process.stdout.write(JSON.stringify(t0s.map((t0) => defined.polyScopeTarget(flange, dh, t0))));
+"""
+
+# PolyScope X 10.13 sim (UR3 config), robotPositionService.getKinematicInfo(), 2026-09-27.
+SIM_DH = [
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.15185, "DHAlpha": 1.570796327},
+    {"DHTheta": 0, "DHa": -0.24355, "DHd": 0, "DHAlpha": 0},
+    {"DHTheta": 0, "DHa": -0.2132, "DHd": 0, "DHAlpha": 0},
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.13105, "DHAlpha": 1.570796327},
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.08535, "DHAlpha": -1.570796327},
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.0921, "DHAlpha": 0},
+]
+# ... and convertJointPositionsToTcpPose(all zeros) with the sim's (flange) TCP.
+SIM_FLANGE_AT_ZERO = [-0.45675, -0.22315, 0.0665, 1.570796327, 0.0, 0.0]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_move_polyscope_targets_polyscopes_own_tcp(tmp_path):
+    # Regression (2026-09-27): Move (PolyScope) handed PolyScope's IK the cockpit's
+    # approach_pose — a TCP pose under the *cockpit controller's* 220 mm training offset —
+    # so the sim (TCP = flange) was asked for a flange 17 cm past reach on every click.
+    from urctl.pose import pose_trans
+
+    flange = [-0.2316, 0.3103, -0.2155, -2.5834, 0.5663, 0.0012]
+    offsets = [[0, 0, 0, 0, 0, 0], [0.0, -0.035, 0.22, 0.257, -0.41, 1.432], [0.01, 0.02, 0.15, 0, 0, 3.1]]
+    t0s = [pose_trans(SIM_FLANGE_AT_ZERO, off) for off in offsets]
+    harness = tmp_path / "harness.js"
+    harness.write_text(POLYSCOPE_TARGET_HARNESS, encoding="utf-8")
+    proc = subprocess.run(
+        [
+            NODE,
+            str(harness),
+            str(FRONTEND / "main.js"),
+            json.dumps({"flange": flange, "dh": SIM_DH, "t0s": t0s}),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    got = json.loads(proc.stdout)
+    assert got[0] == pytest.approx(flange, abs=1e-6)  # the sim: TCP is the flange
+    for off, pose in zip(offsets[1:], got[1:], strict=True):
+        want = pose_trans(flange, off)
+        assert pose[:3] == pytest.approx(want[:3], abs=1e-6)
+        # compare orientations as matrices (a rotation vector near pi has two spellings)
+        from urctl.pose import rotvec_to_matrix
+
+        a, b = rotvec_to_matrix(pose[3:]), rotvec_to_matrix(want[3:])
+        assert [v for r in a for v in r] == pytest.approx([v for r in b for v in r], abs=1e-6)
+
+
 def test_page_tells_a_cors_refusal_from_an_unreachable_cockpit():
-    main_js = (FRONTEND / "main.js").read_text()
+    main_js = (FRONTEND / "main.js").read_text(encoding="utf-8")
     assert 'mode: "no-cors"' in main_js and "refuses this page" in main_js
     assert "nothing answers at" in main_js and "--bind 0.0.0.0" in main_js
     # an HTTP status is not re-diagnosed as a network failure

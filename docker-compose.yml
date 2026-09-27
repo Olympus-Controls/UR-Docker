@@ -86,9 +86,9 @@ services:
       # OSX: set HOST_ARCH=arm64 on Apple Silicon (e.g. `HOST_ARCH=arm64 make simx-up`).
       - HOST_ARCH=${HOST_ARCH:-amd64}
       - ROBOT_TYPE=${ROBOT_TYPE:-UR10}
-      # URCap installs from outside (scripts/urcapx.py install) need Remote mode
-      # unless the sim runs in Development Mode, which is what the URCap SDK's own
-      # run-simulator sets: URSIM_PX_DEVMODE=true docker compose up -d ursim-px
+      # URCap installs through the SDK's Robot-API path need Remote mode unless the
+      # sim runs in Development Mode (urcap/urcapx.py uses the urservice endpoint,
+      # which needs neither), which is what the URCap SDK's own run-simulator sets: URSIM_PX_DEVMODE=true docker compose up -d ursim-px
       # (recreating the container resets the Services toggles and Remote mode).
       - DEVMODE=${URSIM_PX_DEVMODE:-}
     extra_hosts:

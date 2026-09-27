@@ -21,13 +21,15 @@ building):
 * ``list`` / ``delete VENDOR URCAP`` — the same endpoint. Refresh the PolyScope
   page afterwards; the simulator in this repo listens on ``localhost:8000``.
 
-    uv run python scripts/urcapx.py package urcap/realsense-pilot --out target
-    uv run python scripts/urcapx.py install target/realsense-pilot-0.1.0.urcapx --port 8000 --replace
+    python3 urcap/urcapx.py package urcap/realsense-pilot --out urcap/dist
+    python3 urcap/urcapx.py install urcap/dist/realsense-pilot-0.1.0.urcapx --port 8000 --replace
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
 import io
 import json
 import re
@@ -99,10 +101,37 @@ def package(src: str | Path, out_dir: str | Path) -> Path:
         for folder in meta["folders"]:
             shutil.copytree(src / folder, stage / folder)
         members = sorted(p.name for p in stage.iterdir() if p.name != MANIFEST)
-        with tarfile.open(out, "w:gz") as tar:
-            for name in [MANIFEST, *members]:
-                tar.add(stage / name, arcname=name)
+        # Reproducible: the same source gives the same bytes (owners, modes and one
+        # mtime fixed; tarfile.add recurses in sorted order), so the committed
+        # urcap/dist/ package can be checked against a fresh build. The mtime is
+        # derived from the contents rather than 0 so an updated package never
+        # shares Last-Modified/ETag with the old one should an installer keep tar
+        # mtimes (PolyScope's nginx serves the extracted files). The 10.13 sim's
+        # installer doesn't — it stamps the install time (2026-09-27) — so this is
+        # belt and braces.
+        mtime = _content_mtime(stage)
+
+        def normalise(info: tarfile.TarInfo) -> tarfile.TarInfo:
+            info.mtime = mtime
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            info.mode = 0o755 if info.isdir() else 0o644
+            return info
+
+        with open(out, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
+            with tarfile.open(fileobj=gz, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+                for name in [MANIFEST, *members]:
+                    tar.add(stage / name, arcname=name, filter=normalise)
     return out
+
+
+def _content_mtime(stage: Path) -> int:
+    """A timestamp in 2023–2026 that changes whenever any staged file does."""
+    h = hashlib.sha256()
+    for p in sorted(stage.rglob("*")):
+        if p.is_file():
+            h.update(p.relative_to(stage).as_posix().encode() + b"\0" + p.read_bytes() + b"\0")
+    return 1_672_531_200 + int.from_bytes(h.digest()[:8], "big") % 100_000_000
 
 
 # -- the urservice URCap endpoint -----------------------------------------------------------------

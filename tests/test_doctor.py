@@ -192,3 +192,16 @@ def test_model_check_reports_the_reach_cap_and_catches_a_mismatch(listener, monk
     assert c["robot.model"]["ok"] is False and "UR_ROBOT_MODEL" in c["robot.model"]["fix"]
     assert c["robot.model"]["data"] == {"configured": "UR3E", "reported": "UR10", "max_reach_m": 0.5}
     assert rep["motion_ok"] is False
+
+
+def test_approach_check_names_the_tool_offset_every_move_runs_with():
+    from perception.doctor import approach_check
+
+    ok = approach_check([0, 0, 0.163, 0, 0, 0], {})  # default: fingertips, Hand-E length
+    assert ok.ok is True and "163 mm" in ok.detail and ok.data["matches_active_tcp"] is True
+    ur3e = approach_check([0.000256, -0.0352, 0.2204, 0.2572, -0.4104, 1.4319], {"PERCEPTION_TIP_M": "0.163"})
+    assert ur3e.ok is True and "differs and is overridden" in ur3e.detail
+    flange = approach_check([0] * 6, {"PERCEPTION_APPROACH_REFERENCE": "flange"})
+    assert flange.ok is None and flange.severity == "warn" and "fingertip" in flange.fix
+    bad = approach_check([0] * 6, {"PERCEPTION_TIP_M": "-1"})
+    assert bad.ok is False and bad.severity == "critical"

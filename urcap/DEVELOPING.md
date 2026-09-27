@@ -1,24 +1,41 @@
-# RealSense Pilot — a PolyScope X URCap that embeds the wrist camera
+# RealSense Pilot — developer notes
+
+*Installing it on a robot? See [README.md](README.md). This page is for working on the URCap.*
 
 `urcap/realsense-pilot/` is a **URCap X** (PolyScope 10) Application Node: the
 RealSense colour feed inside PolyScope's own UI, hover-to-measure, and a click
 that becomes a base-frame point and an approach pose through the cockpit's
 hand-eye — then a move, either through PolyScope's auto-move screen (operator
 holds to move) or through the cockpit over Primary (urctl's safety envelope).
-It is plain JavaScript: **no Angular, no webpack, no npm** — `scripts/urcapx.py`
+It is plain JavaScript: **no Angular, no webpack, no npm** — `urcap/urcapx.py`
 packages and installs it with the stdlib.
 
+<!-- urcap-target -->Built and tested for **PolyScope X 10.14.0** (the newest minor, 10.14; simulator `universalrobots/ursim_polyscopex:10.14.0`, URCap SDK 6.6.66 / contribution-api 22.14.184) — pinned in [`target.json`](target.json) and kept current by `.github/workflows/urcap-track.yml`.<!-- /urcap-target -->
+
 ```
-urcap/realsense-pilot/
-  manifest.yaml                          vendorID olympus-controls, urcapID realsense-pilot
-  realsense-pilot-frontend/
-    contribution.json                    one applicationNode: tag olympus-realsense-pilot
-    main.js                              the presenter (a custom element)
-    realsense-pilot-node.worker.js       the behavior worker (node factory / upgrade)
-    assets/i18n/en.json                  node title + supportive text
-    assets/icons/realsense-pilot.svg
-scripts/urcapx.py                        package | install | list | delete
+urcap/
+  README.md                                install + use (for whoever downloads it)
+  DEVELOPING.md                            this page
+  urcapx.py                                package | install | list | delete (stdlib only)
+  dist/realsense-pilot-<ver>.urcapx        the downloadable package (committed; see below)
+  realsense-pilot/
+    manifest.yaml                          vendorID olympus-controls, urcapID realsense-pilot
+    realsense-pilot-frontend/
+      contribution.json                    one applicationNode: tag olympus-realsense-pilot
+      main.js                              the presenter (a custom element)
+      realsense-pilot-node.worker.js       the behavior worker (node factory / upgrade)
+      assets/i18n/en.json                  node title + supportive text
+      assets/icons/realsense-pilot.svg
 ```
+
+**`dist/` is committed and must match the source.** `urcapx.py package` is
+reproducible (fixed owners/modes, one mtime derived from the contents so an
+update never reuses the old Last-Modified/ETag), and
+`tests/test_urcap.py::test_the_downloadable_package_is_the_current_source` fails
+until the committed file equals a fresh build. After editing anything under
+`realsense-pilot/`: `make urcap-package` and commit `urcap/dist/`. Bumping
+`version` in `manifest.yaml` renames the file — delete the old one (the test
+refuses leftovers) and update the link in README.md.
 
 ## Why it is shaped like this (sourced from the SDK, 2026-09-26)
 
@@ -38,7 +55,7 @@ targets 10.14):
   `result` / `error` messages, verified against threads 1.7.0's
   `dist/worker/index.js`) — `tests/test_urcap.py` runs it under node.
 - **`.urcapx` is a gzipped tar with `manifest.yaml` first** (`package-urcap.js`
-  + `tar-helper.js`); `scripts/urcapx.py package` does the same.
+  + `tar-helper.js`); `urcap/urcapx.py package` does the same.
 - **Two install endpoints.** The SDK's CLI posts field `urcapx_file` to the
   Robot-API (`/universal-robots/robot-api/urcaps/v1/urcaps/`,
   `urservice-helper.js`), which answers **403 unless the robot is in Remote
@@ -48,7 +65,7 @@ targets 10.14):
   accepted the package from the host in Local mode (2026-09-26, 10.13.0 sim):
   multipart `POST` of field **`urcapxFile`** → 201, a duplicate → 409
   `already_installed`, `DELETE …/<vendor>/<urcap>` → 200, `GET` → a plain
-  JSON array. `scripts/urcapx.py` uses that endpoint (`--replace` = delete +
+  JSON array. `urcap/urcapx.py` uses that endpoint (`--replace` = delete +
   install; there is no update verb). The SDK's `run-simulator` sets
   `DEVMODE=true` for the Robot-API path; our compose passes `URSIM_PX_DEVMODE`
   through, but it only matters at container creation.
@@ -67,13 +84,14 @@ targets 10.14):
 
 ```bash
 make simx-up                       # PolyScope X 10.13.0 on http://localhost:8000
-make urcap-cockpit                 # a synthetic cockpit on :7622, CORS for the sim's origin
+make urcap-cockpit                 # a synthetic cockpit on :7621, CORS for the sim's origin
 make urcap-install                 # package + install (no Remote mode needed; --replace if already there)
 ```
 
 Then in PolyScope X: refresh the browser, **Application** → **RealSense
-Pilot**. Set the cockpit URL to `http://localhost:7622` (Save; it persists in
-the node), and the feed appears; hover reads depth, a click marks the pixel,
+Pilot**. Leave the cockpit URL empty (= this host on :7621, the cockpit's
+normal port) or set it to `http://localhost:7621` (Save; it persists in the
+node), and the feed appears; hover reads depth, a click marks the pixel,
 segments and calls locate. The fake cockpit has no robot behind it, so locate
 answers "robot unreachable" there — the base point, approach pose, reach and
 the Move buttons need a cockpit with a robot link (below).
@@ -84,7 +102,8 @@ For the real camera: restart your cockpit with CORS, e.g.
 sudo .venv/bin/perception --cell ur3 gui --rs-lean --cors http://localhost:8000
 ```
 
-and point the node at `http://localhost:7621`. Move (cockpit) then drives the
+(same port as the fake one, so the node's URL doesn't change; stop `make
+urcap-cockpit` first). Move (cockpit) then drives the
 UR3e exactly as the cockpit's own Move does; Move (PolyScope) is only
 meaningful on a PolyScope X controller (the sim's arm), where IK + auto-move act
 on *that* robot.
@@ -106,6 +125,34 @@ The cockpit also answers Chromium's Private Network Access preflight
 (`Access-Control-Allow-Private-Network`) for allowed origins, for a page on a
 LAN address calling a cockpit on loopback.
 
+## Staying on UR's newest release
+
+The URCap targets exactly one PolyScope X release, the newest patch of the newest
+minor UR has release notes for, pinned in [`target.json`](target.json): the notes
+URL, the simulator image **by digest**, and the SDK release UR titled for that minor
+with the versions its JavaScript template uses (`contribution-api`, `urcap-utils`,
+`threads`, manifest spec). A new minor *replaces* the pin; older minors are not built for.
+
+| | |
+| --- | --- |
+| `python3 urcap/track.py check` (`make urcap-track`) | exit 1 with the reasons when UR has moved on (new minor or patch, a moved simulator tag, an SDK component bump) |
+| `python3 urcap/track.py update` | re-resolve and rewrite `target.json` + the `urcap-target` lines in README.md and this page |
+| `python3 urcap/track.py compat` (`make urcap-compat`) | every PolyScope member the node calls or implements (`track.API_SURFACE`, held to `main.js` + the worker by a test) is still in the pinned `contribution-api` typings (UR's npm feed); `manifest.yaml` validates against the SDK's manifest spec; the template still uses the `threads` the worker's hand-written protocol was verified against; the SDK's simulator is the notes' robot image by digest |
+| `uv run --with playwright==1.63.0 python urcap/e2e.py` (`make urcap-e2e`) | boots the pinned simulator, installs a fresh build over urservice, checks nginx serves the packaged bytes, then headlessly: node renders, goes live on a `--fake` cockpit, hover depth, click → `/api/segment`, PolyScope's `getKinematicInfo` / `getJointPositions` / FK → IK round trip, the saved cockpit URL survives a reload. About 2 min on the Mac (arm64 image); `--keep` leaves the sim up |
+
+Nothing needs a login: the notes, the SDK (`UniversalRobots/PolyScopeX_URCap_SDK`),
+Docker Hub and UR's npm feed (`pkgs.dev.azure.com/polyscopex`) are public.
+`.github/workflows/urcap-track.yml` runs `update` → unit + `compat` → `e2e.py`
+weekly and opens a PR (with the notes' breaking changes and URCap/API sections)
+when all pass, or a `urcap-attention` issue when something needs a person — an API
+member gone, a new manifest rule, a `threads` bump, a node that no longer loads.
+`.github/workflows/urcap-e2e.yml` runs the e2e on every change under `urcap/`.
+A PR that touches the tracker (`track.py`, `e2e.py`, `target.json`, the workflow) runs
+the tracker workflow dry: live sources, full tests, no PR or issue.
+A patch UR ships without a simulator build (10.13.1 had none) is tested on the
+minor's newest simulator; a minor whose SDK or simulator is not out yet waits, and
+becomes an issue after three weeks.
+
 ## What is verified and what is not
 
 | Verified (2026-09-26) | How |
@@ -116,7 +163,8 @@ LAN address calling a cockpit on loopback.
 | Worker speaks the threads protocol (init/running/result/error) | test under node |
 | Cockpit CORS (allow-listed origins only, preflight, exposed `X-Seq`) + `GET /api/color.png` | test |
 | The node tells a CORS refusal (your pre-`--cors` cockpit on :7621, a cockpit with a different origin) from a dead port, and goes live on a CORS-enabled one; the cockpit logs the refused origin | headless Chromium on the sim, four cockpit URLs |
-| The sim accepts the package (201), lists it, deletes it, serves the four frontend files | `scripts/urcapx.py install --replace` against `ursim_polyscopex:10.13.0` |
+| The sim accepts the package (201), lists it, deletes it, serves the four frontend files | `urcap/urcapx.py install --replace` against `ursim_polyscopex:10.13.0` |
+| On **10.14.0** (SDK 6.6.66, contribution-api 22.14.184): install + serve as packaged, node renders, live feed, hover, click → segment, `getKinematicInfo` 6 rows, FK → `getInverseKinematics` round trip to 7e-15 rad, URL persists; a package with a broken `main.js` fails at *node renders* | `urcap/e2e.py` against `ursim_polyscopex:10.14.0@sha256:f306cd98…`, 2026-09-27 |
 | The node loads in PolyScope X: worker + presenter fetched, element present, i18n title shown | headless Chromium on the sim (Playwright) |
 | Feed live from a CORS-enabled cockpit, hover depth, click → segment → locate, cockpit URL persisted through `updateNode` and a reload | same, against `make urcap-cockpit` |
 | Locate → base point / approach / reach, Move (cockpit) | **not yet** — needs a cockpit with a robot link (your live one with `--cors`) |
