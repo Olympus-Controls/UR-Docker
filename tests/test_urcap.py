@@ -552,8 +552,66 @@ def test_cockpit_field_shorthand_is_never_fetched_relative_to_polyscope(tmp_path
         check=True,
     )
     got = json.loads(proc.stdout)
-    assert dict(zip(cases, got)) == cases
+    assert dict(zip(cases, got, strict=True)) == cases
     assert all("://" in g for g in got)
+
+
+POLYSCOPE_TARGET_HARNESS = r"""
+let defined = null;
+globalThis.HTMLElement = class {};
+globalThis.window = { customElements: { get: () => undefined, define: (tag, cls) => { defined = cls; } } };
+require(process.argv[2]);
+const { flange, dh, t0s } = JSON.parse(process.argv[3]);
+process.stdout.write(JSON.stringify(t0s.map((t0) => defined.polyScopeTarget(flange, dh, t0))));
+"""
+
+# PolyScope X 10.13 sim (UR3 config), robotPositionService.getKinematicInfo(), 2026-09-27.
+SIM_DH = [
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.15185, "DHAlpha": 1.570796327},
+    {"DHTheta": 0, "DHa": -0.24355, "DHd": 0, "DHAlpha": 0},
+    {"DHTheta": 0, "DHa": -0.2132, "DHd": 0, "DHAlpha": 0},
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.13105, "DHAlpha": 1.570796327},
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.08535, "DHAlpha": -1.570796327},
+    {"DHTheta": 0, "DHa": 0, "DHd": 0.0921, "DHAlpha": 0},
+]
+# ... and convertJointPositionsToTcpPose(all zeros) with the sim's (flange) TCP.
+SIM_FLANGE_AT_ZERO = [-0.45675, -0.22315, 0.0665, 1.570796327, 0.0, 0.0]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_move_polyscope_targets_polyscopes_own_tcp(tmp_path):
+    # Regression (2026-09-27): Move (PolyScope) handed PolyScope's IK the cockpit's
+    # approach_pose — a TCP pose under the *cockpit controller's* 220 mm training offset —
+    # so the sim (TCP = flange) was asked for a flange 17 cm past reach on every click.
+    from urctl.pose import pose_trans
+
+    flange = [-0.2316, 0.3103, -0.2155, -2.5834, 0.5663, 0.0012]
+    offsets = [[0, 0, 0, 0, 0, 0], [0.0, -0.035, 0.22, 0.257, -0.41, 1.432], [0.01, 0.02, 0.15, 0, 0, 3.1]]
+    t0s = [pose_trans(SIM_FLANGE_AT_ZERO, off) for off in offsets]
+    harness = tmp_path / "harness.js"
+    harness.write_text(POLYSCOPE_TARGET_HARNESS)
+    proc = subprocess.run(
+        [
+            NODE,
+            str(harness),
+            str(FRONTEND / "main.js"),
+            json.dumps({"flange": flange, "dh": SIM_DH, "t0s": t0s}),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    got = json.loads(proc.stdout)
+    assert got[0] == pytest.approx(flange, abs=1e-6)  # the sim: TCP is the flange
+    for off, pose in zip(offsets[1:], got[1:], strict=True):
+        want = pose_trans(flange, off)
+        assert pose[:3] == pytest.approx(want[:3], abs=1e-6)
+        # compare orientations as matrices (a rotation vector near pi has two spellings)
+        from urctl.pose import rotvec_to_matrix
+
+        a, b = rotvec_to_matrix(pose[3:]), rotvec_to_matrix(want[3:])
+        assert [v for r in a for v in r] == pytest.approx([v for r in b for v in r], abs=1e-6)
 
 
 def test_page_tells_a_cors_refusal_from_an_unreachable_cockpit():
