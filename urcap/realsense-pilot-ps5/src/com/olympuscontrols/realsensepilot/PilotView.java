@@ -74,10 +74,16 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
     }
 
     @Override
-    public void buildUI(JPanel panel, final PilotContribution contribution) {
+    public void buildUI(JPanel host, final PilotContribution contribution) {
         this.node = contribution;
+        // PolyScope's own panel refuses most setters (setBorder throws "Method not
+        // supported from URCaps", verified in URSim 5.26): lay it out, add one panel we own.
+        host.setLayout(new BoxLayout(host, BoxLayout.Y_AXIS));
+        JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        host.add(panel);
 
         JPanel title = row();
         dot.setForeground(IDLE);
