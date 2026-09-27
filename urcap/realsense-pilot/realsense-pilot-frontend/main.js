@@ -99,9 +99,26 @@
 
     // -- cockpit --------------------------------------------------------------------
     cockpitUrl() {
-      const saved = (this._node && this._node.cockpitUrl ? String(this._node.cockpitUrl) : "").trim();
-      if (saved) return saved.replace(/\/+$/, "");
-      return `${location.protocol}//${location.hostname}:${DEFAULT_COCKPIT_PORT}`;
+      return RealSensePilot.cockpitBase(this._node && this._node.cockpitUrl, location);
+    }
+
+    // The saved field as an absolute base URL. Shorthand is completed against this page's
+    // host — ":7621" / "7621" → http://<page host>:7621, "host[:port]" → http://host[:port],
+    // a bare host gets :7621. Anything without a scheme would otherwise be fetched *relative
+    // to PolyScope's own page*, and PolyScope's 404 read as "the cockpit is outdated".
+    static cockpitBase(saved, loc) {
+      const raw = (saved ? String(saved) : "").trim().replace(/\/+$/, "");
+      const pageHost = `${loc.protocol}//${loc.hostname}`;
+      if (!raw) return `${pageHost}:${DEFAULT_COCKPIT_PORT}`;
+      const port = /^:?(\d{1,5})$/.exec(raw);
+      if (port) return `${pageHost}:${port[1]}`;
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return raw;
+      const withScheme = `http://${raw}`;
+      try {
+        const u = new URL(withScheme);
+        if (!u.port && u.pathname === "/") return `${withScheme}:${DEFAULT_COCKPIT_PORT}`;
+      } catch (e) { /* diagnose() names the bad value */ }
+      return withScheme;
     }
 
     // "Failed to fetch" is all the browser says, whether the cockpit refused this page's
@@ -253,8 +270,11 @@
             continue;
           }
           if (!r.ok) {
-            const e = new Error(`the cockpit at ${this.cockpitUrl()} answered HTTP ${r.status} on /api/color.png` +
-              (r.status === 404 ? " — it predates the URCap routes; update it and restart." : "."));
+            const isPolyScope = new URL(this.cockpitUrl()).origin === location.origin;
+            const e = new Error(isPolyScope
+              ? `${this.cockpitUrl()} is PolyScope itself, not the cockpit — the cockpit listens on port ${DEFAULT_COCKPIT_PORT}.`
+              : `the cockpit at ${this.cockpitUrl()} answered HTTP ${r.status} on /api/color.png` +
+                (r.status === 404 ? " — it predates the URCap routes; update it and restart." : "."));
             e.http = r.status;
             throw e;
           }

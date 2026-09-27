@@ -515,6 +515,47 @@ def test_private_network_preflight_is_answered_only_for_allowed_origins(cockpit)
     assert "Access-Control-Allow-Origin" not in headers
 
 
+COCKPIT_BASE_HARNESS = r"""
+let defined = null;
+globalThis.HTMLElement = class {};
+globalThis.window = { customElements: { get: () => undefined, define: (tag, cls) => { defined = cls; } } };
+require(process.argv[2]);
+const loc = { protocol: "http:", hostname: "localhost", origin: "http://localhost:8001" };
+const cases = JSON.parse(process.argv[3]);
+process.stdout.write(JSON.stringify(cases.map((c) => defined.cockpitBase(c, loc))));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_cockpit_field_shorthand_is_never_fetched_relative_to_polyscope(tmp_path):
+    # Regression (2026-09-27): a saved ":7621" was fetched as a path under PolyScope's
+    # own page; PolyScope's 404 was then reported as "the cockpit predates the URCap routes".
+    harness = tmp_path / "harness.js"
+    harness.write_text(COCKPIT_BASE_HARNESS)
+    cases = {
+        "": "http://localhost:7621",
+        None: "http://localhost:7621",
+        ":7621": "http://localhost:7621",
+        "7621": "http://localhost:7621",
+        " :7622/ ": "http://localhost:7622",
+        "127.0.0.1:7621": "http://127.0.0.1:7621",
+        "192.168.3.10": "http://192.168.3.10:7621",
+        "jetson.local/": "http://jetson.local:7621",
+        "http://127.0.0.1:7621//": "http://127.0.0.1:7621",
+        "https://cam.example:8443": "https://cam.example:8443",
+    }
+    proc = subprocess.run(
+        [NODE, str(harness), str(FRONTEND / "main.js"), json.dumps(list(cases))],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    got = json.loads(proc.stdout)
+    assert dict(zip(cases, got)) == cases
+    assert all("://" in g for g in got)
+
+
 def test_page_tells_a_cors_refusal_from_an_unreachable_cockpit():
     main_js = (FRONTEND / "main.js").read_text()
     assert 'mode: "no-cors"' in main_js and "refuses this page" in main_js
