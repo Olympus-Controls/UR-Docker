@@ -61,7 +61,11 @@ jar is reproducible, and carries a digest of its sources so a test flags a stale
   HTTP against the real cockpit server are tested under a JDK.
 - `get_inverse_kin_has_solution` / `get_inverse_kin` with `tcp=` verified on the UR3e
   (PolyScope 5.25.1).
-- **Not yet loaded in PolyScope.** The e-Series URSim cannot run on the Mac Studio (Xvfb
-  traps under Rosetta, URControl dies under QEMU — `TODO.md`, 2026-09-04); the first load
-  is on the robot (USB install above) or in CI's URSim (amd64) — the open step. `urcap.api.version` (1.9.0) and
-  the `[1.0.0,2.0.0)` import ranges are the parts that load will confirm or correct.
+- **Loaded in URSim 5.26** (2026-09-27, `scripts/ursim-e-vm.sh`: the amd64 image in an x86_64
+  QEMU VM on the Mac): the bundle resolves and PolyScope registers the URCap, so the
+  manifest, the embedded pom's API version (1.9.0) and the `[1.0.0,2.0.0)` import ranges are
+  accepted. That load caught the one PolyScope-5-only bug so far: its own panel refuses
+  `setBorder` (`AuthorizationException: Method not supported from URCaps`); the node now
+  builds inside a panel it owns. **The node's screen has not been seen rendering yet** —
+  PolyScope's JVM crashes in JIT-compiled code under emulation — so the first look at it is
+  on the robot (`scripts/urcap5-usb.sh`, then the install steps above).
