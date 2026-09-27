@@ -283,6 +283,30 @@ RUNTIME_PROBE = """async (tag) => {
 
 JOINTS = ("base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3")
 
+# PolyScope dialogs the simulator raises when its web UI comes up before the
+# controller does — a boot race, not the URCap (seen on a CI runner 2026-09-27:
+# "No kinematics info available" over the Operator screen, before the node was
+# opened). These are acknowledged and the page reloaded; any other error dialog
+# fails the run with its text.
+BOOT_RACE_DIALOGS = ("No kinematics info available",)
+
+
+def clear_boot_dialogs(page) -> list[str]:
+    """Acknowledge known boot-race dialogs; raise on any other error dialog."""
+    seen = []
+    for _ in range(5):
+        if not page.get_by_text("An error occurred").first.is_visible():
+            return seen
+        known = next((t for t in BOOT_RACE_DIALOGS if page.get_by_text(t).first.is_visible()), None)
+        if known is None:
+            body = page.locator("body").inner_text()
+            at = body.find("An error occurred")
+            raise E2EError(f"PolyScope error dialog: {body[at : at + 200]!r}")
+        seen.append(known)
+        page.get_by_role("button", name="OK", exact=True).first.click(timeout=10_000)
+        page.wait_for_timeout(1000)
+    raise E2EError(f"PolyScope keeps raising {seen[-1]!r}")
+
 
 def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | None) -> None:
     try:
@@ -298,6 +322,7 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(f"{e}\n{getattr(e, 'stack', '')}"))
         segment: list[dict] = []
+        boot_dialogs: list[str] = []
 
         def on_response(r):
             if r.url.startswith(cockpit) and "/api/segment" in r.url:
@@ -312,6 +337,12 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
                 page.goto(origin + "/", wait_until="networkidle", timeout=180_000)
                 with contextlib.suppress(Exception):
                     nav.wait_for(state="visible", timeout=60_000)
+                page.wait_for_timeout(2000)  # a boot-race dialog lands just after the page
+                if clear_boot_dialogs(page):
+                    boot_dialogs.extend(BOOT_RACE_DIALOGS)
+                    page.wait_for_timeout(5000)
+                    continue  # reload once the controller has caught up
+                if nav.is_visible():
                     break
             nav.click(timeout=30_000)
             page.get_by_text("RealSense Pilot").first.click(timeout=60_000)
@@ -385,6 +416,8 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
             saved = page.locator(TAG).locator('[data-rsp="url"]').input_value(timeout=30_000)
             checks.expect(saved == cockpit, "cockpit URL persists", saved)
             shot("node-reloaded")
+            if boot_dialogs:
+                checks.ok("simulator boot race", f"acknowledged {len(boot_dialogs)} × {boot_dialogs[0]!r}")
             ours_errors = [e for e in errors if ours in e]
             checks.expect(not ours_errors, "no page errors from the URCap", "; ".join(ours_errors)[:400])
         finally:
@@ -421,15 +454,18 @@ def run(args) -> int:
                 logs = sim["logs"]
                 print("---- simulator log (tail) ----\n" + logs, file=sys.stderr)
                 if shots:
-                    (shots / "simulator.log").write_text(logs)
+                    (shots / "simulator.log").write_text(logs, encoding="utf-8")
     summary = {"image": image, "passed": checks.passed, "checks": checks.items}
     if args.report:
-        Path(args.report).write_text(json.dumps(summary, indent=2) + "\n")
+        Path(args.report).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print("e2e: " + ("passed" if checks.passed else "FAILED") + f" against {image}")
     return 0 if checks.passed else 1
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(
         prog="e2e", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

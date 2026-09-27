@@ -481,9 +481,11 @@ def test_patch_docs_rewrites_only_the_marked_line_and_is_idempotent(tmp_path, ur
     ur.standard()
     target, _, _ = track.resolve(ur.src, "10.14")
     doc = tmp_path / "README.md"
-    doc.write_text("# x\n\n<!-- urcap-target -->old 10.13<!-- /urcap-target -->\n\nrest 10.13\n")
+    doc.write_text(
+        "# x\n\n<!-- urcap-target -->old 10.13<!-- /urcap-target -->\n\nrest 10.13\n", encoding="utf-8"
+    )
     assert track.patch_docs(target, (doc,)) == [doc]
-    text = doc.read_text()
+    text = doc.read_text(encoding="utf-8")
     assert "PolyScope X 10.14.0" in text and "old 10.13" not in text and "rest 10.13" in text
     assert track.patch_docs(target, (doc,)) == []
 
@@ -491,7 +493,7 @@ def test_patch_docs_rewrites_only_the_marked_line_and_is_idempotent(tmp_path, ur
 def test_the_real_docs_carry_the_marker_and_match_target_json():
     target = track.load_target()
     for doc in track.DOCS:
-        (m,) = track.DOC_MARK.findall(doc.read_text())
+        (m,) = track.DOC_MARK.findall(doc.read_text(encoding="utf-8"))
         assert m[1] == track.doc_line(target), f"{doc.name}: run `python3 urcap/track.py update`"
 
 
@@ -527,8 +529,8 @@ def test_a_commented_out_member_does_not_count():
 def test_api_surface_covers_every_call_the_urcap_makes():
     """The list is only a gate if it is complete: every service member main.js
     touches and every behavior the worker implements must be in it."""
-    main_js = (FRONTEND / "main.js").read_text()
-    worker = (FRONTEND / "realsense-pilot-node.worker.js").read_text()
+    main_js = (FRONTEND / "main.js").read_text(encoding="utf-8")
+    worker = (FRONTEND / "realsense-pilot-node.worker.js").read_text(encoding="utf-8")
     surface = track.API_SURFACE
     for m in re.finditer(r"\brps\.(\w+)", main_js):
         assert m.group(1) in surface["RobotPositionService"], m.group(0)
@@ -549,7 +551,7 @@ def test_api_surface_covers_every_call_the_urcap_makes():
 
 
 def test_read_yaml_reads_the_real_manifest():
-    manifest = track.read_yaml((ROOT / "urcap/realsense-pilot/manifest.yaml").read_text())
+    manifest = track.read_yaml((ROOT / "urcap/realsense-pilot/manifest.yaml").read_text(encoding="utf-8"))
     assert manifest["metadata"]["vendorID"] == "olympus-controls"
     assert manifest["metadata"]["version"] == "0.1.0"
     assert manifest["artifacts"]["webArchives"] == [
@@ -594,7 +596,7 @@ def test_read_yaml_fuzz_raises_only_trackerror():
     ],
 )
 def test_validate_catches_what_a_new_spec_would_reject(mutate, expect):
-    manifest = track.read_yaml((ROOT / "urcap/realsense-pilot/manifest.yaml").read_text())
+    manifest = track.read_yaml((ROOT / "urcap/realsense-pilot/manifest.yaml").read_text(encoding="utf-8"))
     mutate(manifest)
     assert any(expect in e for e in track.validate(manifest, SPEC))
 
@@ -647,8 +649,10 @@ def test_report_neutralises_scraped_text():
 def test_cli_update_then_check(ur, tmp_path, monkeypatch, capsys):
     ur.standard()
     target_file, doc, out = tmp_path / "target.json", tmp_path / "README.md", tmp_path / "gh.out"
-    doc.write_text("<!-- urcap-target --><!-- /urcap-target -->\n")
-    target_file.write_text(json.dumps(_target(polyscope_x__minor="10.13", polyscope_x__release="10.13.0")))
+    doc.write_text("<!-- urcap-target --><!-- /urcap-target -->\n", encoding="utf-8")
+    target_file.write_text(
+        json.dumps(_target(polyscope_x__minor="10.13", polyscope_x__release="10.13.0")), encoding="utf-8"
+    )
     monkeypatch.setattr(track, "TARGET", target_file)
     monkeypatch.setattr(track, "DOCS", (doc,))
     monkeypatch.setattr(track, "Sources", lambda: ur.src)
@@ -658,38 +662,37 @@ def test_cli_update_then_check(ur, tmp_path, monkeypatch, capsys):
 
     report = tmp_path / "report.md"
     assert track.main(["update", "--report", str(report), "--github-output", str(out)]) == 0
-    assert json.loads(target_file.read_text())["polyscope_x"]["release"] == "10.14.0"
-    assert "PolyScope X 10.14.0" in doc.read_text()
-    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    assert json.loads(target_file.read_text(encoding="utf-8"))["polyscope_x"]["release"] == "10.14.0"
+    assert "PolyScope X 10.14.0" in doc.read_text(encoding="utf-8")
+    outputs = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines())
     assert outputs["changed"] == "true" and outputs["release"] == "10.14.0"
-    assert (
-        "PolyScope X 10.14.0" in report.read_text()
-        and "| contribution_api | 22 | 22.14.184 |" in report.read_text()
-    )
+    assert "PolyScope X 10.14.0" in report.read_text(
+        encoding="utf-8"
+    ) and "| contribution_api | 22 | 22.14.184 |" in report.read_text(encoding="utf-8")
 
     assert track.main(["check"]) == 0
-    out.write_text("")
+    out.write_text("", encoding="utf-8")
     assert track.main(["update", "--github-output", str(out)]) == 0
-    assert "changed=false" in out.read_text()
+    assert "changed=false" in out.read_text(encoding="utf-8")
 
 
 def test_cli_pending_is_quiet_until_overdue(ur, tmp_path, monkeypatch):
     ur.standard()
     ur.set(f"/gh/repos/{track.SDK_REPO}/releases?per_page=50", [])
     target_file = tmp_path / "target.json"
-    target_file.write_text(json.dumps(_target()))
+    target_file.write_text(json.dumps(_target()), encoding="utf-8")
     monkeypatch.setattr(track, "TARGET", target_file)
     monkeypatch.setattr(track, "Sources", lambda: ur.src)
     monkeypatch.setattr(track, "overdue", lambda notes, today=None: False)
     assert track.main(["check"]) == 0
     monkeypatch.setattr(track, "overdue", lambda notes, today=None: True)
     assert track.main(["check"]) == 1
-    assert json.loads(target_file.read_text()) == _target()  # never written while pending
+    assert json.loads(target_file.read_text(encoding="utf-8")) == _target()  # never written while pending
 
 
 def test_cli_network_failure_is_exit_2(tmp_path, monkeypatch):
     target_file = tmp_path / "target.json"
-    target_file.write_text(json.dumps(_target()))
+    target_file.write_text(json.dumps(_target()), encoding="utf-8")
     monkeypatch.setattr(track, "TARGET", target_file)
     real = track.Sources
     monkeypatch.setattr(track, "Sources", lambda: real(notes="http://127.0.0.1:9/{slug}"))

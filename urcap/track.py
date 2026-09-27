@@ -741,6 +741,9 @@ def _github_output(path: str | None, **values: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(
         prog="track", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
