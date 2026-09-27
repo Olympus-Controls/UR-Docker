@@ -34,8 +34,10 @@ from .tools import ToolError, call_tool, get_tool_schemas
 from .webapp import (
     DEFAULT_PORT,
     add_camera_args,
+    add_cors_arg,
     add_robot_args,
     camera_from_args,
+    cors_from_args,
     robot_from_args,
     views_from_args,
 )
@@ -145,6 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     gu.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT})")
     gu.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
     gu.add_argument("--demo", action="store_true", help="open the demo view: one picture, four big buttons")
+    add_cors_arg(gu)
 
     pc = sub.add_parser(
         "pick-cycle",
@@ -223,6 +226,7 @@ def _realsense_command(args) -> int:
             robot=robot_from_args(args),
             demo=args.demo,
             views=views_from_args(args, config),
+            cors=cors_from_args(args),
         )
         return 0
 

@@ -8,6 +8,12 @@
 - 2026-09-25 — Mac Studio + D435: `--rs-lean` streams (first open errors once, the back-off re-open holds). Open: why the *first* open still loses — shave one more reset, or accept the one retry. Ruled out: software drift, headless-vs-desktop, a fresh daemon, the webcams, Spotify. The Mac is a dev box, not a camera host; Windows laptop (WSL2, verified 09-23) and Jetson are.
 - 2026-09-12 — The native Windows path (`scripts/setup-windows.ps1`, `scripts/cockpit.ps1`, `REALSENSE_LIB` at the SDK's default `bin\x64\realsense2.dll`) has not been run on a Windows box. First run on the work laptop is the verification; paste the doctor output (`uv run perception --cell ur20 doctor --stream --json`) if anything fails.
 
+## PolyScope X URCap (2026-09-26, `docs/polyscopex-urcap.md`)
+
+- **Install into the sim** — blocked on Remote mode: flip it on the sim's Safety screen (password `operator`), then `make urcap-install` (package is built: `target/realsense-pilot-0.1.0.urcapx`); the fake cockpit for it is `make urcap-cockpit` (:7622, CORS for :8000). Then: does the node appear under Application, does the feed show, does a click locate, does IK + auto-move accept the pose (is `Pose.orientation` a rotation vector?).
+- Real camera in the URCap: restart the live cockpit with `--cors http://localhost:8000` (your `Quickstart` line + that flag) and set the node's cockpit URL to `http://localhost:7621`.
+- Later, on the robot: a backend-container packaging of the cockpit (`containers:` + `devices: video` + `services: urcontrol-primary`) so the pendant needs no external host.
+
 ## Code (no robot needed)
 
 - 2026-09-26 — `perception calibrate` (orbit hand-eye) is built and tested on the fake cell; **run it once on the UR3e** (`--dry-run` first), then delete `scripts/pilot/orbit_cal*.py` + `wiggle.py`. `record.py`/`show.py`/`assemble.py` stay as the timelapse tooling. `place.py`'s lesson carries: a place spot needs the same clearance check as a pick.

@@ -285,9 +285,13 @@ class ViewerApp:
         segmenter=None,
         robot: RobotLink | None = None,
         views: list[ViewSource] | None = None,
+        cors: Sequence[str] | None = None,
     ):
         self.camera = camera
         self.robot = robot
+        # Origins allowed to call the API from another page (a PolyScope X URCap on
+        # the pendant, `urcap/realsense-pilot`). Empty = same-origin only (the default).
+        self.cors_origins = [o.strip() for o in (cors or []) if o and o.strip()]
         self.config = config or PerceptionConfig.from_env()
         self.segmenter = segmenter or make_segmenter(self.config)
         self._cond = threading.Condition()
@@ -423,6 +427,15 @@ class ViewerApp:
             return None
         meta = {"fps": round(self.fps(), 2), "mask_seq": self.mask_seq}
         return pack_rgbd(frame, seq=seq, meta=meta)
+
+    def color_png(self, after: int | None, timeout_s: float) -> tuple[int, bytes | None]:
+        """The colour image alone as a PNG (``GET /api/color.png``): what a page that
+        cannot inflate the RGB-D container — a URCap's <img> — polls for."""
+        seq, frame = self.wait_frame(after, timeout_s) if after is not None else self.latest()
+        if frame is None:
+            return seq, None
+        color = frame.color if frame.color.channels == 3 else frame.color.to_rgb()
+        return seq, encode_png(color.width, color.height, 3, color.data)
 
     # -- API -------------------------------------------------------------------------
 
@@ -834,13 +847,43 @@ class ViewerHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # quiet
         pass
 
-    def _send(self, body: bytes, ctype: str, status: int = 200) -> None:
+    def _cors_headers(self) -> None:
+        """CORS for the origins the cockpit was started with (``--cors``); nothing otherwise."""
+        allowed = getattr(self.app, "cors_origins", None) or []
+        if not allowed:
+            return
+        origin = self.headers.get("Origin")
+        if "*" in allowed:
+            value = "*"
+        elif origin and origin in allowed:
+            value = origin
+        else:
+            return
+        self.send_header("Access-Control-Allow-Origin", value)
+        if value != "*":
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Expose-Headers", "X-Seq, X-Fps")
+        self.send_header("Access-Control-Max-Age", "600")
+
+    def _send(self, body: bytes, ctype: str, status: int = 200, headers: dict | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
+        self._cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        """CORS preflight for the cross-origin POSTs a URCap page makes."""
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self._cors_headers()
+        self.end_headers()
 
     def _send_json(self, obj: dict, status: int = 200) -> None:
         self._send(json.dumps(obj, default=str).encode(), "application/json", status)
@@ -938,8 +981,23 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Seq", str(seq))
                 self.send_header("X-Fps", f"{self.app.views[index].fps():.2f}")
+                self._cors_headers()
                 self.end_headers()
                 self.wfile.write(data)
+        elif route == "/api/color.png":
+            try:
+                after = int(qs["after"][0]) if "after" in qs else None
+                timeout_ms = min(10000, max(0, int(qs.get("timeout_ms", ["1500"])[0])))
+            except ValueError:
+                self._send_json({"ok": False, "error": "after/timeout_ms must be integers"}, status=400)
+                return
+            seq, png = self.app.color_png(after, timeout_ms / 1000.0)
+            if png is None:
+                self._send_json(
+                    {"ok": False, "error": "no frame yet", "last_error": self.app.last_error}, status=503
+                )
+            else:
+                self._send(png, "image/png", headers={"X-Seq": str(seq), "X-Fps": f"{self.app.fps():.2f}"})
         else:
             self._send_json({"ok": False, "error": f"no route {route}"}, status=404)
 
@@ -1145,12 +1203,13 @@ def serve(
     robot: RobotLink | None = None,
     demo: bool = False,
     views: list[ViewSource] | None = None,
+    cors: Sequence[str] | None = None,
 ) -> None:
     """Run the cockpit until interrupted (the ``perception gui`` entry point).
     ``demo`` opens the browser on the demo view (``/?demo=1``: one picture,
     four buttons, one light; the header's *Developer view* toggles back).
     ``views`` are the extra webcam viewpoints (:mod:`perception.views`)."""
-    app = ViewerApp(camera, config=config, robot=robot, views=views)
+    app = ViewerApp(camera, config=config, robot=robot, views=views, cors=cors)
     server = ThreadingHTTPServer((bind, port), ViewerHandler)
     server.daemon_threads = True
     server.app = app  # type: ignore[attr-defined]
@@ -1170,6 +1229,8 @@ def serve(
     )
     if bind not in ("127.0.0.1", "localhost", "::1"):
         print(f"WARNING: bound to {bind} with no authentication — only do this on a trusted cell network.")
+    if app.cors_origins:
+        print(f"CORS: API callable from {', '.join(app.cors_origins)} (a PolyScope X URCap page, say)")
     app.start()
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
@@ -1180,6 +1241,24 @@ def serve(
     finally:
         server.server_close()
         app.stop()
+
+
+ENV_CORS = "PERCEPTION_CORS"
+
+
+def add_cors_arg(ap) -> None:
+    ap.add_argument(
+        "--cors",
+        default=None,
+        help="origin(s) allowed to call the API from another page, comma-separated, or '*' — e.g. "
+        f"http://localhost:8000 for the PolyScope X sim's URCap (default: ${ENV_CORS}, else same-origin "
+        "only)",
+    )
+
+
+def cors_from_args(args) -> list[str]:
+    raw = getattr(args, "cors", None) or os.environ.get(ENV_CORS, "")
+    return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 def add_camera_args(ap) -> None:
@@ -1386,6 +1465,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT})")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
     ap.add_argument("--demo", action="store_true", help="open the demo view: one picture, four big buttons")
+    add_cors_arg(ap)
     ap.add_argument(
         "--cell", default=None, help="cell profile (sim|ur3|ur20 or a .env path; default: $UR_CELL)"
     )
@@ -1416,6 +1496,7 @@ def main(argv: list[str] | None = None) -> int:
         robot=robot_from_args(args),
         demo=bool(getattr(args, "demo", False)),
         views=views_from_args(args, config),
+        cors=cors_from_args(args),
     )
     return 0
 

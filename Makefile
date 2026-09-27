@@ -24,7 +24,7 @@ UR_HOST ?= localhost
 export UR_HOST
 
 .PHONY: help sim-up sim-down sim-logs sim-shell sim-poweron \
-        simx-up simx-down simx-logs simx-shell \
+        simx-up simx-down simx-logs simx-shell urcap-package urcap-install urcap-cockpit \
         rs-info rs-gui rs-gui-fake rs-test perception-build perception-up perception-down \
         doctor cockpit cockpit-dry mcp \
         test test-unit test-integration test-all \
@@ -79,6 +79,16 @@ simx-state:  ## Read PolyScope X robot state via the Robot-API (JSON).
 
 simx-bring-up:  ## Power on + brake release the PolyScope X robot (needs Remote mode).
 	$(PX_ENV) $(PYTHON) -m urctl bring-up
+
+# ---- PolyScope X URCap (urcap/realsense-pilot, docs/polyscopex-urcap.md) ------
+urcap-package:  ## Build urcap/realsense-pilot into target/realsense-pilot-<ver>.urcapx (no npm).
+	$(PYTHON) scripts/urcapx.py package urcap/realsense-pilot --out target
+
+urcap-install: urcap-package  ## Install it into the PolyScope X sim on :8000 (sim must be in Remote mode).
+	$(PYTHON) scripts/urcapx.py install target/realsense-pilot-*.urcapx --port 8000
+
+urcap-cockpit:  ## A synthetic cockpit on :7622 the URCap page may call from the sim's origin.
+	$(PYTHON) -m perception gui --fake --no-browser --port 7622 --cors http://localhost:8000,http://127.0.0.1:8000
 
 # ---- RealSense perception (docs/realsense.md) ----------------------------------
 # On macOS librealsense needs root to claim the camera's USB interface, hence

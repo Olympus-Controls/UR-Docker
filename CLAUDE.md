@@ -131,6 +131,19 @@ object → Pick, STOP), one status light and one instruction line; **Developer
 view** toggles back. Same page, same API — `body.demo` CSS hides the rest, the
 buttons call the existing bring-up / nearest / approach-cycle / stop actions.
 
+**PolyScope X URCap (`urcap/realsense-pilot`, `docs/polyscopex-urcap.md`):** an
+Application Node that embeds the cockpit's colour feed in PolyScope X and turns a
+click into a base-frame point + approach pose (`/api/segment` → `/api/robot/locate`)
+with two Move buttons — PolyScope's IK + auto-move screen, or the cockpit over
+Primary. Plain JavaScript, no npm: `scripts/urcapx.py package|install|list|delete`
+(gzipped tar, manifest first; multipart to the Robot-API's `urcaps/v1/urcaps/`);
+`make urcap-package|urcap-install|urcap-cockpit`. The cockpit must be started
+with `--cors <PolyScope origin>` (`PERCEPTION_CORS`) and serves `GET
+/api/color.png` for it. Installing needs the robot/sim in **Remote** mode
+(403 otherwise, from inside the container too); the sim's Development Mode is
+`URSIM_PX_DEVMODE=true` at container creation. Built against SDK 6.5.65 (the
+10.13 pairing) — the worker speaks threads.js's protocol directly.
+
 **Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
 that commit if the idea comes back.

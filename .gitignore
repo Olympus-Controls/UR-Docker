@@ -29,3 +29,6 @@ captures/
 .env
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+
+# URCap packages (scripts/urcapx.py package)
+target/
