@@ -148,7 +148,25 @@ endpoint System Manager itself uses (`/universal-robots/urservice/api/v1/urcaps`
 against SDK 6.5.65 (the 10.13 pairing) — the worker speaks threads.js's
 protocol directly. Verified 2026-09-26 in the 10.13.0 sim (headless Chromium):
 node loads, feed + hover + click-to-segment work against the fake cockpit;
-locate/move still need a cockpit with a robot link.
+locate/move still need a cockpit with a robot link. **Move (PolyScope)** re-expresses the
+cockpit's flange target in *PolyScope's own* active TCP (`getKinematicInfo` DH +
+`convertJointPositionsToTcpPose` at zero joints) before `getInverseKinematics(pose,
+qNear)`, which takes no TCP — handing it the cockpit's `approach_pose` (a pose under the
+*cockpit controller's* TCP) made every click unreachable in the sim. That IK never
+answers an unsolvable pose (the node gives it 8 s). Cockpit field shorthand (`:7621`,
+`host:port`) is completed to a URL; a bare `:7621` used to be fetched relative to
+PolyScope's own page and its 404 misread as an outdated cockpit.
+
+**PolyScope 5 (e-Series) URCap (`urcap/realsense-pilot-ps5/`, `README.md`):** the same node
+as a Java 8 Swing **Installation node**, same layout and buttons (Open cockpit dropped —
+no browser on the pendant); Move (PolyScope) hands `RobotMovement.requestUserToMoveRobot`
+the controller's `joint_target`. Built by `urcap/urcap5.py` (`make urcap5-sdk` copies the
+URCap API bundles out of the URSim e-Series image into `target/` — they are not on Maven
+Central and never committed; `make urcap5-package` → `urcap/dist/*.urcap`, reproducible,
+with a sources digest a test checks). PolyScope 5's loader needs `URCapCompatibility-CB3`
+/ `-eSeries` in the manifest and reads the API version from an embedded
+`META-INF/maven/**/pom.xml` (`com.ur.urcap:api` dependency). Not yet loaded in PolyScope
+(the e-Series sim needs Docker's Rosetta off on the Mac Studio).
 
 **Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
@@ -499,13 +517,19 @@ them over hand-rolled URScript.
   def-wrapped `movel` moved the robot with `is in remote control` → `false`).
   Only the **Dashboard `play` command** requires Remote mode. Don't add a
   remote-control precondition to motion — it would reject moves that work.
-- **Absolute moves are reach-checked per model.** `SafetyEnvelope.max_reach`
-  is sized by `SafetyEnvelope.for_model` (`UR_ROBOT_MODEL` from the cell file,
-  else the Dashboard's `get robot model`, probed once) — a UR3e is capped at
-  0.5 m, a UR20 at 1.75 m, unknown falls back to the UR10's 1.3 m and says so
-  in the `tcp_reach` violation. Reach is to the flange; `UR_MAX_REACH_M`
-  overrides for a long TCP. Check `locate(...)["reachable"]` before offering a
-  Move.
+- **Absolute moves are reach-checked by the controller's own IK.** Before an
+  absolute `move_tcp` / `move_tcp_path`, `Robot.inverse_kin` asks the controller
+  (`get_inverse_kin_has_solution` + `get_inverse_kin`, one Primary program, same
+  `tcp=` as the move; no motion, so it answers in Local on e-Series). Its verdict
+  replaces the datasheet sphere both ways: a no is an `ik_reach` violation (nothing
+  sent), a yes passes a pose the sphere would reject. The sphere — sized by
+  `SafetyEnvelope.for_model` (UR3e 0.5 m, UR20 1.75 m, unknown → UR10 1.3 m;
+  `UR_MAX_REACH_M` overrides) from the **base origin** — is only the fallback when
+  the controller gives no answer (dry-run, Primary busy, PolyScope X in Local). On
+  the UR3e cell (2026-09-27, parts 0.27 m below the base) it rejected reachable
+  targets — flanges 0.505–0.533 m out that the controller solves — and a sphere
+  cannot see an in-radius pose the arm can't reach either. `locate` reports `reachable`, `reach_check` (`controller_ik`/`sphere`) and
+  the controller's `joint_target`; check `reachable` before offering a Move.
 - **One program at a time.** A new submission on 30001 replaces whatever is
   running. `Robot.move_tcp_path` runs a whole multi-leg Cartesian path
   (over → down → dwell → up → back) as one program on one connection, and

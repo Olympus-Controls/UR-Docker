@@ -25,6 +25,7 @@ export UR_HOST
 
 .PHONY: help sim-up sim-down sim-logs sim-shell sim-poweron \
         simx-up simx-down simx-logs simx-shell urcap-package urcap-install urcap-cockpit \
+        urcap5-sdk urcap5-package urcap5-install \
         rs-info rs-gui rs-gui-fake rs-test perception-build perception-up perception-down \
         doctor cockpit cockpit-dry mcp \
         test test-unit test-integration test-all \
@@ -89,6 +90,17 @@ urcap-install: urcap-package  ## Install (or replace) it in the PolyScope X sim 
 
 urcap-cockpit:  ## A synthetic cockpit on :7621 (the normal port) the URCap page may call from the sim's origin.
 	$(PYTHON) -m perception gui --fake --no-browser --port 7621 --cors http://localhost:8000,http://127.0.0.1:8000
+
+# ---- PolyScope 5 (e-Series) URCap (urcap/realsense-pilot-ps5, urcap/urcap5.py) --------
+URCAP5_CONTAINER ?= ur-utils-ursim-e-ur3e
+urcap5-sdk:  ## Copy the URCap API jars out of the e-Series URSim image into target/ (never committed).
+	$(PYTHON) urcap/urcap5.py sdk
+
+urcap5-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-ps5-<ver>.urcap (JDK; commit it).
+	$(PYTHON) urcap/urcap5.py package urcap/realsense-pilot-ps5 --out urcap/dist
+
+urcap5-install: urcap5-package  ## Install it in the e-Series sim container $(URCAP5_CONTAINER) (restarts it).
+	$(PYTHON) urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-*.urcap --container $(URCAP5_CONTAINER)
 
 # ---- RealSense perception (docs/realsense.md) ----------------------------------
 # On macOS librealsense needs root to claim the camera's USB interface, hence
