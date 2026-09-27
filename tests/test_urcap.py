@@ -105,7 +105,8 @@ def test_package_is_reproducible_and_normalised(tmp_path):
 
 def test_changed_source_changes_the_timestamp(tmp_path):
     """One fixed mtime per build would give an updated main.js the old
-    Last-Modified/ETag, and the pendant's browser would keep the stale copy."""
+    Last-Modified/ETag on an installer that keeps tar mtimes (the 10.13 sim's
+    stamps the install time instead), and the browser would keep the stale copy."""
     src = tmp_path / "src"
     shutil.copytree(URCAP, src)
     before = urcapx.package(src, tmp_path / "a")

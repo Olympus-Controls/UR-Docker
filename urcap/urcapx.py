@@ -105,8 +105,10 @@ def package(src: str | Path, out_dir: str | Path) -> Path:
         # mtime fixed; tarfile.add recurses in sorted order), so the committed
         # urcap/dist/ package can be checked against a fresh build. The mtime is
         # derived from the contents rather than 0 so an updated package never
-        # shares Last-Modified/ETag with the old one (PolyScope's nginx serves the
-        # extracted files, and a browser would keep a stale main.js).
+        # shares Last-Modified/ETag with the old one should an installer keep tar
+        # mtimes (PolyScope's nginx serves the extracted files). The 10.13 sim's
+        # installer doesn't — it stamps the install time (2026-09-27) — so this is
+        # belt and braces.
         mtime = _content_mtime(stage)
 
         def normalise(info: tarfile.TarInfo) -> tarfile.TarInfo:
