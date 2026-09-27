@@ -89,6 +89,23 @@ UR3e exactly as the cockpit's own Move does; Move (PolyScope) is only
 meaningful on a PolyScope X controller (the sim's arm), where IK + auto-move act
 on *that* robot.
 
+### "no cockpit at … (Failed to fetch)"
+
+The browser says only *Failed to fetch* whether the cockpit refused the page's
+origin or nothing answered, so the node probes the cockpit URL again with a
+`no-cors` request (it resolves when a server is up, whatever its CORS list)
+and says which it is:
+
+| The node says | Meaning | Fix |
+| --- | --- | --- |
+| *running but refuses this page (origin X)* | The cockpit is up but X is not in its `--cors` list, or the cockpit predates `--cors`. The cockpit's stderr names the origin once (`CORS: refused a page from X`), and `GET /api/info` lists it under `cors.refused`. | Restart with `--cors X`. The origin is exact: `http://localhost:8000`, `http://127.0.0.1:8000` and `http://192.168.3.10:8000` are three different origins. |
+| *nothing answers at …* | Wrong host or port, the cockpit is not running, or it is bound to loopback while the browser is on another machine. | `--bind 0.0.0.0` on a trusted cell network; `localhost` in the node means the machine running the browser (the pendant's own browser on a robot). |
+| *answered HTTP 404 on /api/color.png* | The cockpit predates the URCap routes. | Update and restart it. |
+
+The cockpit also answers Chromium's Private Network Access preflight
+(`Access-Control-Allow-Private-Network`) for allowed origins, for a page on a
+LAN address calling a cockpit on loopback.
+
 ## What is verified and what is not
 
 | Verified (2026-09-26) | How |
@@ -98,6 +115,7 @@ on *that* robot.
 | Install: POST when absent, PUT when present, `--replace` deletes first, 403 named | test against a Robot-API look-alike |
 | Worker speaks the threads protocol (init/running/result/error) | test under node |
 | Cockpit CORS (allow-listed origins only, preflight, exposed `X-Seq`) + `GET /api/color.png` | test |
+| The node tells a CORS refusal (your pre-`--cors` cockpit on :7621, a cockpit with a different origin) from a dead port, and goes live on a CORS-enabled one; the cockpit logs the refused origin | headless Chromium on the sim, four cockpit URLs |
 | The sim accepts the package (201), lists it, deletes it, serves the four frontend files | `scripts/urcapx.py install --replace` against `ursim_polyscopex:10.13.0` |
 | The node loads in PolyScope X: worker + presenter fetched, element present, i18n title shown | headless Chromium on the sim (Playwright) |
 | Feed live from a CORS-enabled cockpit, hover depth, click → segment → locate, cockpit URL persisted through `updateNode` and a reload | same, against `make urcap-cockpit` |

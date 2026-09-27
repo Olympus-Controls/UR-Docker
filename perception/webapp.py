@@ -292,6 +292,9 @@ class ViewerApp:
         # Origins allowed to call the API from another page (a PolyScope X URCap on
         # the pendant, `urcap/realsense-pilot`). Empty = same-origin only (the default).
         self.cors_origins = [o.strip() for o in (cors or []) if o and o.strip()]
+        # Cross-origin pages the cockpit turned away — the browser only says "Failed to
+        # fetch", so the cockpit names the origin to add (stderr once, and /api/info).
+        self.cors_refused: set[str] = set()
         self.config = config or PerceptionConfig.from_env()
         self.segmenter = segmenter or make_segmenter(self.config)
         self._cond = threading.Condition()
@@ -457,7 +460,21 @@ class ViewerApp:
             "cell": describe_cell(),
             "events_seq": self.events.seq,
             "views": [v.describe() for v in self.views],
+            "cors": {"allowed": list(self.cors_origins), "refused": sorted(self.cors_refused)},
         }
+
+    def note_cors_refused(self, origin: str) -> None:
+        """Remember a cross-origin caller the ``--cors`` list turned away; say so once."""
+        # A request header: escape control characters/ANSI and cap it before logging.
+        origin = repr(origin[:200])[1:-1]
+        if origin in self.cors_refused or len(self.cors_refused) >= 32:
+            return
+        self.cors_refused.add(origin)
+        print(
+            f"CORS: refused a page from {origin} — restart with --cors {origin} "
+            f"(or add it to ${ENV_CORS}) to let it call the API",
+            file=sys.stderr,
+        )
 
     # -- pilot: robot actions, doctor, events, snapshots -----------------------------
 
@@ -850,14 +867,15 @@ class ViewerHandler(BaseHTTPRequestHandler):
     def _cors_headers(self) -> None:
         """CORS for the origins the cockpit was started with (``--cors``); nothing otherwise."""
         allowed = getattr(self.app, "cors_origins", None) or []
-        if not allowed:
-            return
         origin = self.headers.get("Origin")
         if "*" in allowed:
             value = "*"
         elif origin and origin in allowed:
             value = origin
         else:
+            # Browsers also send Origin on same-origin POSTs; only a foreign page is news.
+            if origin and origin not in ("null", f"http://{self.headers.get('Host', '')}"):
+                self.app.note_cors_refused(origin)
             return
         self.send_header("Access-Control-Allow-Origin", value)
         if value != "*":
@@ -866,6 +884,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Expose-Headers", "X-Seq, X-Fps")
         self.send_header("Access-Control-Max-Age", "600")
+        # Chromium's Private Network Access preflight (a page on a LAN address calling
+        # a cockpit on loopback, say) wants an explicit yes.
+        if self.headers.get("Access-Control-Request-Private-Network", "").lower() == "true":
+            self.send_header("Access-Control-Allow-Private-Network", "true")
 
     def _send(self, body: bytes, ctype: str, status: int = 200, headers: dict | None = None) -> None:
         self.send_response(status)

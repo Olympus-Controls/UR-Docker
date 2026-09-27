@@ -421,3 +421,57 @@ def test_cors_from_args_reads_flag_then_env(monkeypatch):
     assert cors_from_args(A()) == ["http://a:1", "http://b:2"]
     A.cors = "*"
     assert cors_from_args(A()) == ["*"]
+
+
+def test_refused_origin_is_named_once_and_sanitized(cockpit, capsys):
+    base, app = cockpit
+    for _ in range(3):
+        headers = _fetch(base + "/api/color.png", origin="http://192.168.3.10:8000")[1]
+        assert "Access-Control-Allow-Origin" not in headers
+    err = capsys.readouterr().err
+    assert err.count("refused a page from http://192.168.3.10:8000") == 1
+    assert "--cors http://192.168.3.10:8000" in err
+    info = json.loads(_fetch(base + "/api/info")[2])
+    assert info["cors"] == {"allowed": ["http://localhost:8000"], "refused": ["http://192.168.3.10:8000"]}
+    # an allowed origin, no Origin, the cockpit's own origin and the opaque "null" are not refusals
+    _fetch(base + "/api/info", origin="http://localhost:8000")
+    _fetch(base + "/api/clear", method="POST", origin=base, body=b"{}")
+    _fetch(base + "/api/info", origin="null")
+    assert app.cors_refused == {"http://192.168.3.10:8000"}
+    # a hostile Origin can't put control characters or ANSI escapes in the log
+    _fetch(base + "/api/info", origin="http://x\x1b[31m.example")
+    err = capsys.readouterr().err
+    assert "\x1b" not in err and "\\x1b[31m" in err
+
+
+def test_refused_origins_are_capped(cockpit, capsys):
+    base, app = cockpit
+    for i in range(40):
+        _fetch(base + "/api/info", origin=f"http://h{i}.example")
+    assert len(app.cors_refused) == 32
+    capsys.readouterr()
+
+
+def test_private_network_preflight_is_answered_only_for_allowed_origins(cockpit):
+    base, _ = cockpit
+    pna = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Private-Network": "true"}
+
+    def preflight(origin):
+        headers = {"Origin": origin, **pna}
+        req = urllib.request.Request(base + "/api/segment", method="OPTIONS", headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, dict(r.headers)
+
+    status, headers = preflight("http://localhost:8000")
+    assert status == 204 and headers["Access-Control-Allow-Private-Network"] == "true"
+    status, headers = preflight("http://evil.example")
+    assert "Access-Control-Allow-Private-Network" not in headers
+    assert "Access-Control-Allow-Origin" not in headers
+
+
+def test_page_tells_a_cors_refusal_from_an_unreachable_cockpit():
+    main_js = (FRONTEND / "main.js").read_text()
+    assert 'mode: "no-cors"' in main_js and "refuses this page" in main_js
+    assert "nothing answers at" in main_js and "--bind 0.0.0.0" in main_js
+    # an HTTP status is not re-diagnosed as a network failure
+    assert "err.http" in main_js

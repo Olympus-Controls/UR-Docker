@@ -14,6 +14,8 @@
   const DEFAULT_COCKPIT_PORT = 7621;
   const POLL_TIMEOUT_MS = 1500;
   const HOVER_MS = 150;
+  const PROBE_TIMEOUT_MS = 2500;
+  const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
   const CSS = `
     .rsp { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f2a37; padding: 12px 16px; max-width: 1100px; }
@@ -100,6 +102,43 @@
       const saved = (this._node && this._node.cockpitUrl ? String(this._node.cockpitUrl) : "").trim();
       if (saved) return saved.replace(/\/+$/, "");
       return `${location.protocol}//${location.hostname}:${DEFAULT_COCKPIT_PORT}`;
+    }
+
+    // "Failed to fetch" is all the browser says, whether the cockpit refused this page's
+    // origin (CORS) or nothing answered. A no-cors request tells them apart: it resolves
+    // (opaque) when the server is up, whatever its CORS list, and rejects when it isn't.
+    async diagnose() {
+      const base = this.cockpitUrl();
+      const origin = location.origin;
+      let target;
+      try { target = new URL(base); } catch (e) {
+        return `"${base}" is not a URL — enter it as http://<host>:7621`;
+      }
+      if (location.protocol === "https:" && target.protocol === "http:") {
+        return `this page is https and the cockpit is http — the browser blocks that (mixed content).`;
+      }
+      const ctl = typeof AbortController === "function" ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS) : null;
+      try {
+        await fetch(`${base}/api/info`, { mode: "no-cors", cache: "no-store", signal: ctl ? ctl.signal : undefined });
+        return (
+          `the cockpit at ${base} is running but refuses this page (origin ${origin}).\n` +
+          `Restart it with  --cors ${origin}  (or PERCEPTION_CORS=${origin}); ` +
+          `a cockpit started before --cors existed needs a restart on the new code.`
+        );
+      } catch (e) {
+        const timedOut = e && e.name === "AbortError";
+        const hints = [];
+        if (LOOPBACK.has(target.hostname) && !LOOPBACK.has(location.hostname)) {
+          hints.push(`"${target.hostname}" is the machine running this browser, not necessarily the cockpit's — use the cockpit host's IP`);
+        } else if (!LOOPBACK.has(target.hostname)) {
+          hints.push("a cockpit listens on loopback only unless started with --bind 0.0.0.0");
+        }
+        hints.push(timedOut ? `no answer in ${PROBE_TIMEOUT_MS / 1000} s — firewall or wrong subnet?` : "wrong host or port, or the cockpit is not running");
+        return `nothing answers at ${base} from this browser.\n` + hints.map((h) => `· ${h}`).join("\n");
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     }
 
     async api(method, path, body) {
@@ -213,7 +252,12 @@
             await sleep(500);
             continue;
           }
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          if (!r.ok) {
+            const e = new Error(`the cockpit at ${this.cockpitUrl()} answered HTTP ${r.status} on /api/color.png` +
+              (r.status === 404 ? " — it predates the URCap routes; update it and restart." : "."));
+            e.http = r.status;
+            throw e;
+          }
           const seq = Number(r.headers.get("X-Seq") || 0);
           const blob = await r.blob();
           const url = URL.createObjectURL(blob);
@@ -227,10 +271,15 @@
         } catch (err) {
           announced = false;
           this.setLive(false);
+          const why = err && err.message ? err.message : String(err);
+          // Only a network-level failure is ambiguous; an HTTP status already says what happened.
+          let detail = err && err.http ? why : null;
+          if (!detail) { try { detail = await this.diagnose(); } catch (e) { detail = null; } }
+          const up = detail && detail.includes("is running but");
           this.setStatus(
-            `no cockpit at ${this.cockpitUrl()} (${err && err.message ? err.message : err}).\n` +
-            `Start one where the camera is:  perception --cell <cell> gui --cors ${location.origin}\n` +
-            `then set its URL above.`,
+            (detail || `no cockpit at ${this.cockpitUrl()} (${why}).`) +
+            (up ? "" : `\nStart one where the camera is:  perception --cell <cell> gui --cors ${location.origin}` +
+              `\nthen set its URL above.`),
             "err",
           );
           await sleep(1500);
