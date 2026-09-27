@@ -5,16 +5,16 @@ schema-validated, safety-enveloped, audited path the ``urctl`` CLI, the MCP
 server and ``urctl gui`` use — so "send this point to the robot" from the
 perception cockpit is one more tool caller, not a side door. Two calls:
 
-* :meth:`RobotLink.locate` — read the flange pose (``ur_flange_pose``) and
+* :meth:`RobotLink.locate` — read the flange pose (``flange_pose``) and
   turn the segmented object's camera-frame point into a base-frame point and
   an approach pose (:func:`perception.handeye.locate`). No motion.
-* :meth:`RobotLink.move` — ``ur_move_tcp`` to an absolute base-frame pose (the
+* :meth:`RobotLink.move` — ``move_tcp`` to an absolute base-frame pose (the
   approach pose the operator just saw). Validated by the safety envelope;
   refused in a non-RUNNING state, over the speed caps, or outside reach.
 
 Connection target is ``RobotConfig.from_env()`` (``UR_HOST`` etc.); nothing
 connects until the first call. ``dry_run`` validates and audits without
-sending, and ``ur_flange_pose`` then returns a stand-in pose so the whole
+sending, and ``flange_pose`` then returns a stand-in pose so the whole
 flow can be exercised on the synthetic camera without a controller.
 """
 
@@ -106,10 +106,10 @@ class RobotLink:
         }
 
     def state(self) -> dict:
-        return self._tool("ur_get_state")
+        return self._tool("get_state")
 
     def flange_pose(self) -> dict:
-        return self._tool("ur_flange_pose")
+        return self._tool("flange_pose")
 
     def locate(
         self,
@@ -168,7 +168,7 @@ class RobotLink:
             if len(t) != 6 or not all(math.isfinite(v) for v in t):
                 raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
             params["tcp"] = t
-        return self._tool("ur_move_tcp", params)
+        return self._tool("move_tcp", params)
 
     def move_relative(
         self,
@@ -186,7 +186,7 @@ class RobotLink:
         if not (0.0 < velocity <= 1.0) or not (0.0 < acceleration <= 5.0):
             raise ValueError("velocity must be within (0, 1] m/s and acceleration within (0, 5] m/s^2")
         return self._tool(
-            "ur_move_tcp",
+            "move_tcp",
             {
                 "pose": vals,
                 "relative": True,
@@ -265,7 +265,7 @@ class RobotLink:
         }
 
     def tcp_offset(self) -> list[float] | None:
-        """The active flange→TCP offset (UR pose) from one ``ur_flange_pose`` read."""
+        """The active flange→TCP offset (UR pose) from one ``flange_pose`` read."""
         fp = self.flange_pose()
         off = fp.get("tcp_offset") if fp.get("ok") else None
         return [float(v) for v in off] if off else None
@@ -318,7 +318,7 @@ class RobotLink:
         params: dict = {"legs": legs}
         if tcp is not None:
             params["tcp"] = tcp
-        run = self._tool("ur_move_tcp_path", params)
+        run = self._tool("move_tcp_path", params)
         out = dict(run)
         if not out.get("ok") and not out.get("error"):
             viol = (out.get("safety") or {}).get("violations")
@@ -408,27 +408,27 @@ class RobotLink:
         if not (0.0 < velocity <= 0.25):
             raise ValueError("jog velocity must be within (0, 0.25] m/s")
         return self._tool(
-            "ur_move_tcp",
+            "move_tcp",
             {"pose": vals, "relative": True, "velocity": float(velocity), "acceleration": 0.3},
         )
 
     def bring_up(self) -> dict:
-        return self._tool("ur_bring_up")
+        return self._tool("bring_up")
 
     def stop(self) -> dict:
-        return self._tool("ur_stop")
+        return self._tool("stop")
 
     def freedrive(self, enable: bool) -> dict:
-        return self._tool("ur_freedrive", {"enable": bool(enable)})
+        return self._tool("freedrive", {"enable": bool(enable)})
 
     def gripper(self, action: str, position: int | None = None) -> dict:
         params: dict = {"action": action}
         if position is not None:
             params["position"] = int(position)
-        return self._tool("ur_gripper", params)
+        return self._tool("gripper", params)
 
     def rtde_state(self, deep: bool = False) -> dict:
-        return self._tool("ur_rtde_state", {"deep": bool(deep)})
+        return self._tool("rtde_state", {"deep": bool(deep)})
 
     def _tool(self, name: str, params: dict | None = None) -> dict:
         try:

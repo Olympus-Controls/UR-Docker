@@ -670,7 +670,7 @@ class TestTools:
     def test_schemas_well_formed(self):
         schemas = urctl_tools.get_tool_schemas()
         names = {s["name"] for s in schemas}
-        assert "ur_move_joints" in names and "ur_get_state" in names
+        assert "move_joints" in names and "get_state" in names
         for s in schemas:
             assert s["input_schema"]["type"] == "object"
             assert isinstance(s["description"], str) and s["description"]
@@ -710,7 +710,7 @@ class TestTools:
 
     def test_move_tcp_in_schemas(self):
         names = {s["name"] for s in urctl_tools.get_tool_schemas()}
-        assert "ur_move_tcp" in names
+        assert "move_tcp" in names
 
     def test_call_move_tcp_relative_dispatches(self, fake):
         robot = Robot(RobotConfig())
@@ -958,7 +958,7 @@ class TestRobotRtde:
 class TestRtdeTools:
     def test_new_tools_in_schemas(self):
         names = {s["name"] for s in urctl_tools.get_tool_schemas()}
-        assert {"ur_rtde_state", "ur_set_speed_override", "ur_set_digital_output"} <= names
+        assert {"rtde_state", "set_speed_override", "set_digital_output"} <= names
 
     def test_call_rtde_state_dispatches(self, fake):
         robot = Robot(RobotConfig())
@@ -1190,7 +1190,7 @@ class TestFreedriveHold:
         robot = Robot(RobotConfig())
         assert urctl_tools.call_tool(robot, "ur_freedrive", {"enable": True, "hold_s": 30})["held_s"] == 30.0
         assert urctl_tools.call_tool(robot, "ur_freedrive", {"enable": True})["held_s"] == 600.0
-        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "ur_freedrive")
+        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "freedrive")
         assert "hold_s" in json.dumps(schema)
 
     def test_dry_run_sends_nothing(self, monkeypatch):
@@ -1450,7 +1450,7 @@ class TestGripper:
             urctl_tools.call_tool(robot, "ur_gripper", {"action": "move", "position": 50})["status"]["POS"]
             == 50
         )
-        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "ur_gripper")
+        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "gripper")
         assert schema["input_schema"]["properties"]["action"]["enum"] == [
             "status",
             "open",
@@ -1507,5 +1507,5 @@ class TestPathWithGripperAndBlends:
             )
         with pytest.raises(ValueError, match="gripper"):
             robot.move_tcp_path([{"pose": [0.3, 0.2, 0.1, 0, 3.14, 0], "gripper": "squeeze"}])
-        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "ur_move_tcp_path")
+        schema = next(t for t in urctl_tools.get_tool_schemas() if t["name"] == "move_tcp_path")
         assert "blend_m" in json.dumps(schema) and "gripper" in json.dumps(schema)

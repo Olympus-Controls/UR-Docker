@@ -41,7 +41,7 @@ class TestDispatch:
         resp = _server().handle_message(_req("tools/list"))
         tools = resp["result"]["tools"]
         names = {t["name"] for t in tools}
-        assert "ur_move_joints" in names and "ur_system_snapshot" in names
+        assert "move_joints" in names and "system_snapshot" in names and "ur_move_joints" not in names
         assert len(tools) >= 20
         assert all("inputSchema" in t for t in tools)
 

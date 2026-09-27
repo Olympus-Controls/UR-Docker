@@ -24,10 +24,13 @@
 - 2026-09-25 — Guided/inspect wizard (`urctl/guided.py`, `LiveReloader` placers) + `InspectionBot`/`Dance`/`AppleStack`/`PickPlace` programs + the `ur-pick-from-image` skill: delete, or keep as an optional UR-only module? (`urp_convert` + `urp_builder` + `NodeTreeDemo` + `MotionDemo` stay: loading programs is core control.)
 - 2026-09-25 — One GUI: retire `urctl-gui` (`urctl/webapp.py` + its `index.html`) in favour of the cockpit?
 - 2026-09-25 — `sysinfo`/`installation` + `ur_system_snapshot`/`ur_list_programs` (SSH/docker filesystem introspection): delete? Neither the UR3e nor PolyScope X exposes SSH; RTDE deep state + `codes` stay.
-- 2026-09-25 — Restructure: a `Controller` interface (state/bring_up/move_joints/move_tcp/path/stop/freedrive/program/native_script) with the UR implementation first, a `Gripper` interface (Robotiq-over-URCap first), and the `ur_` prefix dropped from tool names (with aliases)? Precondition for Fanuc and for keeping PolyScope X a config switch. After the demo?
 - 2026-09-25 — SAM extra: keep the hook for the Jetson, or drop until it exists?
 
 ## Decisions (so they don't get re-asked)
+
+- 2026-09-26 — Pruning round two: only `urctl-gui` goes (done); the 2-D `perceive` pipeline, `sysinfo`/snapshot and the guided wizard + sample programs **stay**; SAM extra stays for the Jetson. Done the same day, not after the demo.
+- 2026-09-26 — `Controller` / `Gripper` protocols in `urctl/controller.py`; tool names canonical without the `ur_` prefix, `ur_*` kept as aliases. A Fanuc implementation is a later branch.
+- 2026-09-26 — PolyScope X integration = a URCap X Application Node (`urcap/realsense-pilot`) talking to the cockpit over HTTP with CORS; the cockpit stays the one place the camera is opened.
 
 - 2026-09-25 — **Final deployment: a Jetson next to a UR running PolyScope X**, with room for a second Jetson on other arms. Controller IPs are always different — cells carry them (`perception/cells/*.env`); `ur20.env` is filled on site, not in the repo.
 - 2026-09-25 — **Monday 2026-09-28 demo is on the e-Series UR3e.** The platform must stay compatible for ~10 years; the demo view (`--demo`) and `docs/realsense-cell.html` stay through the demo.

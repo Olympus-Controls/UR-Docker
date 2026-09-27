@@ -176,6 +176,11 @@ same registry over MCP (stdio). The three harness additions:
 Every tool call is schema-validated, safety-checked, and audited — the same
 guarantees regardless of who's calling (CLI, GUI, Claude over MCP).
 
+Since 2026-09-26 the canonical tool names carry no vendor prefix (`rtde_state`,
+`system_snapshot`, `list_programs`, `move_tcp`, …); the `ur_*` names used in
+this document remain valid aliases (`urctl.tools.TOOL_ALIASES`). The seam for
+other arms is `urctl/controller.py` (`Controller` / `Gripper` protocols).
+
 ## 5. GUI — the RGB-D cockpit
 
 The robot-only `urctl gui` / `urctl-gui` panel described here until 2026-09-26

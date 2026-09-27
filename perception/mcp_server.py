@@ -3,8 +3,8 @@ over MCP (stdio), stdlib only.
 
 One server, two tool families, one process for the agent to configure:
 
-* **Robot** — the whole ``urctl`` registry (``ur_get_state``, ``ur_move_tcp``,
-  ``ur_bring_up``, ``ur_run_script``, …), driving the controller directly
+* **Robot** — the whole ``urctl`` registry (``get_state``, ``move_tcp``,
+  ``bring_up``, ``run_script``, …), driving the controller directly
   through the same safety envelope and audit log as the CLI and the cockpit.
 * **Camera + cell** (``cam_*``, ``cell_*``) — served *through a running
   cockpit* (``perception gui``), because one process must own the USB camera

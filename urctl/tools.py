@@ -19,8 +19,12 @@ API, an OpenAI-style ``tools=`` array, an MCP server, or a bespoke executive::
 
     robot = Robot()
     schemas = get_tool_schemas()                  # hand these to the model
-    result = call_tool(robot, "ur_move_joints",   # dispatch a model's tool call
+    result = call_tool(robot, "move_joints",      # dispatch a model's tool call
                        {"joints": [0, -1.57, 0, -1.57, 0, 0]})
+
+Tool names are vendor-neutral (``move_tcp``, ``get_state`` …) since 2026-09-26; the
+original ``ur_``-prefixed names are accepted as aliases (:data:`TOOL_ALIASES`) so
+agents, docs and MCP configurations written against them keep working.
 """
 
 from __future__ import annotations
@@ -251,14 +255,14 @@ def _h_set_digital_output(robot: Robot, p: dict) -> dict:
 
 TOOLS: list[Tool] = [
     Tool(
-        "ur_get_state",
+        "get_state",
         "Read the robot's current state: robot mode, safety mode, program "
         "state, and (when RUNNING) joint angles and TCP pose.",
         _object_schema({}),
         _h_get_state,
     ),
     Tool(
-        "ur_flange_pose",
+        "flange_pose",
         "Read the tool-flange pose in the base frame (plus the active TCP pose "
         "and TCP offset it derives from). Use it to transform measurements from "
         "a flange-mounted camera into base coordinates. Read-only; works in "
@@ -267,15 +271,15 @@ TOOLS: list[Tool] = [
         _h_flange_pose,
     ),
     Tool(
-        "ur_bring_up",
+        "bring_up",
         "Bring the controller from a cold start to RUNNING: clear latched "
         "safety, power on motors, release brakes. Idempotent.",
         _object_schema({}),
         _h_bring_up,
     ),
-    Tool("ur_power_off", "Power off the robot's motors.", _object_schema({}), _h_power_off),
+    Tool("power_off", "Power off the robot's motors.", _object_schema({}), _h_power_off),
     Tool(
-        "ur_move_joints",
+        "move_joints",
         "Move to a joint-space target with movej. Validated against the "
         "safety envelope (joint range, speed, acceleration, RUNNING state) "
         "before execution.",
@@ -290,7 +294,7 @@ TOOLS: list[Tool] = [
         _h_move_joints,
     ),
     Tool(
-        "ur_move_tcp",
+        "move_tcp",
         "Move the tool linearly with movel. Set relative=true for a base-frame "
         "delta added to the current pose (e.g. pose [0,0.05,0,0,0,0] nudges "
         "+50 mm along base +Y); relative=false for an absolute base-frame "
@@ -316,7 +320,7 @@ TOOLS: list[Tool] = [
         _h_move_tcp,
     ),
     Tool(
-        "ur_move_tcp_path",
+        "move_tcp_path",
         "Run several absolute movel legs as ONE program on one connection (an "
         "approach cycle: over → down → dwell → up → back). Each leg: pose "
         "[x,y,z,rx,ry,rz], optional velocity/acceleration (m/s, m/s^2) and dwell_s "
@@ -348,7 +352,7 @@ TOOLS: list[Tool] = [
         _h_move_tcp_path,
     ),
     Tool(
-        "ur_move_trajectory",
+        "move_trajectory",
         "Run a joint-space trajectory: a sequence of movej waypoints streamed as "
         "ONE program over a single Primary connection. This is the way to move a "
         "lot quickly — issuing many separate moves pays a per-move handshake and "
@@ -377,7 +381,7 @@ TOOLS: list[Tool] = [
         _h_move_trajectory,
     ),
     Tool(
-        "ur_move_home",
+        "move_home",
         "Move to the safe candle home pose (straight up, wrists folded).",
         _object_schema(
             {
@@ -388,7 +392,7 @@ TOOLS: list[Tool] = [
         _h_move_home,
     ),
     Tool(
-        "ur_freedrive",
+        "freedrive",
         "Enable or disable freedrive (hand-guiding) on all six axes. Enabling holds "
         "freedrive for hold_s seconds (default 600) or until disabled — a real "
         "e-Series drops freedrive the moment its script ends, so the hold is a program "
@@ -403,7 +407,7 @@ TOOLS: list[Tool] = [
         _h_freedrive,
     ),
     Tool(
-        "ur_gripper",
+        "gripper",
         "Drive the Robotiq gripper (Hand-E / 2F) on the tool flange through its URCap "
         "daemon: status, open, close, move (position 0 = fully open … 255 = fully "
         "closed), or activate. Waits for the motion to settle and returns the status "
@@ -421,23 +425,23 @@ TOOLS: list[Tool] = [
         _h_gripper,
     ),
     Tool(
-        "ur_popup",
+        "popup",
         "Show a popup message on the PolyScope teach pendant.",
         _object_schema({"text": {"type": "string"}}, required=["text"]),
         _h_popup,
     ),
     Tool(
-        "ur_load_program",
+        "load_program",
         "Load a PolyScope program (<name>.urp) on the controller. A matching "
         "<name>.installation file must already sit beside it on the controller.",
         _object_schema({"name": {"type": "string"}}, required=["name"]),
         _h_load_program,
     ),
-    Tool("ur_play", "Play (start) the currently loaded program.", _object_schema({}), _h_play),
-    Tool("ur_stop", "Stop the running program.", _object_schema({}), _h_stop),
-    Tool("ur_pause", "Pause the running program.", _object_schema({}), _h_pause),
+    Tool("play", "Play (start) the currently loaded program.", _object_schema({}), _h_play),
+    Tool("stop", "Stop the running program.", _object_schema({}), _h_stop),
+    Tool("pause", "Pause the running program.", _object_schema({}), _h_pause),
     Tool(
-        "ur_run_script",
+        "run_script",
         "ADVANCED: run arbitrary URScript on the Primary client. Bypasses the "
         "joint/speed safety envelope (it cannot be statically bounded) but is "
         "still audited. Wrapped in a def by default so motion actually runs. "
@@ -468,14 +472,14 @@ TOOLS: list[Tool] = [
         _h_run_script,
     ),
     Tool(
-        "ur_dashboard_command",
+        "dashboard_command",
         "ADVANCED: send a raw Dashboard command (e.g. 'robotmode'). Audited; "
         "unvalidated. Escape hatch for commands not covered by other tools.",
         _object_schema({"command": {"type": "string"}}, required=["command"]),
         _h_dashboard_command,
     ),
     Tool(
-        "ur_rtde_state",
+        "rtde_state",
         "Read high-rate structured state via RTDE (port 30004): joint angles "
         "and velocities, TCP pose/speed/force, and decoded safety/runtime "
         "status. Works even when no program is running (unlike ur_get_state's "
@@ -494,7 +498,7 @@ TOOLS: list[Tool] = [
         _h_rtde_state,
     ),
     Tool(
-        "ur_system_snapshot",
+        "system_snapshot",
         "Full cell model of the controller: live state + deep RTDE telemetry "
         "plus filesystem-level facts the network APIs never expose — joint "
         "serials/firmware (replacement detection), kinematic-calibration "
@@ -520,14 +524,14 @@ TOOLS: list[Tool] = [
         _h_system_snapshot,
     ),
     Tool(
-        "ur_list_programs",
+        "list_programs",
         "List the .urp / .script / .installation files on the controller "
         "(name, size, mtime) — what the operator can load from the pendant.",
         _object_schema({"ssh": _SSH_SCHEMA, "container": _CONTAINER_SCHEMA}),
         _h_list_programs,
     ),
     Tool(
-        "ur_set_speed_override",
+        "set_speed_override",
         "Set the global speed slider (0-1) over RTDE. Scales the speed of ALL "
         "subsequent motion. Validated against the safety envelope's max speed "
         "fraction before it is applied.",
@@ -545,7 +549,7 @@ TOOLS: list[Tool] = [
         _h_set_speed_override,
     ),
     Tool(
-        "ur_set_digital_output",
+        "set_digital_output",
         "Set a standard digital output pin (0-7) high or low over RTDE.",
         _object_schema(
             {
@@ -558,17 +562,38 @@ TOOLS: list[Tool] = [
     ),
 ]
 
+ALIAS_PREFIX = "ur_"
+# The pre-2026-09-26 names: ``ur_move_tcp`` → ``move_tcp``. Accepted everywhere a
+# tool name is (call_tool, the MCP servers, the CLI); listed only on request.
+TOOL_ALIASES: dict[str, str] = {ALIAS_PREFIX + t.name: t.name for t in TOOLS}
 _BY_NAME = {t.name: t for t in TOOLS}
 
 
-def get_tool_schemas() -> list[dict]:
+def canonical_name(name: str) -> str:
+    """The registry name for ``name`` (an alias or a canonical name, unchanged otherwise)."""
+    return TOOL_ALIASES.get(name, name)
+
+
+def get_tool_schemas(*, include_aliases: bool = False) -> list[dict]:
     """Return the tools as ``{name, description, input_schema}`` dicts.
 
     This is the capability-discovery payload — hand it straight to a model's
     tool-calling API (rename ``input_schema`` to ``parameters`` for the
     OpenAI-style shape; it's already the right shape for Anthropic's API).
+    ``include_aliases`` appends the ``ur_``-prefixed names as separate entries
+    for a client that was configured against them.
     """
-    return [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in TOOLS]
+    out = [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in TOOLS]
+    if include_aliases:
+        out += [
+            {
+                "name": alias,
+                "description": f"Alias of {t.name}. " + t.description,
+                "input_schema": t.input_schema,
+            }
+            for alias, t in ((a, _BY_NAME[c]) for a, c in TOOL_ALIASES.items())
+        ]
+    return out
 
 
 class ToolError(Exception):
@@ -614,9 +639,11 @@ def call_tool(robot: Robot, name: str, params: dict | None = None) -> dict:
     ``ok`` and was audited). Raises :class:`ToolError` for an unknown tool or
     malformed arguments.
     """
-    tool = _BY_NAME.get(name)
+    tool = _BY_NAME.get(canonical_name(name))
     if tool is None:
-        raise ToolError(f"unknown tool: {name!r}. Known: {sorted(_BY_NAME)}")
+        raise ToolError(
+            f"unknown tool: {name!r}. Known: {sorted(_BY_NAME)} (or with the {ALIAS_PREFIX!r} prefix)"
+        )
     params = params or {}
     _validate(params, tool.input_schema)
     return tool.handler(robot, params)

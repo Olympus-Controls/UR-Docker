@@ -750,6 +750,19 @@ needs a human entry point, a subcommand in `urctl/cli.py`. The CLI, the agent
 tool registry, and the MCP server all sit on the same `Robot`, so they stay in
 lockstep. Keep mutating actions routed through the safety envelope + audit log.
 
+**The vendor-neutral seam (`urctl/controller.py`, 2026-09-26):** `Controller`
+and `Gripper` are `typing.Protocol`s — `Robot` satisfies `Controller`
+structurally (e-Series and PolyScope X are one class selected by
+`RobotConfig.platform`), `Robot.gripper_device` is the `RobotiqUrcapGripper`
+adapter. A Fanuc is a second class satisfying `Controller`; the tools, the
+cockpit's `RobotLink`, `pick-cycle` and `calibrate` program against the
+protocol's method names. **Tool names are canonical without a vendor prefix**
+(`move_tcp`, `get_state`, `gripper`, …); the original `ur_*` names are aliases
+(`urctl.tools.TOOL_ALIASES`) accepted by `call_tool`, both MCP servers and the
+CLI, so existing agent configurations and the `ur_*` mentions in this file keep
+working. `tools/list` shows canonical names; `get_tool_schemas(include_aliases=True)`
+adds the aliases.
+
 For deeper development tasks:
 
 - **Adding a new sample program**: drop a `.script` under

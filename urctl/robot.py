@@ -142,6 +142,14 @@ class Robot:
         self._ensure_reach()
         return self.safety.max_reach
 
+    @property
+    def gripper_device(self):
+        """The attached end effector as a :class:`urctl.controller.Gripper` — the
+        Robotiq-over-URCap adapter around :meth:`gripper`."""
+        from .controller import RobotiqUrcapGripper
+
+        return RobotiqUrcapGripper(self)
+
     def _rtde_client(self, *, deep: bool = False):
         """Lazily build (and cache) the RTDE client. Dropped on read failure so
         the next call reconnects (see :meth:`rtde_state` / :meth:`get_state`).

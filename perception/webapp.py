@@ -23,7 +23,7 @@ API:
                                       latest frame → mask PNG (base64) + features.
   * ``POST /api/nearest``             RealSenseTrainer's nearest-object mask.
   * ``GET  /api/robot``               the robot link: host, hand-eye, dry-run.
-  * ``POST /api/robot/state``         ``ur_get_state`` through the tool registry.
+  * ``POST /api/robot/state``         ``get_state`` through the tool registry.
   * ``POST /api/robot/approach_cycle`` ``{standoff_m?, reference?, clearance_m?, hold_s?, velocity?}``
     — over the segment → down to the standoff → hold → up → back to the capture pose (one program)
   * ``POST /api/robot/locate``        ``{standoff_m?, point_m?, reference?}`` — the segment's

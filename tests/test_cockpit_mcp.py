@@ -64,7 +64,7 @@ def test_tools_list_is_robot_plus_cockpit(cockpit):
         t["name"]
         for t in server.handle_message({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
     ]
-    assert "ur_move_tcp" in names and "ur_get_state" in names
+    assert "move_tcp" in names and "get_state" in names
     assert [t.name for t in COCKPIT_TOOLS] == [n for n in names if n.startswith(("cam_", "cell_", "cal_"))]
     assert len(names) == len(set(names))
     init = server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}})
