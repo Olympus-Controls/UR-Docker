@@ -83,14 +83,40 @@ def default_handeye_path(env: Mapping[str, str] | None = None) -> str:
 
 ENV_T_FLANGE_CAMERA = "PERCEPTION_T_FLANGE_CAMERA"
 DEFAULT_STANDOFF_M = 0.10
-# What the standoff is measured from: the active TCP ("tcp", the historical
-# behaviour) or the tool flange ("flange"). A cell whose active TCP is a
-# training/gripper offset the physical tool doesn't match wants "flange":
-# "put the flange 75 mm above the part" is the number the integrator knows.
-APPROACH_REFERENCES = ("tcp", "flange")
-DEFAULT_APPROACH_REFERENCE = "tcp"
+# What the standoff is measured from:
+#   "fingertip" (the default) — the gripper's fingertips, ``tip_m`` along the
+#       flange +Z, approached along the tool axis; every move runs with the TCP
+#       forced to those fingertips. The controller's active TCP is never trusted
+#       for this (the UR3e cell's is a 220 mm training offset the Hand-E doesn't
+#       match): the tool offset is the number that decides whether the fingers
+#       stop above the part or inside it (Nick, 2026-09-27: "always approach with
+#       the fingertips").
+#   "flange" — the tool flange, along the camera ray (no tool fitted).
+#   "tcp"    — the controller's active TCP, along the camera ray (historical).
+APPROACH_REFERENCES = ("fingertip", "flange", "tcp")
+DEFAULT_APPROACH_REFERENCE = "fingertip"
 ENV_APPROACH_REFERENCE = "PERCEPTION_APPROACH_REFERENCE"
 ENV_STANDOFF_M = "PERCEPTION_STANDOFF_M"
+# Flange → fingertip length along flange +Z: Robotiq Hand-E 157 mm + the 6 mm
+# bracket adapter (measured for pick-cycle, 2026-09-25). A cell with another tool
+# sets PERCEPTION_TIP_M.
+DEFAULT_TIP_M = 0.163
+ENV_TIP_M = "PERCEPTION_TIP_M"
+
+
+def tip_m_from_env(env: Mapping[str, str] | None = None) -> float:
+    """The cell's flange→fingertip length (``PERCEPTION_TIP_M``, default Hand-E + adapter)."""
+    env = os.environ if env is None else env
+    raw = env.get(ENV_TIP_M, "").strip()
+    tip = float(raw) if raw else DEFAULT_TIP_M
+    if not (math.isfinite(tip) and 0.0 <= tip <= 0.6):
+        raise ValueError(f"{ENV_TIP_M} must be within 0..0.6 m")
+    return tip
+
+
+def fingertip_tcp(tip_m: float) -> list[float]:
+    """The fingertip TCP (flange → fingertips) as a UR pose: ``tip_m`` along flange +Z."""
+    return [0.0, 0.0, float(tip_m), 0.0, 0.0, 0.0]
 
 
 def transform_from_extrinsics(ext: Mapping | None) -> Transform:
@@ -207,6 +233,7 @@ def locate(
     max_reach_m: float | None = None,
     reference: str = DEFAULT_APPROACH_REFERENCE,
     tcp_offset: Sequence[float] | None = None,
+    tip_m: float = DEFAULT_TIP_M,
 ) -> dict:
     """Turn a colour-camera point into base coordinates and an **approach pose**
     for the tool: the TCP placed ``standoff_m`` short of the point along the
@@ -218,11 +245,18 @@ def locate(
     axis that is straight down the tool axis. Returns every intermediate
     frame so the cockpit can show its work before anything moves.
 
-    ``reference`` picks what sits ``standoff_m`` short of the point: the active
-    TCP (``"tcp"``) or the tool flange (``"flange"``, needs ``tcp_offset`` —
-    the live active-TCP offset, flange→TCP UR pose — to express the flange
-    target as the TCP pose ``movel`` takes). The move always keeps the tool's
-    current orientation, so ``flange_target_pose`` is reported either way.
+    ``reference`` picks what sits ``standoff_m`` short of the point:
+
+    * ``"fingertip"`` — the fingertips (``tip_m`` along flange +Z) sit
+      ``standoff_m`` short of the point **along the tool axis** (the approach
+      pick-cycle verified on the UR3e); ``approach_pose`` is then the pose of the
+      *fingertip TCP* (``tcp`` in the result) and every move runs with that TCP.
+    * ``"flange"`` — the flange, along the camera ray; needs ``tcp_offset`` (the
+      live active-TCP offset) to express it as the active-TCP pose.
+    * ``"tcp"`` — the active TCP, along the camera ray.
+
+    The move always keeps the tool's current orientation, so ``flange_target_pose``
+    is reported whenever it can be computed.
 
     ``max_reach_m`` (the arm's datasheet reach — ``SafetyEnvelope.max_reach``)
     adds ``reachable`` / ``approach_distance_m`` so the verdict is on screen
@@ -245,12 +279,21 @@ def locate(
             raise ValueError("tcp_offset must be 6 finite numbers")
     if reference == "flange" and offset is None:
         raise ValueError("reference='flange' needs the active tcp_offset")
+    if not (math.isfinite(tip_m) and 0.0 <= tip_m <= 0.6):
+        raise ValueError("tip_m must be within 0..0.6 m")
     p_flange = handeye.camera_to_flange(p_cam)
     p_base = base_from_flange.apply(p_flange)
     ray_base = base_from_flange.rotate(handeye.flange_to_color.rotate((0.0, 0.0, 1.0)))
     short = tuple(p - standoff_m * r for p, r in zip(p_base, ray_base, strict=True))
     flange_now = [float(v) for v in flange_pose]
-    if reference == "flange":
+    tool_tcp = None
+    if reference == "fingertip":
+        tool_tcp = fingertip_tcp(tip_m)
+        axis = base_from_flange.rotate((0.0, 0.0, 1.0))  # the tool axis, pointing at the part
+        tip = [p - standoff_m * a for p, a in zip(p_base, axis, strict=True)]
+        target = [*tip, *flange_now[3:]]  # the fingertip TCP's pose (no rotation vs the flange)
+        flange_target = pose_trans(target, pose_inv(tool_tcp))
+    elif reference == "flange":
         flange_target = [*short, *flange_now[3:]]
         target = pose_trans(flange_target, offset)  # the TCP pose that puts the flange there
     else:
@@ -259,11 +302,10 @@ def locate(
     approach = tuple(target[:3])
     approach_dist = math.sqrt(sum(v * v for v in approach))
     point_dist = math.sqrt(sum(v * v for v in p_base))
-    # Reach is judged on the pose that will be *commanded*: with the flange
-    # reference the moves run with the TCP overridden to the flange, so the
-    # flange target is what the envelope sees (the TCP pose is a virtual point
-    # that can sit nearer the base than the flange does).
-    commanded = flange_target if reference == "flange" else target
+    # Reach is judged on the flange whenever the moves override the TCP (flange,
+    # fingertip): the datasheet radius is to the flange, and the active TCP pose is
+    # a virtual point that can sit nearer the base than the flange does.
+    commanded = flange_target if reference in ("flange", "fingertip") else target
     commanded_dist = math.sqrt(sum(v * v for v in commanded[:3]))
     reachable = None if max_reach_m is None else bool(commanded_dist <= max_reach_m)
     return {
@@ -273,6 +315,8 @@ def locate(
         "max_reach_m": None if max_reach_m is None else float(max_reach_m),
         "reachable": reachable,
         "reference": reference,
+        "tool_tcp": tool_tcp,
+        "tip_m": float(tip_m) if reference == "fingertip" else None,
         "flange_target_pose": flange_target,
         "tcp_offset": offset,
         "point_cam_m": list(p_cam),

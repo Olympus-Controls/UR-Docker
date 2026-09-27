@@ -278,6 +278,10 @@ def test_target_text_says_which_check_judged_reach(java_client):
         "reachable": True,
         "reach_check": "controller_ik",
     }
+    tips = dict(loc, reference="fingertip", tip_m=0.163, approach_pose=[-0.2, 0.3, -0.2, 0, 3.14, 0])
+    assert java_client("target", json.dumps(tips)).splitlines()[1] == (
+        "fingertips -0.200, 0.300, -0.200, 0.000, 3.140, 0.000  0.075 m above the object (tool 0.163 m)"
+    )
     text = java_client("target", json.dumps(loc))
     assert text.splitlines()[1].startswith("flange   -0.232, 0.310, -0.216")
     assert text.endswith("reachable  (the controller's inverse kinematics)")

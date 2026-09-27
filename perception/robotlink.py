@@ -25,6 +25,7 @@ import os
 from collections.abc import Mapping, Sequence
 
 from urctl.config import RobotConfig
+from urctl.pose import pose_inv, pose_trans
 from urctl.robot import Robot
 from urctl.tools import ToolError, call_tool
 
@@ -37,7 +38,9 @@ from .handeye import (
     ENV_STANDOFF_M,
     HandEye,
     default_handeye_path,
+    fingertip_tcp,
     locate,
+    tip_m_from_env,
 )
 
 DEFAULT_APPROACH_VELOCITY = 0.1  # m/s — slow; this move follows a single click
@@ -97,6 +100,17 @@ class RobotLink:
         self.standoff_m = float(raw) if raw else DEFAULT_STANDOFF_M
         if not (0.0 <= self.standoff_m <= 1.0):
             raise ValueError(f"{ENV_STANDOFF_M} must be within 0..1 m")
+        self.tip_m = tip_m_from_env()
+
+    def reference_tcp(self, reference: str | None = None) -> list[float] | None:
+        """The TCP every move of this approach reference runs with: the fingertips,
+        the flange, or ``None`` (the controller's active TCP, ``"tcp"`` only)."""
+        ref = (reference or self.approach_reference).lower()
+        if ref == "fingertip":
+            return fingertip_tcp(self.tip_m)
+        if ref == "flange":
+            return list(FLANGE_TCP)
+        return None
 
     def attach_camera(self, camera_description: Mapping) -> None:
         """Take the depth→colour extrinsics from ``camera.describe()``."""
@@ -114,6 +128,8 @@ class RobotLink:
             "approach": {
                 "standoff_m": self.standoff_m,
                 "reference": self.approach_reference,
+                "tip_m": self.tip_m,
+                "tcp": self.reference_tcp(),
                 "velocity": DEFAULT_APPROACH_VELOCITY,
                 "acceleration": DEFAULT_APPROACH_ACCELERATION,
             },
@@ -147,8 +163,10 @@ class RobotLink:
             max_reach_m=self.robot.max_reach(),
             reference=(reference or self.approach_reference).lower(),
             tcp_offset=fp.get("tcp_offset"),
+            tip_m=self.tip_m,
         )
         result["ok"] = True
+        result["tcp"] = self.reference_tcp(result["reference"])
         self._controller_reach(result)
         result["model"] = self.robot.safety.model or None
         result["robot"] = {
@@ -166,7 +184,10 @@ class RobotLink:
         tcp: Sequence[float] | None = None,
     ) -> dict:
         """``movel`` to an absolute base-frame pose (safety-validated, audited).
-        ``tcp`` overrides the active TCP for the move (``[0]*6`` = the flange)."""
+        ``tcp`` overrides the active TCP for the move (``[0]*6`` = the flange);
+        without one the cell's approach reference decides — the fingertip TCP by
+        default — so a pose from :meth:`locate` lands where it was computed for.
+        Only the ``"tcp"`` reference moves the controller's active TCP."""
         vals = [float(v) for v in pose]
         if len(vals) != 6 or not all(math.isfinite(v) for v in vals):
             raise ValueError("pose must be 6 finite numbers [x, y, z, rx, ry, rz]")
@@ -178,6 +199,8 @@ class RobotLink:
             "velocity": float(velocity),
             "acceleration": float(acceleration),
         }
+        if tcp is None:
+            tcp = self.reference_tcp()
         if tcp is not None:
             t = [float(v) for v in tcp]
             if len(t) != 6 or not all(math.isfinite(v) for v in t):
@@ -223,7 +246,6 @@ class RobotLink:
         unchanged — the same output shape as :meth:`locate` (``approach_pose``,
         ``flange_target_pose``, ``reachable``) so Move/Approach can reuse it.
         Reads the flange pose; moves nothing."""
-        from urctl.pose import pose_inv, pose_trans
 
         pt = [float(v) for v in point_base]
         if len(pt) != 3 or not all(math.isfinite(v) for v in pt):
@@ -247,13 +269,16 @@ class RobotLink:
             return {"ok": False, "error": "reference='flange' needs the active tcp_offset"}
         short = [pt[i] + so * n[i] for i in range(3)]
         flange_now, tcp_now = [float(v) for v in fp["flange"]], [float(v) for v in fp["tcp"]]
-        if ref == "flange":
+        if ref == "fingertip":
+            target = [*short, *flange_now[3:]]  # the fingertip TCP's pose
+            flange_target = pose_trans(target, pose_inv(fingertip_tcp(self.tip_m)))
+        elif ref == "flange":
             flange_target = [*short, *flange_now[3:]]
             target = pose_trans(flange_target, offset)
         else:
             target = [*short, *tcp_now[3:]]
             flange_target = pose_trans(target, pose_inv(offset)) if offset else None
-        commanded = flange_target if ref == "flange" else target
+        commanded = flange_target if ref in ("flange", "fingertip") else target
         dist = math.sqrt(sum(v * v for v in commanded[:3]))
         max_reach = self.robot.max_reach()
         result = {
@@ -264,7 +289,9 @@ class RobotLink:
             "reference": ref,
             "approach_pose": target,
             "flange_target_pose": flange_target,
-            "tcp": list(FLANGE_TCP) if ref == "flange" else None,
+            "tcp": self.reference_tcp(ref),
+            "tool_tcp": fingertip_tcp(self.tip_m) if ref == "fingertip" else None,
+            "tip_m": self.tip_m if ref == "fingertip" else None,
             "commanded_distance_m": dist,
             "max_reach_m": max_reach,
             "reachable": None if max_reach is None else bool(dist <= max_reach),
@@ -286,11 +313,11 @@ class RobotLink:
         inverse kinematics for the pose that will be commanded (the flange target
         with the TCP overridden to the flange, or the approach pose under the active
         TCP). The sphere stays when the controller gives no answer."""
-        flange = result.get("reference") == "flange"
-        pose = result.get("flange_target_pose") if flange else result.get("approach_pose")
+        ref = result.get("reference")
+        pose = result.get("flange_target_pose") if ref == "flange" else result.get("approach_pose")
         answer = {"reachable": None, "joints": None}
         if pose:
-            answer = self.robot.inverse_kin([list(pose)], tcp=FLANGE_TCP if flange else None)[0]
+            answer = self.robot.inverse_kin([list(pose)], tcp=self.reference_tcp(ref))[0]
         # the controller's own joint solution (nearest the live joints) — what a
         # joint-space move screen (PolyScope 5's requestUserToMoveRobot) is handed
         result["joint_target"] = answer["joints"]
@@ -339,7 +366,10 @@ class RobotLink:
                 "error": "out of reach: " + reach_note(loc),
                 "locate": loc,
             }
-        if loc["reference"] == "flange":
+        if loc["reference"] == "fingertip":
+            tcp = self.reference_tcp("fingertip")
+            capture, target = pose_trans(loc["flange_pose"], tcp), loc["approach_pose"]
+        elif loc["reference"] == "flange":
             tcp, capture, target = FLANGE_TCP, loc["flange_pose"], loc["flange_target_pose"]
         else:
             tcp, capture, target = None, loc["tcp_pose"], loc["approach_pose"]

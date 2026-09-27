@@ -141,6 +141,7 @@ def describe_cell(env: Mapping[str, str] | None = None) -> dict:
         "PERCEPTION_T_FLANGE_CAMERA",
         "PERCEPTION_APPROACH_REFERENCE",
         "PERCEPTION_STANDOFF_M",
+        "PERCEPTION_TIP_M",
         "PERCEPTION_SEGMENT_BACKEND",
         "REALSENSE_LIB",
     )

@@ -423,9 +423,11 @@
         const reach = loc.reachable === false ? "OUT OF REACH" : loc.reachable === true ? "reachable" : "reach unknown";
         this.$("target").textContent =
           `object  base ${fmtVec(loc.point_base_m)} m  (${fmt(loc.point_distance_m, 2)} m from the base)\n` +
-          (loc.reference === "flange" && loc.flange_target_pose
-            ? `flange   ${fmtVec(loc.flange_target_pose)}  standoff ${fmt(loc.standoff_m, 2)} m above the object\n`
-            : `approach ${fmtVec(loc.approach_pose)}  standoff ${fmt(loc.standoff_m, 2)} m\n`) +
+          (loc.reference === "fingertip"
+            ? `fingertips ${fmtVec(loc.approach_pose)}  ${fmt(loc.standoff_m, 3)} m above the object (tool ${fmt(loc.tip_m, 3)} m)\n`
+            : loc.reference === "flange" && loc.flange_target_pose
+              ? `flange   ${fmtVec(loc.flange_target_pose)}  standoff ${fmt(loc.standoff_m, 2)} m above the object\n`
+              : `approach ${fmtVec(loc.approach_pose)}  standoff ${fmt(loc.standoff_m, 2)} m\n`) +
           `${reach}` +
           (loc.reach_check === "controller_ik"
             ? "  (the controller's inverse kinematics)"
