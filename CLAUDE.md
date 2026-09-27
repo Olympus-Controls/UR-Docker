@@ -165,8 +165,9 @@ URCap API bundles out of the URSim e-Series image into `target/` — they are no
 Central and never committed; `make urcap5-package` → `urcap/dist/*.urcap`, reproducible,
 with a sources digest a test checks). PolyScope 5's loader needs `URCapCompatibility-CB3`
 / `-eSeries` in the manifest and reads the API version from an embedded
-`META-INF/maven/**/pom.xml` (`com.ur.urcap:api` dependency). Not yet loaded in PolyScope
-(the e-Series sim needs Docker's Rosetta off on the Mac Studio).
+`META-INF/maven/**/pom.xml` (`com.ur.urcap:api` dependency). Not yet loaded in PolyScope:
+the e-Series sim cannot run on the Mac Studio (Rosetta traps Xvfb, QEMU kills URControl),
+so the first load is on the robot (USB) or in CI's URSim.
 
 **Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before

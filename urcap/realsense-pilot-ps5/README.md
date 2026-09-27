@@ -61,7 +61,7 @@ jar is reproducible, and carries a digest of its sources so a test flags a stale
   HTTP against the real cockpit server are tested under a JDK.
 - `get_inverse_kin_has_solution` / `get_inverse_kin` with `tcp=` verified on the UR3e
   (PolyScope 5.25.1).
-- **Not yet loaded in PolyScope.** The e-Series URSim does not boot on the Mac Studio with
-  Docker Desktop's Rosetta emulation on (Xvfb trap); the first load — in the sim with
-  QEMU emulation, or on the robot — is the open step. `urcap.api.version` (1.9.0) and
+- **Not yet loaded in PolyScope.** The e-Series URSim cannot run on the Mac Studio (Xvfb
+  traps under Rosetta, URControl dies under QEMU — `TODO.md`, 2026-09-04); the first load
+  is on the robot (USB install above) or in CI's URSim (amd64) — the open step. `urcap.api.version` (1.9.0) and
   the `[1.0.0,2.0.0)` import ranges are the parts that load will confirm or correct.
