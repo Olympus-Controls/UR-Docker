@@ -478,9 +478,9 @@
           8000,
           `PolyScope found no joint solution for [${fmtVec(pose)}] in 8 s — unreachable for its IK`,
         );
-        this.setStatus("opening PolyScope's auto-move screen — hold to move", "ok");
+        // autoMove resolves as soon as PolyScope's screen opens (10.13 sim), not when the arm arrives
         await api.robotMoveService.autoMove(joints);
-        this.setStatus("auto-move finished", "ok");
+        this.setStatus("PolyScope's move screen is open — hold Move To Position to go there", "ok");
       } catch (err) {
         this.setStatus(`PolyScope move: ${err && err.message ? err.message : err}`, "err");
       }
