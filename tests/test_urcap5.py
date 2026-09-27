@@ -206,7 +206,17 @@ def java_client(tmp_path_factory):
         shutil.copy(JAVA / name, pkg / name)
     classes = root / "classes"
     subprocess.run(
-        [JAVAC, "--release", "8", "-Xlint:-options", "-d", str(classes), *map(str, pkg.glob("*.java"))],
+        [
+            JAVAC,
+            "--release",
+            "8",
+            "-Xlint:-options",
+            "-encoding",
+            "UTF-8",
+            "-d",
+            str(classes),
+            *map(str, pkg.glob("*.java")),
+        ],
         check=True,
         capture_output=True,
         timeout=120,
