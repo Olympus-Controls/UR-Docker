@@ -49,13 +49,14 @@ Add `--dry-run` anywhere to validate + audit without sending.
 ## For humans: the cockpit GUI
 
 ```bash
-uv run urctl gui --host 10.0.0.5
+uv run perception --cell ur3 gui          # RGB-D cockpit + Pilot panel (docs/realsense.md)
+uv run perception --fake gui              # the same on a synthetic scene, no camera
 ```
 
-A local web control panel (binds 127.0.0.1): live arm view with forward
-kinematics, Cartesian + joint jog, speed slider, named IO lamps, program
-load/play/stop, URScript console, pendant popups, and live diagnostics
-(joint currents/temps, TCP force) streamed at 12.5 Hz.
+A local web cockpit (binds 127.0.0.1): the wrist camera's colour + depth, extra
+webcam views, hover-to-measure, click-to-segment, send-the-point-to-the-robot,
+hand-eye calibration, and a Pilot panel (bring-up, jog, stop, freedrive,
+gripper) whose every button goes through the same audited tool registry.
 
 ## CLI + library
 

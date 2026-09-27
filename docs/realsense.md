@@ -62,7 +62,7 @@ shiny, or transparent surfaces defeat stereo; direct sunlight washes out the
 IR projector. 30–60 cm from the workpiece is the good zone for the bracket.
 
 The cockpit (`perception/webapp.py` + `perception/webui/index.html`) is a
-stdlib HTTP server, same shape as `urctl gui`. One thread pumps the camera;
+stdlib HTTP server (the only GUI since `urctl gui` was retired on 2026-09-26). One thread pumps the camera;
 the page long-polls `/api/rgbd` for a binary container (JSON header + colour
 PNG + zlib'd `uint16` depth), inflates the depth with `DecompressionStream`
 and colourises it in the browser. Hover measures; click posts `/api/segment`.
@@ -94,7 +94,7 @@ RSUSB backend, ~10 min on Apple Silicon), the SDK loads inside it, and
 `perception rs-info` / `rs-capture --fake` run. USB itself was not exercised
 (Docker Desktop on macOS cannot pass the camera through).
 
-The container has no auth — it is a cell-network cockpit, like `urctl gui`.
+The container has no auth — it is a cell-network cockpit.
 Keep it off routable networks or put it behind the Jetson's firewall.
 
 ## Click or drag to segment

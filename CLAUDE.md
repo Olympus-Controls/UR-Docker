@@ -116,10 +116,10 @@ travel along flange **Y**; a yaw about the tool Z (pointing down) is the negativ
 of the base-heading yaw — `grasp_yaw_deg` handles it and a composed-pose test
 locks it. First runs 2026-09-25 on the UR3e + Hand-E.
 
-**Local GUI (`urctl gui` / `urctl-gui`):** a loopback-only web cockpit
-(`urctl/webapp.py` + `urctl/webui/index.html`, stdlib server, SSE telemetry at
-12.5 Hz, live FK arm view) whose every button dispatches through the same tool
-registry (validated + safety-enveloped + audited). `docs/harness.md` §5.
+**One GUI.** The RGB-D cockpit (`perception gui`) is the only web UI; the
+older robot-only `urctl gui` / `urctl-gui` panel was retired on 2026-09-26
+(it lives in git history before that commit). Its Pilot panel covers the
+same bring-up / jog / stop / freedrive buttons through the same tool registry.
 
 **Demo view (`perception gui --demo`, `/?demo=1`, header **Demo** button):** the
 RGB-D cockpit reduced to the picture, four big buttons (Start robot → Find
@@ -675,7 +675,7 @@ runs and one that pops "cannot reach the required pose" mid-cycle.
 
 **CI/CD** (`.github/`): every PR runs lint (ruff check + format, shellcheck),
 unit tests on Python 3.10/3.12/3.14, and a packaging job that builds the wheel,
-verifies it carries `urctl/webui/` + the vendored `_urp_convert.py`, and
+verifies it carries `perception/webui/` + the vendored `_urp_convert.py`, and
 smoke-installs it. Integration tests (URSim boot) run on pushes to main or on
 PRs labeled **`run-integration`**. Dependabot maintains uv deps, action pins,
 and simulator images (weekly/monthly, grouped); minor/patch non-simulator

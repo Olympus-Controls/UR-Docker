@@ -176,52 +176,15 @@ same registry over MCP (stdio). The three harness additions:
 Every tool call is schema-validated, safety-checked, and audited — the same
 guarantees regardless of who's calling (CLI, GUI, Claude over MCP).
 
-## 5. GUI application — `urctl gui` (the cockpit)
+## 5. GUI — the RGB-D cockpit
 
-**Implemented**: `urctl/webapp.py` (stdlib HTTP server, loopback-only) +
-`urctl/webui/index.html` (single-file cockpit UI). It sits **directly on the
-`urctl` Python API** (same process, no extra daemon):
-
-```bash
-uv run urctl gui                          # URSim
-uv run urctl --host 192.168.1.50 gui      # the real robot
-uv run urctl-gui --host 192.168.1.50      # dedicated entry point
-uv run urctl --dry-run gui                # every button validates + audits, sends nothing
-```
-
-Panels: live 3D arm view (UR10e forward kinematics on a canvas — drag to
-orbit), Cartesian + per-joint jog with step presets, speed slider, named I/O
-lamps (DO click-to-toggle), program inventory with load/play/pause/stop,
-URScript + pendant-popup console, action history, and the cell model
-(calibration status, active-TCP flange warning, disk health). Header chips +
-banners surface the two real-robot gates: LOCAL control mode and a latched
-protective stop (with an Unlock button → `ur_bring_up`).
-
-Wire-level: `GET /api/stream` is Server-Sent Events pushing deep RTDE samples
-at 12.5 Hz (each stream owns its own `RtdeClient`, so viewers never contend
-with actions); `POST /api/action {tool, params}` dispatches through
-`urctl.tools.call_tool` — the same schema validation, safety envelope, and
-audit logging as the CLI and MCP. `/api/snapshot` caches the cell model per
-session (`?refresh=1` re-reads).
-
-```
-┌────────────────────── laptop app ──────────────────────┐
-│  UI (panels: state, jog, IO, programs, routine builder)│
-│      │                     │                            │
-│  Robot facade          RtdeClient stream    SystemInspector
-│  (actions, audited)    (25 Hz live view)    (cell model, SSH)
-└──────┼─────────────────────┼─────────────────────┼─────┘
-       │ 29999 + 30001       │ 30004               │ 22 (ssh)
-       └──────────────── UR controller ────────────┘
-```
-
-- **Writes**: every button is a tool call ⇒ automatically schema-validated,
-  safety-checked and audit-logged; actions are serialized by a lock.
-- The MCP server can run alongside the GUI against the same robot — RTDE
-  inputs are claimed lazily and reads don't conflict; avoid two writers of
-  the same RTDE input (speed slider) at once.
-- **Security model**: binds 127.0.0.1 only, no auth — the same trust level as
-  running `urctl` yourself. Don't bind it to a routable interface.
+The robot-only `urctl gui` / `urctl-gui` panel described here until 2026-09-26
+was retired in favour of the RGB-D cockpit (`perception gui`, `docs/realsense.md`
+§The pilot's seat); it lives in git history before that commit. The cockpit's
+Pilot panel dispatches the same tools (`ur_bring_up`, jog, stop, freedrive,
+gripper) through `urctl.tools.call_tool`, so every button is still
+schema-validated, safety-checked and audit-logged, and `urctl-mcp` can run
+alongside it against the same robot.
 
 ## 6. File map of the harness additions
 
@@ -232,9 +195,6 @@ urctl/installation.py  .installation parser (TCPs, payload, IO names, limits)
 urctl/sysinfo.py       SshRunner / DockerRunner / SystemInspector / runner_for
 urctl/robot.py         rtde_state(deep=True)
 urctl/tools.py         ur_system_snapshot, ur_list_programs, ur_rtde_state(deep)
-urctl/cli.py           snapshot, programs, rtde-state --deep, gui
-urctl/webapp.py        the cockpit's HTTP/SSE server (urctl gui / urctl-gui)
-urctl/webui/index.html single-file cockpit UI (canvas FK arm view, jog, IO, programs)
+urctl/cli.py           snapshot, programs, rtde-state --deep
 tests/test_harness.py  25 unit tests (parsers, decoding, tolerant recipe, deep shaping)
-tests/test_webapp.py   10 unit tests (routing, action dispatch, caching, error shaping)
 ```

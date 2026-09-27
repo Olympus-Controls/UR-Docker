@@ -445,10 +445,6 @@ def build_parser() -> argparse.ArgumentParser:
         "`urctl guided --help` for the env vs. pubkey auth options",
     )
 
-    gu = sub.add_parser("gui", help="serve the local web control panel (urctl-gui)")
-    gu.add_argument("--port", type=int, default=None, help="GUI port (default 7620)")
-    gu.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
-
     sub.add_parser("tools", help="print the agent tool schemas as JSON")
 
     ct = sub.add_parser("call", help="dispatch a tool by name")
@@ -572,16 +568,6 @@ def main(argv: list[str] | None = None) -> int:
         return _inspect_app(robot, args)
     if args.cmd == "dashboard":
         return _emit(robot.dashboard_command(" ".join(args.command)))
-    if args.cmd == "gui":
-        from .webapp import DEFAULT_PORT, serve
-
-        serve(
-            config,
-            port=args.port if args.port is not None else DEFAULT_PORT,
-            open_browser=not args.no_browser,
-            dry_run=args.dry_run,
-        )
-        return 0
     if args.cmd == "call":
         try:
             params = json.loads(args.json_args)
