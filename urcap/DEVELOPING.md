@@ -10,6 +10,8 @@ holds to move) or through the cockpit over Primary (urctl's safety envelope).
 It is plain JavaScript: **no Angular, no webpack, no npm** — `urcap/urcapx.py`
 packages and installs it with the stdlib.
 
+<!-- urcap-target -->Built and tested for **PolyScope X 10.14.0** (the newest minor, 10.14; simulator `universalrobots/ursim_polyscopex:10.14.0`, URCap SDK 6.6.66 / contribution-api 22.14.184) — pinned in [`target.json`](target.json) and kept current by `.github/workflows/urcap-track.yml`.<!-- /urcap-target -->
+
 ```
 urcap/
   README.md                                install + use (for whoever downloads it)
@@ -123,6 +125,32 @@ The cockpit also answers Chromium's Private Network Access preflight
 (`Access-Control-Allow-Private-Network`) for allowed origins, for a page on a
 LAN address calling a cockpit on loopback.
 
+## Staying on UR's newest release
+
+The URCap targets exactly one PolyScope X release, the newest patch of the newest
+minor UR has release notes for, pinned in [`target.json`](target.json): the notes
+URL, the simulator image **by digest**, and the SDK release UR titled for that minor
+with the versions its JavaScript template uses (`contribution-api`, `urcap-utils`,
+`threads`, manifest spec). A new minor *replaces* the pin; older minors are not built for.
+
+| | |
+| --- | --- |
+| `python3 urcap/track.py check` (`make urcap-track`) | exit 1 with the reasons when UR has moved on (new minor or patch, a moved simulator tag, an SDK component bump) |
+| `python3 urcap/track.py update` | re-resolve and rewrite `target.json` + the `urcap-target` lines in README.md and this page |
+| `python3 urcap/track.py compat` (`make urcap-compat`) | every PolyScope member the node calls or implements (`track.API_SURFACE`, held to `main.js` + the worker by a test) is still in the pinned `contribution-api` typings (UR's npm feed); `manifest.yaml` validates against the SDK's manifest spec; the template still uses the `threads` the worker's hand-written protocol was verified against; the SDK's simulator is the notes' robot image by digest |
+| `uv run --with playwright==1.63.0 python urcap/e2e.py` (`make urcap-e2e`) | boots the pinned simulator, installs a fresh build over urservice, checks nginx serves the packaged bytes, then headlessly: node renders, goes live on a `--fake` cockpit, hover depth, click → `/api/segment`, PolyScope's `getKinematicInfo` / `getJointPositions` / FK → IK round trip, the saved cockpit URL survives a reload. About 2 min on the Mac (arm64 image); `--keep` leaves the sim up |
+
+Nothing needs a login: the notes, the SDK (`UniversalRobots/PolyScopeX_URCap_SDK`),
+Docker Hub and UR's npm feed (`pkgs.dev.azure.com/polyscopex`) are public.
+`.github/workflows/urcap-track.yml` runs `update` → unit + `compat` → `e2e.py`
+weekly and opens a PR (with the notes' breaking changes and URCap/API sections)
+when all pass, or a `urcap-attention` issue when something needs a person — an API
+member gone, a new manifest rule, a `threads` bump, a node that no longer loads.
+`.github/workflows/urcap-e2e.yml` runs the e2e on every change under `urcap/`.
+A patch UR ships without a simulator build (10.13.1 had none) is tested on the
+minor's newest simulator; a minor whose SDK or simulator is not out yet waits, and
+becomes an issue after three weeks.
+
 ## What is verified and what is not
 
 | Verified (2026-09-26) | How |
@@ -134,6 +162,7 @@ LAN address calling a cockpit on loopback.
 | Cockpit CORS (allow-listed origins only, preflight, exposed `X-Seq`) + `GET /api/color.png` | test |
 | The node tells a CORS refusal (your pre-`--cors` cockpit on :7621, a cockpit with a different origin) from a dead port, and goes live on a CORS-enabled one; the cockpit logs the refused origin | headless Chromium on the sim, four cockpit URLs |
 | The sim accepts the package (201), lists it, deletes it, serves the four frontend files | `urcap/urcapx.py install --replace` against `ursim_polyscopex:10.13.0` |
+| On **10.14.0** (SDK 6.6.66, contribution-api 22.14.184): install + serve as packaged, node renders, live feed, hover, click → segment, `getKinematicInfo` 6 rows, FK → `getInverseKinematics` round trip to 7e-15 rad, URL persists; a package with a broken `main.js` fails at *node renders* | `urcap/e2e.py` against `ursim_polyscopex:10.14.0@sha256:f306cd98…`, 2026-09-27 |
 | The node loads in PolyScope X: worker + presenter fetched, element present, i18n title shown | headless Chromium on the sim (Playwright) |
 | Feed live from a CORS-enabled cockpit, hover depth, click → segment → locate, cockpit URL persisted through `updateNode` and a reload | same, against `make urcap-cockpit` |
 | Locate → base point / approach / reach, Move (cockpit) | **not yet** — needs a cockpit with a robot link (your live one with `--cors`) |
