@@ -726,3 +726,23 @@ def test_e2e_cockpit_has_no_robot_link_whatever_the_shell_exports():
     )  # fmt: skip
     assert env["PATH"] == "/bin" and env["HOME"] == "/h"
     assert not any(k.startswith(("UR_", "PERCEPTION_")) for k in env)
+
+
+def test_e2e_teardown_removes_the_sims_anonymous_volume():
+    """Regression: `docker rm -f` without -v left each run's inner /var/lib/docker
+    (~9 GB) behind; seven runs filled Docker Desktop's disk and the next sim died
+    at boot with 'no space left on device'."""
+    import e2e
+
+    assert e2e.teardown_command("docker", "urcap-e2e-x") == ["docker", "rm", "-f", "-v", "urcap-e2e-x"]
+
+
+def test_e2e_boot_wait_fails_fast_when_the_sim_exits():
+    """Regression: a simulator that died during boot was waited on for the whole
+    boot timeout; the wait now stops as soon as the container is gone."""
+    import e2e
+
+    t0 = __import__("time").monotonic()
+    with pytest.raises(e2e.E2EError, match="exited"):
+        e2e.wait_for("the web UI", lambda: False, 600, 0.01, alive=lambda: False)
+    assert __import__("time").monotonic() - t0 < 5

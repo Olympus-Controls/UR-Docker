@@ -100,12 +100,16 @@ def http(url: str, timeout: float = 10) -> tuple[int, bytes]:
         return 0, b""
 
 
-def wait_for(what: str, fn, timeout: float, every: float = 3.0):
+def wait_for(what: str, fn, timeout: float, every: float = 3.0, alive=None):
+    """Poll ``fn`` until truthy; ``alive`` (optional) stops the wait early when
+    the thing being waited on is gone."""
     deadline = time.monotonic() + timeout
     while True:
         value = fn()
         if value:
             return value
+        if alive is not None and not alive():
+            raise E2EError(f"the simulator exited while waiting for {what}")
         if time.monotonic() > deadline:
             raise E2EError(f"timed out after {timeout:.0f} s waiting for {what}")
         time.sleep(every)
@@ -132,7 +136,7 @@ def simulator(image: str, port: int, *, keep: bool, docker: str = "docker"):
     run = subprocess.run(cmd, capture_output=True, text=True)
     if run.returncode != 0:
         raise E2EError(f"docker run failed: {run.stderr.strip()[-800:]}")
-    sim = {"name": name, "logs": ""}
+    sim = {"name": name, "logs": "", "alive": lambda: running(docker, name)}
     try:
         yield sim
     except BaseException:
@@ -142,7 +146,19 @@ def simulator(image: str, port: int, *, keep: bool, docker: str = "docker"):
         if keep:
             print(f"keeping {name} (docker rm -f {name})", flush=True)
         else:
-            subprocess.run([docker, "rm", "-f", name], capture_output=True)
+            subprocess.run(teardown_command(docker, name), capture_output=True)
+
+
+def teardown_command(docker: str, name: str) -> list[str]:
+    # -v: the sim's inner /var/lib/docker is an anonymous volume of ~9 GB per run
+    return [docker, "rm", "-f", "-v", name]
+
+
+def running(docker: str, name: str) -> bool:
+    out = subprocess.run(
+        [docker, "inspect", "-f", "{{.State.Running}}", name], capture_output=True, text=True
+    )
+    return out.stdout.strip() == "true"
 
 
 def docker_logs(name: str, docker: str = "docker", tail: int = 150) -> str:
@@ -196,7 +212,7 @@ def fake_cockpit(port: int, origin: str):
 # -- the checks -----------------------------------------------------------------------------------
 
 
-def install_checks(checks: Checks, package: Path, port: int, boot_timeout: float) -> None:
+def install_checks(checks: Checks, package: Path, port: int, boot_timeout: float, alive=None) -> None:
     base = f"http://127.0.0.1:{port}"
     t0 = time.monotonic()
     wait_for(
@@ -204,9 +220,10 @@ def install_checks(checks: Checks, package: Path, port: int, boot_timeout: float
         lambda: http(f"{base}{urcapx.API_PATH}")[0] == 200,
         boot_timeout,
         5,
+        alive,
     )
     # PolyScope's own web app is a URCap too; the page 404s until it is in.
-    wait_for("the PolyScope X web UI", lambda: http(f"{base}/")[0] == 200, boot_timeout, 5)
+    wait_for("the PolyScope X web UI", lambda: http(f"{base}/")[0] == 200, boot_timeout, 5, alive)
     checks.ok("simulator up", f"{time.monotonic() - t0:.0f} s to the web UI")
     res = urcapx.install(package, "127.0.0.1", port, replace=True)
     checks.expect(res["ok"], "install accepted", f"HTTP {res['status']} {res.get('hint', '')}".strip())
@@ -441,7 +458,7 @@ def run(args) -> int:
         sim = None
         try:
             with simulator(image, port, keep=args.keep, docker=args.docker) as sim:
-                install_checks(checks, package, port, args.boot_timeout)
+                install_checks(checks, package, port, args.boot_timeout, sim["alive"])
                 if not args.no_browser:
                     browser_checks(checks, port, args.cockpit_port or free_port(), shots)
                 if not args.keep:
