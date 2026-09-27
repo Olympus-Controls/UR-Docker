@@ -25,6 +25,8 @@
 - 2026-09-25 — One GUI: retire `urctl-gui` (`urctl/webapp.py` + its `index.html`) in favour of the cockpit?
 - 2026-09-25 — `sysinfo`/`installation` + `ur_system_snapshot`/`ur_list_programs` (SSH/docker filesystem introspection): delete? Neither the UR3e nor PolyScope X exposes SSH; RTDE deep state + `codes` stay.
 - 2026-09-25 — SAM extra: keep the hook for the Jetson, or drop until it exists?
+- 2026-09-27 — `get_flange_pose` failed twice (12:49:06–:15) with *no TCP pose/offset surfaced on the Primary broadcast* on the UR3e (Remote, RUNNING/NORMAL, idle), then recovered; cause unknown (no audit log, SSH :22 closed). Add a Dashboard snapshot (robotmode/safetymode/programState/remote + wait time) and the `captured` tail to the failure so the next one explains itself?
+- 2026-09-27 — URCap package verification: the reproducible `urcap/dist/` build (new tar headers) hasn't been installed in the sim yet — the sim was in use. OK to `make urcap-install` (replaces the installed 0.1.0), and to open a **draft** PR for this branch (it touches `ci.yml` lint paths)? `urcap/README.md` tells people to clone `main`, which has no `urcap/` until this merges.
 
 ## Decisions (so they don't get re-asked)
 
