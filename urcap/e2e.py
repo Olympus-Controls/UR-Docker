@@ -8,7 +8,8 @@ files that were packaged, then drives PolyScope's own UI headlessly:
 
 * Application → RealSense Pilot: the node's element renders with its i18n title,
   the behavior worker and presenter load without a page error from our files;
-* the node goes live against a synthetic cockpit (``perception gui --fake --cors``);
+* the node goes live against a synthetic cockpit (``perception gui --fake --no-robot``,
+  with none of the shell's ``UR_*`` / ``PERCEPTION_*``: it never reaches a robot);
   hover reads depth, a click segments (``POST /api/segment`` ok) and asks to locate;
 * the PolyScope services Move (PolyScope) relies on answer on this release:
   ``getKinematicInfo`` (6 DH rows), ``getJointPositions``,
@@ -152,13 +153,33 @@ def docker_logs(name: str, docker: str = "docker", tail: int = 150) -> str:
 # -- the synthetic cockpit ------------------------------------------------------------------------
 
 
-@contextlib.contextmanager
-def fake_cockpit(port: int, origin: str):
-    cmd = [
-        sys.executable, "-m", "perception", "gui", "--fake", "--no-browser",
+def cockpit_command(port: int, origin: str) -> list[str]:
+    """A synthetic cockpit with **no robot link**: the e2e clicks in the node, and a
+    click on a linked cockpit sends a Primary script (locate) to whatever robot it
+    points at."""
+    return [
+        sys.executable, "-m", "perception", "gui", "--fake", "--no-robot", "--no-browser",
         "--port", str(port), "--cors", origin,
     ]  # fmt: skip
-    proc = subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
+
+def cockpit_env(environ: dict[str, str]) -> dict[str, str]:
+    """The caller's environment without the robot / cell / camera settings a
+    developer's shell may export (UR_CELL=ur3 names a real arm)."""
+    return {k: v for k, v in environ.items() if not k.startswith(("UR_", "PERCEPTION_"))}
+
+
+@contextlib.contextmanager
+def fake_cockpit(port: int, origin: str):
+    cmd = cockpit_command(port, origin)
+    proc = subprocess.Popen(
+        cmd,
+        cwd=REPO,
+        env=cockpit_env(dict(os.environ)),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
         wait_for(
             "the synthetic cockpit", lambda: http(f"http://127.0.0.1:{port}/api/info")[0] == 200, 60, 0.5

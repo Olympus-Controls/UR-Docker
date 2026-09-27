@@ -704,3 +704,22 @@ def test_the_committed_target_is_well_formed():
     assert "amd64" in t["simulator"]["architectures"]  # CI runs the sim on amd64
     assert t["simulator"]["matches_sdk"] is True
     assert t["sdk"]["threads"] == track.WORKER_THREADS
+
+
+# -- e2e.py: the synthetic cockpit must never reach a robot ---------------------------------------
+
+
+def test_e2e_cockpit_has_no_robot_link_whatever_the_shell_exports():
+    """Regression: the e2e's cockpit inherited the shell's robot target, so with
+    UR_CELL=ur3 exported a click in the simulator's node made the cockpit send a
+    Primary script (locate) to the real UR3e."""
+    import e2e
+
+    cmd = e2e.cockpit_command(7999, "http://localhost:8014")
+    assert "--no-robot" in cmd and "--fake" in cmd
+    env = e2e.cockpit_env(
+        {"PATH": "/bin", "HOME": "/h", "UR_CELL": "ur3", "UR_HOST": "192.168.3.3", "UR_PRIMARY_PORT": "30001",
+         "PERCEPTION_T_FLANGE_CAMERA": "1,2,3", "PERCEPTION_CORS": "*"}
+    )  # fmt: skip
+    assert env["PATH"] == "/bin" and env["HOME"] == "/h"
+    assert not any(k.startswith(("UR_", "PERCEPTION_")) for k in env)
