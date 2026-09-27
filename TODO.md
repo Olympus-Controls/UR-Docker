@@ -8,7 +8,7 @@
 - 2026-09-25 — Mac Studio + D435: `--rs-lean` streams (first open errors once, the back-off re-open holds). Open: why the *first* open still loses — shave one more reset, or accept the one retry. Ruled out: software drift, headless-vs-desktop, a fresh daemon, the webcams, Spotify. The Mac is a dev box, not a camera host; Windows laptop (WSL2, verified 09-23) and Jetson are.
 - 2026-09-12 — The native Windows path (`scripts/setup-windows.ps1`, `scripts/cockpit.ps1`, `REALSENSE_LIB` at the SDK's default `bin\x64\realsense2.dll`) has not been run on a Windows box. First run on the work laptop is the verification; paste the doctor output (`uv run perception --cell ur20 doctor --stream --json`) if anything fails.
 
-## PolyScope X URCap (2026-09-26, `docs/polyscopex-urcap.md`)
+## PolyScope X URCap (2026-09-26, `urcap/DEVELOPING.md`)
 
 - Installed in the sim and verified headless (node loads, feed/hover/click against `make urcap-cockpit` on :7622). **Still owed:** a cockpit with a robot behind it — restart your live one with `--cors http://localhost:8000` (your `Quickstart` line + that flag), set the node's cockpit URL to `http://localhost:7621`, click a block: base point + approach + reach, then **Move (cockpit)** on the UR3e. **Move (PolyScope)** (IK + auto-move; is `Pose.orientation` a rotation vector?) needs the sim's arm powered + Remote, or the real PolyScope X cell.
 - Later, on the robot: a backend-container packaging of the cockpit (`containers:` + `devices: video` + `services: urcontrol-primary`) so the pendant needs no external host.

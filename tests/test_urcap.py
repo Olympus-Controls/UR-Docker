@@ -1,5 +1,6 @@
 """The PolyScope X URCap (urcap/realsense-pilot): its source tree agrees with itself,
-scripts/urcapx.py packages it the way UR's urcap-utils does and installs it the way
+urcap/urcapx.py packages it reproducibly (and the downloadable urcap/dist/ copy is
+that build, byte for byte) the way UR's urcap-utils does and installs it the way
 the Robot-API expects (against a real HTTP server), the behavior worker speaks the
 threads.js protocol (run under node when present), and the cockpit's CORS + colour
 endpoint that the URCap page depends on."""
@@ -25,11 +26,12 @@ from perception.config import PerceptionConfig
 from perception.realsense import SyntheticRgbdCamera
 from perception.webapp import ViewerApp, ViewerHandler
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "urcap"))
 import urcapx  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 URCAP = ROOT / "urcap" / "realsense-pilot"
+DIST = ROOT / "urcap" / "dist"
 FRONTEND = URCAP / "realsense-pilot-frontend"
 NODE = shutil.which("node")
 
@@ -88,6 +90,49 @@ def test_package_refuses_a_missing_folder(tmp_path):
     )
     with pytest.raises(urcapx.UrcapError, match="not in"):
         urcapx.package(src, tmp_path / "out")
+
+
+def test_package_is_reproducible_and_normalised(tmp_path):
+    a = urcapx.package(URCAP, tmp_path / "a").read_bytes()
+    b = urcapx.package(URCAP, tmp_path / "b").read_bytes()
+    assert a == b
+    with tarfile.open(tmp_path / "a" / "realsense-pilot-0.1.0.urcapx", "r:gz") as tar:
+        infos = tar.getmembers()
+    assert {(i.uid, i.gid, i.uname, i.gname) for i in infos} == {(0, 0, "", "")}
+    assert len({i.mtime for i in infos}) == 1 and infos[0].mtime > 1_600_000_000
+    assert {i.mode for i in infos if i.isfile()} == {0o644}
+
+
+def test_changed_source_changes_the_timestamp(tmp_path):
+    """One fixed mtime per build would give an updated main.js the old
+    Last-Modified/ETag, and the pendant's browser would keep the stale copy."""
+    src = tmp_path / "src"
+    shutil.copytree(URCAP, src)
+    before = urcapx.package(src, tmp_path / "a")
+    with tarfile.open(before, "r:gz") as tar:
+        old = tar.getmember("manifest.yaml").mtime
+    main = src / "realsense-pilot-frontend" / "main.js"
+    main.write_text(main.read_text() + "\n// edit\n")
+    after = urcapx.package(src, tmp_path / "b")
+    with tarfile.open(after, "r:gz") as tar:
+        assert tar.getmember("manifest.yaml").mtime != old
+
+
+def test_the_downloadable_package_is_the_current_source(tmp_path):
+    """urcap/dist/ is what people download: it must be exactly what the source
+    builds to now. Edited the URCap? `make urcap-package` and commit urcap/dist/."""
+    fresh = urcapx.package(URCAP, tmp_path)
+    shipped = DIST / fresh.name
+    assert shipped.is_file(), f"{shipped.relative_to(ROOT)} missing — run `make urcap-package` and commit it"
+    assert shipped.read_bytes() == fresh.read_bytes(), (
+        f"{shipped.relative_to(ROOT)} is stale — run `make urcap-package` and commit it"
+    )
+    stale = sorted(p.name for p in DIST.glob("*.urcapx") if p.name != fresh.name)
+    assert not stale, f"old packages left in urcap/dist/: {stale} (the README links one version)"
+    readme = (ROOT / "urcap" / "README.md").read_text(encoding="utf-8")
+    assert f"dist/{fresh.name}" in readme, f"urcap/README.md doesn't link dist/{fresh.name}"
+    linked = set(re.findall(r"realsense-pilot-\d+\.\d+\.\d+\.urcapx", readme))
+    assert linked == {fresh.name}, f"urcap/README.md names other versions: {sorted(linked - {fresh.name})}"
 
 
 # -- installing against a urservice look-alike ----------------------------------------------------

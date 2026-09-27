@@ -30,5 +30,5 @@ captures/
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 
-# URCap packages (scripts/urcapx.py package)
+# Local build output (the downloadable URCap is committed under urcap/dist/)
 target/

@@ -80,12 +80,12 @@ simx-state:  ## Read PolyScope X robot state via the Robot-API (JSON).
 simx-bring-up:  ## Power on + brake release the PolyScope X robot (needs Remote mode).
 	$(PX_ENV) $(PYTHON) -m urctl bring-up
 
-# ---- PolyScope X URCap (urcap/realsense-pilot, docs/polyscopex-urcap.md) ------
-urcap-package:  ## Build urcap/realsense-pilot into target/realsense-pilot-<ver>.urcapx (no npm).
-	$(PYTHON) scripts/urcapx.py package urcap/realsense-pilot --out target
+# ---- PolyScope X URCap (urcap/: README.md to install, DEVELOPING.md to work on it) --
+urcap-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-<ver>.urcapx (no npm; commit it).
+	$(PYTHON) urcap/urcapx.py package urcap/realsense-pilot --out urcap/dist
 
 urcap-install: urcap-package  ## Install (or replace) it in the PolyScope X sim on :8000; then refresh the page.
-	$(PYTHON) scripts/urcapx.py install target/realsense-pilot-*.urcapx --port 8000 --replace
+	$(PYTHON) urcap/urcapx.py install urcap/dist/realsense-pilot-*.urcapx --port 8000 --replace
 
 urcap-cockpit:  ## A synthetic cockpit on :7621 (the normal port) the URCap page may call from the sim's origin.
 	$(PYTHON) -m perception gui --fake --no-browser --port 7621 --cors http://localhost:8000,http://127.0.0.1:8000
@@ -150,10 +150,10 @@ test-all:  ## Run every test.
 lint: lint-py lint-sh  ## Run all linters.
 
 lint-py:  ## Lint Python with ruff.
-	$(RUFF) check urctl perception scripts tests
+	$(RUFF) check urctl perception scripts urcap tests
 
 fmt:  ## Format Python with ruff.
-	$(RUFF) format urctl perception scripts tests
+	$(RUFF) format urctl perception scripts urcap tests
 
 lint-sh:  ## Lint shell scripts (skipped silently if shellcheck not installed).
 	@if command -v shellcheck >/dev/null; then \
