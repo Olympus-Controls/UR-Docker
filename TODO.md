@@ -27,6 +27,7 @@
 - 2026-09-25 — SAM extra: keep the hook for the Jetson, or drop until it exists?
 - 2026-09-27 — `get_flange_pose` failed twice (12:49:06–:15) with *no TCP pose/offset surfaced on the Primary broadcast* on the UR3e (Remote, RUNNING/NORMAL, idle), then recovered; cause unknown (no audit log, SSH :22 closed). Add a Dashboard snapshot (robotmode/safetymode/programState/remote + wait time) and the `captured` tail to the failure so the next one explains itself?
 - 2026-09-27 — URCap package verification: the reproducible `urcap/dist/` build (new tar headers) hasn't been installed in the sim yet — the sim was in use. OK to `make urcap-install` (replaces the installed 0.1.0), and to open a **draft** PR for this branch (it touches `ci.yml` lint paths)? `urcap/README.md` tells people to clone `main`, which has no `urcap/` until this merges.
+- 2026-09-27 — First PolyScope 5 load of `urcap/dist/realsense-pilot-ps5-0.1.0.urcap` (the e-Series sim can't run on the Mac): install it on the UR3e from USB (asked 2026-09-27 "install it now": no network path — SSH closed, no install API; needs the stick) (Settings → System → URCaps → +, restarts PolyScope; removable from the same screen) — before or after Monday's demo? Or add a CI step that copies it into URSim's `/urcaps` and asserts `polyscope.log` loads it (a `ci.yml` edit → draft PR)?
 
 ## Decisions (so they don't get re-asked)
 
@@ -49,5 +50,4 @@
 - 2026-09-12 — D435 USB-C is on an **end face** of Nick's unit (not the back as in Intel's mesh); bracket clears it, spec §6 A1 updated.
 - 2026-09-12 — SAM backend stays "wired, unverified" until a GPU box exists; the demo uses the stub segmenter.
 - 2026-09-12 — Dependabot ignores `universalrobots/ursim_polyscopex` bumps (pinned 10.13.0; re-test new tags by hand).
-- 2026-09-27 — First PolyScope 5 load of `urcap/dist/realsense-pilot-ps5-0.1.0.urcap` (the e-Series sim can't run on the Mac): install it on the UR3e from USB (Settings → System → URCaps → +, restarts PolyScope; removable from the same screen) — before or after Monday's demo? Or add a CI step that copies it into URSim's `/urcaps` and asserts `polyscope.log` loads it (a `ci.yml` edit → draft PR)?
-- 2026-09-27 — Cell standoff: `PERCEPTION_STANDOFF_M=0.075` is measured from the **flange** (set 09-23, before the Hand-E). With the gripper on, a Move to that target puts the fingertips ~(Hand-E + finger length − 75 mm) *into* the part. Raise it past the gripper's length, or approach by the fingertips like `pick-cycle` does? The two far blocks are unreachable at 75 mm and reachable from ~150 mm up either way.
+- 2026-09-27 — **Approach by the fingertips, always** ("the tool offset is critical"): the default approach reference is `fingertip` (`PERCEPTION_TIP_M`, 0.163 m on the UR3e's Hand-E), moves run with that TCP, the controller's active TCP is never used for it.
