@@ -67,13 +67,14 @@ targets 10.14):
 
 ```bash
 make simx-up                       # PolyScope X 10.13.0 on http://localhost:8000
-make urcap-cockpit                 # a synthetic cockpit on :7622, CORS for the sim's origin
+make urcap-cockpit                 # a synthetic cockpit on :7621, CORS for the sim's origin
 make urcap-install                 # package + install (no Remote mode needed; --replace if already there)
 ```
 
 Then in PolyScope X: refresh the browser, **Application** → **RealSense
-Pilot**. Set the cockpit URL to `http://localhost:7622` (Save; it persists in
-the node), and the feed appears; hover reads depth, a click marks the pixel,
+Pilot**. Leave the cockpit URL empty (= this host on :7621, the cockpit's
+normal port) or set it to `http://localhost:7621` (Save; it persists in the
+node), and the feed appears; hover reads depth, a click marks the pixel,
 segments and calls locate. The fake cockpit has no robot behind it, so locate
 answers "robot unreachable" there — the base point, approach pose, reach and
 the Move buttons need a cockpit with a robot link (below).
@@ -84,7 +85,8 @@ For the real camera: restart your cockpit with CORS, e.g.
 sudo .venv/bin/perception --cell ur3 gui --rs-lean --cors http://localhost:8000
 ```
 
-and point the node at `http://localhost:7621`. Move (cockpit) then drives the
+(same port as the fake one, so the node's URL doesn't change; stop `make
+urcap-cockpit` first). Move (cockpit) then drives the
 UR3e exactly as the cockpit's own Move does; Move (PolyScope) is only
 meaningful on a PolyScope X controller (the sim's arm), where IK + auto-move act
 on *that* robot.

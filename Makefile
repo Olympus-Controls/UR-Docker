@@ -87,8 +87,8 @@ urcap-package:  ## Build urcap/realsense-pilot into target/realsense-pilot-<ver>
 urcap-install: urcap-package  ## Install (or replace) it in the PolyScope X sim on :8000; then refresh the page.
 	$(PYTHON) scripts/urcapx.py install target/realsense-pilot-*.urcapx --port 8000 --replace
 
-urcap-cockpit:  ## A synthetic cockpit on :7622 the URCap page may call from the sim's origin.
-	$(PYTHON) -m perception gui --fake --no-browser --port 7622 --cors http://localhost:8000,http://127.0.0.1:8000
+urcap-cockpit:  ## A synthetic cockpit on :7621 (the normal port) the URCap page may call from the sim's origin.
+	$(PYTHON) -m perception gui --fake --no-browser --port 7621 --cors http://localhost:8000,http://127.0.0.1:8000
 
 # ---- RealSense perception (docs/realsense.md) ----------------------------------
 # On macOS librealsense needs root to claim the camera's USB interface, hence
