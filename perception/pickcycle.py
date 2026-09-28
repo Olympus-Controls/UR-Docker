@@ -206,6 +206,11 @@ def reject_off_surface(blocks: list, tolerance_m: float = 0.03) -> list:
     return kept
 
 
+def where_words(p: Sequence[float]) -> str:
+    """A base-frame point as a person would say it: how far out from the robot's base."""
+    return f"about {math.hypot(p[0], p[1]) * 100:.0f} cm out from my base"
+
+
 # -- the cockpit client ---------------------------------------------------------------------
 
 
@@ -301,8 +306,15 @@ class PickCycle:
     say_fn: object = None
 
     # -- bookkeeping ------------------------------------------------------------------
-    def say(self, text: str) -> None:
-        ev = {"t": round(time.time() - self.t0, 2), "text": text}
+    def say(self, text: str, *, think: str | None = None, do: str | None = None) -> None:
+        """Log one event. ``text`` is the engineer's line; ``think`` / ``do`` are the
+        same moment in plain words (what the robot has concluded, what it is about
+        to do) — what ``scripts/pilot/assemble.py`` captions for a lay audience."""
+        ev: dict = {"t": round(time.time() - self.t0, 2), "text": text}
+        if think:
+            ev["think"] = think
+        if do:
+            ev["do"] = do
         self.log.append(ev)
         if callable(self.say_fn):
             self.say_fn(ev)
@@ -400,7 +412,11 @@ class PickCycle:
             self.cockpit.post("/api/robot/bring_up")
 
     def _recover(self, what: str) -> None:
-        self.say(f"Protective stop during {what}: unlocking and lifting clear")
+        self.say(
+            f"Protective stop during {what}: unlocking and lifting clear",
+            think="I felt more resistance than expected, so I stopped myself — that's my safety reflex.",
+            do="Unlocking my joints and backing straight up and away.",
+        )
         self._bring_up()
         time.sleep(1.5)
         fl = self._flange()
@@ -412,7 +428,11 @@ class PickCycle:
         still running on the controller (Dashboard, not Primary — the in-flight program
         must die first), let go of whatever is held, back off along the tool axis."""
         try:
-            self.say("Interrupted: stopping the program, opening the gripper and backing off")
+            self.say(
+                "Interrupted: stopping the program, opening the gripper and backing off",
+                think="I've been told to stop.",
+                do="Stopping, opening my fingers and backing away.",
+            )
             if self.robot is not None:
                 self.robot.stop()
             else:
@@ -434,7 +454,11 @@ class PickCycle:
             return True
         if self.dry_run:
             return True
-        self.say("Gripper not activated — running the activation cycle")
+        self.say(
+            "Gripper not activated — running the activation cycle",
+            think="My hand hasn't been switched on since the restart.",
+            do="Opening and closing my fingers once so the hand can calibrate itself.",
+        )
         act = self._gripper("activate")
         if not act.get("ok"):
             self.say(f"Gripper activation failed: {act.get('error')}")
@@ -536,7 +560,12 @@ class PickCycle:
         self.say(
             f"{label}: top at {[round(v, 3) for v in top]} m, "
             f"{blk.major_m * 1000:.0f} x {blk.minor_m * 1000:.0f} mm; "
-            f"wrist 3 turns {yaw:+.0f} deg so the fingers close across the short side"
+            f"wrist 3 turns {yaw:+.0f} deg so the fingers close across the short side",
+            think=f"Block {blk.index + 1} is {where_words(top)}. It measures about "
+            f"{blk.major_m * 1000:.0f} by {blk.minor_m * 1000:.0f} mm, so I'll grab it across the "
+            f"{blk.minor_m * 1000:.0f} mm side — my fingers open to {self.stroke_m * 1000:.0f} mm.",
+            do=f"Turning my wrist {abs(yaw):.0f}° to line my fingers up, and moving over it — high enough "
+            "for my camera to take a closer look.",
         )
         # everything below runs along the TOOL axis (the camera's optical axis, tilted with the wrist),
         # not base Z: hover back along it, descend along it
@@ -557,10 +586,20 @@ class PickCycle:
             along = lambda mm: [hover0[i] - zax[i] * (mm / 1000.0) for i in range(3)] + list(hover0[3:])  # noqa: E731
             self.say(
                 f"{label}: second look from {self.look_mm:.0f} mm — centre moved {shift:.0f} mm, "
-                f"{blk.major_m * 1000:.0f} x {blk.minor_m * 1000:.0f} mm, wrist 3 {yaw:+.0f} deg"
+                f"{blk.major_m * 1000:.0f} x {blk.minor_m * 1000:.0f} mm, wrist 3 {yaw:+.0f} deg",
+                think=(
+                    f"Up close it's {shift:.0f} mm from where I first thought — I'll correct for that."
+                    if shift >= 3
+                    else "Up close it's exactly where I thought it was."
+                ),
+                do="Lining my fingertips up over its centre.",
             )
         else:
-            self.say(f"{label}: second look did not find it again — using the survey")
+            self.say(
+                f"{label}: second look did not find it again — using the survey",
+                think="I can't make it out from up here, so I'll trust my first look.",
+                do="Lining my fingertips up where I first saw it.",
+            )
         # the rest of the block is ONE program on the controller: blended transit, slow
         # approach, close, lift, set down, open, clear — no host round trips in between
         legs = [
@@ -583,7 +622,12 @@ class PickCycle:
                 },
                 {"pose": along(self.drop_mm + 20.0), "velocity": self.velocity, "acceleration": self.accel},
             ]
-            self.say(f"{label}: one program — in, close, {self.drop_mm:.0f} mm up the tool axis, let go")
+            self.say(
+                f"{label}: one program — in, close, {self.drop_mm:.0f} mm up the tool axis, let go",
+                think="Everything lines up. Time to grab it.",
+                do=f"Lowering slowly, closing my fingers, lifting it {self.drop_mm / 10:.0f} cm "
+                "and letting go.",
+            )
         else:
             legs += [
                 {"pose": along(self.lift_mm), "velocity": 0.10, "acceleration": 0.5, "dwell_s": 0.4},
@@ -595,7 +639,12 @@ class PickCycle:
                 },
                 {"pose": along(self.clear_mm), "velocity": self.velocity, "acceleration": self.accel},
             ]
-            self.say(f"{label}: one program — in, close, up {self.lift_mm:.0f} mm, back down, open, clear")
+            self.say(
+                f"{label}: one program — in, close, up {self.lift_mm:.0f} mm, back down, open, clear",
+                think="Everything lines up. Time to grab it.",
+                do="Lowering slowly past its top edge, closing my fingers, lifting it an inch to test "
+                "the grip, then setting it back down and letting go.",
+            )
         r = self._path(legs)
         legs_out = r.get("legs") or []
         grip = legs_out[2].get("gripper") if len(legs_out) > 2 else None
@@ -621,13 +670,20 @@ class PickCycle:
             self._gripper("open")
             return {"block": blk.index, "ok": False, "stage": "program", "held": held}
         if held:
+            width_mm = (255 - (pos or 0)) / 255 * self.stroke_m * 1000
             self.say(
                 f"{label}: held at Robotiq {pos} "
-                f"(about {(255 - (pos or 0)) / 255 * self.stroke_m * 1000:.0f} mm), "
-                + ("dropped" if drop else "lifted, set back, released")
+                f"(about {width_mm:.0f} mm), " + ("dropped" if drop else "lifted, set back, released"),
+                think=f"My fingers stopped {width_mm:.0f} mm apart instead of closing all the way — "
+                "so I had it.",
+                do="On to the next one." if not drop else "It's down; on to the next one.",
             )
         else:
-            self.say(f"{label}: closed on nothing (POS {pos}) — the program carried on empty")
+            self.say(
+                f"{label}: closed on nothing (POS {pos}) — the program carried on empty",
+                think="My fingers closed all the way — I missed it.",
+                do="Moving on to the next one.",
+            )
         return {"block": blk.index, "ok": held, "stage": "dropped" if drop else "replaced", "pos": pos}
 
     # -- the whole run ----------------------------------------------------------------
@@ -694,21 +750,35 @@ class PickCycle:
             raise CockpitError("gripper not ready")
         self.say(
             "Survey: white blocks in the wrist camera, each top face fitted as a plane "
-            "and placed in the base frame"
+            "and placed in the base frame",
+            think="First I need to know where the blocks are.",
+            do="Looking down through the camera on my wrist for white shapes, and measuring how far "
+            "away each one is.",
         )
         blocks = self.survey_from(survey_poses)
-        self.say(f"Found {len(blocks)} block(s)")
+        self.say(
+            f"Found {len(blocks)} block(s)",
+            think=f"I see {len(blocks)} block{'s' if len(blocks) != 1 else ''}"
+            + (". I'll pick them up one at a time." if blocks else " — nothing to pick up."),
+        )
         results = []
         for blk in blocks[:max_blocks]:
             why = self._out_of_band(blk)
             if why:
-                self.say(f"block {blk.index + 1}: {why}, skipping")
+                self.say(
+                    f"block {blk.index + 1}: {why}, skipping",
+                    think=f"Block {blk.index + 1} is too "
+                    f"{'close to my base' if 'column' in why else 'far away'} for me to reach safely.",
+                    do="Skipping it.",
+                )
                 results.append({"block": blk.index, "ok": False, "stage": "radius"})
                 continue
             results.append(self.cycle_block(blk))
+        n_ok = sum(1 for r in results if r["ok"])
         self.say(
-            f"Pass 1 done: {sum(1 for r in results if r['ok'])} of {len(results)} lifted and replaced. "
-            "Back to the survey pose"
+            f"Pass 1 done: {n_ok} of {len(results)} lifted and replaced. Back to the survey pose",
+            think=f"I picked up {n_ok} of {len(results)}.",
+            do="Going back to where I started.",
         )
         self._move(start)
         if drop:
@@ -721,7 +791,7 @@ class PickCycle:
                 results.append(self.cycle_block(blk, drop=True))
                 self._move(start)
                 time.sleep(0.5)
-        self.say("Done")
+        self.say("Done", think="All done.")
         return {"ok": True, "results": results, "events": self.log}
 
 
@@ -795,6 +865,32 @@ class Recorder:
             t.join(timeout=5)
         json.dump(self.idx, open(f"{self.out}/index.json", "w"))
         return {k: len(v) for k, v in self.idx.items()}
+
+
+def lock_view_focus(cockpit: Cockpit, spec_text: str | None) -> list[dict]:
+    """Before recording: lock the cockpit's webcam views at the focus the cell names
+    (``PERCEPTION_VIEW_FOCUS``, ``perception.uvc``) — a C920 hunting for focus blurs
+    every other second of a timelapse. Runs from this (unprivileged) process, never
+    touches the RealSense; failures are reported and recording goes on."""
+    from .uvc import focus_for, parse_focus_spec, set_focus
+
+    spec = parse_focus_spec(spec_text)
+    if spec is None:
+        return []
+    try:
+        views = [v.get("name", "") for v in cockpit.get("/api/info").get("views") or []]
+    except Exception:
+        views = []
+    out = []
+    for name in views:
+        act, focus = focus_for(spec, name)
+        if act:
+            r = set_focus(name, focus)
+            out.append(r)
+            state = "autofocus" if focus is None else f"focus locked at {focus}"
+            failed = "" if r.get("ok") else f" FAILED: {r.get('error')}"
+            print(f"view {name!r}: {state}{failed}", file=sys.stderr)
+    return out
 
 
 # -- CLI --------------------------------------------------------------------------------
@@ -903,6 +999,7 @@ def run_pick_cycle(args) -> int:
     )
     rec = None
     if args.record:
+        lock_view_focus(cockpit, os.environ.get("PERCEPTION_VIEW_FOCUS"))
         rec = Recorder(cockpit, args.record, cycle.t0)
         rec.start()
         time.sleep(1.0)
