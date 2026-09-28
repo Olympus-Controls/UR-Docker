@@ -309,7 +309,13 @@ class ViewerApp:
         self.mask_t = 0.0  # ... and the one the current mask was cut from
         # Origins allowed to call the API from another page (a PolyScope X URCap on
         # the pendant, `urcap/realsense-pilot`). Empty = same-origin only (the default).
-        self.cors_origins = [o.strip() for o in (cors or []) if o and o.strip()]
+        self.cors_origins = []
+        for o in (o.strip() for o in (cors or []) if o and o.strip()):
+            if o == "*" or _ORIGIN_RE.match(o):
+                self.cors_origins.append(o)
+            else:  # never matches a browser's Origin, and must never reach a header
+                shown = repr(o[:200])[1:-1]
+                print(f"CORS: ignoring {shown} — not an origin (scheme://host[:port])", file=sys.stderr)
         # Cross-origin pages the cockpit turned away — the browser only says "Failed to
         # fetch", so the cockpit names the origin to add (stderr once, and /api/info).
         self.cors_refused: set[str] = set()
@@ -1417,11 +1423,9 @@ class ViewerHandler(BaseHTTPRequestHandler):
         """CORS for the origins the cockpit was started with (``--cors``); nothing otherwise."""
         allowed = getattr(self.app, "cors_origins", None) or []
         origin = self.headers.get("Origin")
-        if "*" in allowed:
-            value = "*"
-        elif origin and origin in allowed:
-            value = origin
-        else:
+        # the value sent is the configured entry, never the request's own bytes
+        value = "*" if "*" in allowed else next((a for a in allowed if a == origin), None)
+        if value is None:
             # Browsers also send Origin on same-origin POSTs; only a foreign page is news.
             if origin and origin not in ("null", f"http://{self.headers.get('Host', '')}"):
                 self.app.note_cors_refused(origin)
@@ -1863,6 +1867,8 @@ def serve(
 
 
 ENV_CORS = "PERCEPTION_CORS"
+# what a browser sends as Origin: scheme://host[:port] — no path, no whitespace, no control characters
+_ORIGIN_RE = re.compile(r"[a-z][a-z0-9+.-]*://(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9._~-]+)(:[0-9]{1,5})?\Z")
 
 
 def add_pick_port_arg(ap) -> None:

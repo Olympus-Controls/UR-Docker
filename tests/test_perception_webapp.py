@@ -98,6 +98,18 @@ def test_classic_page_is_kept(server):
     assert b"/api/cal/solve" in body  # the controls the minimal page leaves out live here
 
 
+def inline_scripts(html: str) -> list[str]:
+    """The bodies of every <script> element (for ``node --check``, not a sanitiser)."""
+    return re.findall(r"<script\b[^>]*>(.*?)</script\s*>", html, flags=re.S | re.I)
+
+
+def test_inline_scripts_finds_every_spelling():
+    """CodeQL py/bad-tag-filter: an upper-case tag, attributes or `</script >` must not
+    slip a script past the parse check."""
+    html = "<SCRIPT type='text/javascript'>a()</SCRIPT><script defer>b()</script ><script>c()</script>"
+    assert inline_scripts(html) == ["a()", "b()", "c()"]
+
+
 @pytest.mark.parametrize("page", ["index.html", "classic.html"])
 def test_page_scripts_parse(page, tmp_path):
     """Every inline <script> must at least parse: a stray `if if (` in the classic page
@@ -106,7 +118,7 @@ def test_page_scripts_parse(page, tmp_path):
     if node is None:
         pytest.skip("needs node for `node --check`")
     html = (Path(webapp.__file__).parent / "webui" / page).read_text(encoding="utf-8")
-    scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+    scripts = inline_scripts(html)
     assert scripts, "no inline script"
     for i, src in enumerate(scripts):
         js = tmp_path / f"{i}.js"

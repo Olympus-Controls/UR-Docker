@@ -625,3 +625,44 @@ def test_page_tells_a_cors_refusal_from_an_unreachable_cockpit():
     assert "nothing answers at" in main_js and "--bind 0.0.0.0" in main_js
     # an HTTP status is not re-diagnosed as a network failure
     assert "err.http" in main_js
+
+
+def test_cors_never_echoes_the_request_origin_raw(cockpit):
+    """CodeQL py/http-response-splitting: the Allow-Origin value is the configured entry,
+    never the request's own bytes. An obs-folded Origin smuggles a CRLF into the header's
+    value; it must not come back as a header of its own."""
+    import socket
+    from urllib.parse import urlparse
+
+    base, _ = cockpit
+    u = urlparse(base)
+    raw = (
+        b"GET /api/info HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
+        b"Origin: http://localhost:8000\r\n X-Injected: 1\r\n\r\n"
+    )
+    with socket.create_connection((u.hostname, u.port), timeout=5) as s:
+        s.sendall(raw)
+        resp = b""
+        while chunk := s.recv(65536):
+            resp += chunk
+    head = resp.split(b"\r\n\r\n", 1)[0].lower()
+    assert b"\r\nx-injected" not in head and b"access-control-allow-origin" not in head
+
+
+def test_cors_drops_entries_that_are_not_an_origin(capsys):
+    """Only ``*`` or scheme://host[:port] can ever match a browser's Origin; anything else
+    (control characters, a path, whitespace) is dropped with a warning, not sent."""
+    app = ViewerApp(
+        SyntheticRgbdCamera(width=8, height=8, fps=0),
+        config=PerceptionConfig(),
+        cors=[
+            "http://localhost:8000",
+            "http://a\r\nX-Evil: 1",
+            "http://b:80/path",
+            "https://[::1]:8443",
+            "ht tp://x",
+        ],
+    )
+    assert app.cors_origins == ["http://localhost:8000", "https://[::1]:8443"]
+    err = capsys.readouterr().err
+    assert "\r" not in err and err.count("CORS: ignoring") == 3  # logged escaped, never raw
