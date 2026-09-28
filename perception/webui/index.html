@@ -774,6 +774,30 @@
     const dl = dv.getUint32(i); return { header, png, depth: new Uint8Array(buf, i + 4, dl) };
   }
   async function inflate(bytes) { return new Uint16Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer()); }
+  // temporal smoothing of the depth, per pixel: an exponential average while the camera holds
+  // still; a jump over 2 cm is real (an edge, something moving) and is taken at once; a hole
+  // keeps the last value for ~10 frames; any camera motion resets the average (no smearing)
+  const SM = { avg: null, age: null, pose: null, alpha: 0.12, jump: 0.02, hold: 10 };
+  function camMoved(h) {
+    const p = h.flange_pose, q = SM.pose; SM.pose = p ? p.slice() : null;
+    if (!p || !q) return false;
+    const dt = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]), dr = Math.hypot(p[3] - q[3], p[4] - q[4], p[5] - q[5]);
+    return dt > 0.0015 || dr > 0.005;
+  }
+  function smoothDepth(raw, h) {
+    const n = raw.length, jump = SM.jump / h.depth_scale_m;
+    if (!SM.avg || SM.avg.length !== n || camMoved(h)) { SM.avg = Float32Array.from(raw); SM.age = new Uint8Array(n); return raw; }
+    const out = new Uint16Array(n), avg = SM.avg, age = SM.age, a = SM.alpha;
+    for (let i = 0; i < n; i++) {
+      const d = raw[i];
+      if (d === 0) { if (avg[i] && age[i] < SM.hold) { age[i]++; out[i] = avg[i]; } else { avg[i] = 0; out[i] = 0; } continue; }
+      age[i] = 0;
+      const m = avg[i];
+      avg[i] = (m === 0 || Math.abs(d - m) > jump) ? d : m + (d - m) * a;
+      out[i] = avg[i];
+    }
+    return out;
+  }
   let lastSurfAt = 0;
   async function frames() {
     let misses = 0;
@@ -784,8 +808,8 @@
         if (r.status === 503) { if (misses++ % 10 === 0) { const j = await r.json(); say(j.last_error || 'camera: waiting for the first frame', 'warn'); } await sleep(500); continue; }
         if (!r.ok) throw new Error(`frame ${r.status}`);
         const fr = parseContainer(await r.arrayBuffer()); if (fr.header.seq === S.seq) continue; misses = 0; S.seq = fr.header.seq;
-        const [bmp, depth] = await Promise.all([createImageBitmap(new Blob([fr.png], { type: 'image/png' })), inflate(fr.depth)]);
-        const h = fr.header, hadPose = !!S.Tbc;
+        const [bmp, rawDepth] = await Promise.all([createImageBitmap(new Blob([fr.png], { type: 'image/png' })), inflate(fr.depth)]);
+        const h = fr.header, hadPose = !!S.Tbc, depth = smoothDepth(rawDepth, h);
         if (!S.header || S.header.width !== h.width) document.documentElement.style.setProperty('--arn', (h.width / h.height).toFixed(4));
         S.header = h; S.depth = depth; S.frameAt = performance.now(); S.Tbc = frameTbc(h); updateFlip();
         if (!!S.Tbc !== hadPose) { S.tableZ = null; S.level = null; S.objects = []; autoTarget = true; $('scanFrame').textContent = S.Tbc ? 'BASE FRAME · LIVE POSE' : 'CAMERA FRAME · NO POSE'; say(S.Tbc ? 'live pose: the scan is in the base frame' : 'no live pose: the scan is in the camera frame', S.Tbc ? '' : 'warn'); }
