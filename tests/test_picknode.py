@@ -1,0 +1,286 @@
+"""The pick server the PolyScope 5 RealSense Pick program node talks to.
+
+Contract, not implementation: a synthetic scene under a known flange pose goes in,
+the reply the robot program parses comes out, and the fingertips it implies must
+sit on the block's top centre, straight down, fingers across the short side.
+Then the wire: a real socket, two requests on one connection the way the node's
+script sends them, hostile lines, and many controllers at once.
+"""
+
+from __future__ import annotations
+
+import math
+import random
+import socket
+import threading
+import time
+
+import pytest
+
+from perception.picknode import (
+    MAX_LINE,
+    PickPlanner,
+    PickServer,
+    RequestError,
+    choose,
+    format_reply,
+    parse_request,
+)
+from tests.test_pickcycle import H, K, SceneCamera, W, scene
+from urctl.pose import Transform, pose_trans
+
+TIP = 0.163
+FLANGE = [0.40, 0.0, 0.50, 0.0, math.pi, 0.0]  # tool straight down, 0.5 m up
+CAMERA_AT_FLANGE = [0.0] * 6  # hand-eye: the colour camera is the flange frame
+
+
+def planner(frames=None, *, handeye=CAMERA_AT_FLANGE, log=None, **kw):
+    """A planner over ``frames`` (list of (rgb, depth)); each request gets the next one."""
+    frames = list(frames or [scene([(40, 30, 70, 54)])])
+    seq = {"n": 0}
+
+    def source(after):
+        seq["n"] = max(seq["n"], after) + 1
+        rgb, depth = frames[min(len(frames) - 1, seq["n"] % max(1, len(frames)))]
+        return seq["n"], W, H, 3, rgb, depth, 0.001, K
+
+    return PickPlanner(source, lambda: seq["n"], lambda: handeye, tip_m=TIP, log=log, **kw)
+
+
+def reply(p: PickPlanner, line: str) -> list[float]:
+    text = p.answer(line)
+    assert text.startswith("(") and text.endswith(")\n")
+    vals = [float(v) for v in text[1:-2].split(",")]
+    assert len(vals) == 10
+    return vals
+
+
+def find(p, flange=FLANGE, extra=""):
+    return reply(p, f"FIND p[{', '.join(str(v) for v in flange)}]{extra}")
+
+
+# -- the answer -------------------------------------------------------------------------------
+
+
+def test_the_reply_puts_the_fingertips_on_the_top_centre_straight_down():
+    st, cx, cy, cz, *pose = find(planner())
+    assert st == 1
+    tips = pose_trans(pose, [0.0, 0.0, TIP, 0.0, 0.0, 0.0])
+    assert tips[:3] == pytest.approx([cx, cy, cz], abs=1e-6)
+    # the block's top is 0.36 m from the camera, which looks straight down from 0.5 m
+    assert cz == pytest.approx(0.14, abs=0.005)
+    tool_z = Transform.from_pose(pose).rotate((0.0, 0.0, 1.0))
+    assert tool_z[2] == pytest.approx(-1.0, abs=1e-6)
+
+
+def test_the_fingers_close_across_the_short_side():
+    # a 30 x 24 px block (long along image x) → the finger travel (flange y) along image y
+    st, *_, rx, ry, rz = find(planner([scene([(40, 30, 70, 54)])]))
+    pose = [0, 0, 0, rx, ry, rz]
+    fingers = Transform.from_pose(pose).rotate((0.0, 1.0, 0.0))
+    # image x under this flange is base x (identity hand-eye, flange x = base x): the long side
+    assert abs(fingers[0]) < 0.05 and abs(abs(fingers[1]) - 1.0) < 0.05
+
+
+def test_the_taught_tap_chooses_the_block_else_the_one_nearest_the_centre():
+    two = [scene([(20, 20, 46, 40), (100, 70, 126, 92)])]
+    assert choose([], None, W, H) is None
+    near_tap = find(planner(two), extra=" u=112 v=80")
+    near_centre = find(planner(two))
+    far = find(planner(two), extra=" u=25 v=25")
+    assert near_tap[0] == far[0] == near_centre[0] == 1
+    assert near_tap[1:4] != far[1:4]
+    # centre (80, 60) is nearer the (113, 81) block than the (33, 30) one
+    assert near_centre[1:4] == pytest.approx(near_tap[1:4], abs=1e-9)
+
+
+def test_refine_finds_the_block_near_the_first_answer_and_only_that():
+    p = planner()
+    first = find(p)
+    again = reply(
+        p, f"REFINE p[{', '.join(map(str, FLANGE))}] p[{first[1]}, {first[2]}, {first[3]}, 0, 0, 0]"
+    )
+    assert again[0] == 1 and again[1:4] == pytest.approx(first[1:4], abs=1e-6)
+    lost = reply(p, f"REFINE p[{', '.join(map(str, FLANGE))}] p[{first[1] + 0.2}, {first[2]}, 0.1, 0, 0, 0]")
+    assert lost[0] == -5 and lost[1:] == [0.0] * 9
+
+
+def test_lean_tilts_the_tool_outward_and_is_bounded():
+    st, *_, x, y, z, rx, ry, rz = find(planner(), extra=" lean=12")
+    tool_z = Transform.from_pose([x, y, z, rx, ry, rz]).rotate((0.0, 0.0, 1.0))
+    assert st == 1 and math.degrees(math.acos(-tool_z[2])) == pytest.approx(12.0, abs=1e-3)  # 6-decimal reply
+    assert find(planner(), extra=" lean=31")[0] == -9
+
+
+@pytest.mark.parametrize(
+    ("kw", "flange", "status"),
+    [
+        ({"stroke_m": 0.02}, FLANGE, -1),  # 24 px ≈ 43 mm short side vs a 20 mm stroke
+        ({}, [0.0, 0.0, 0.5, 0.0, math.pi, 0.0], -2),  # straight above the base column
+    ],
+)
+def test_blocks_the_gripper_cannot_take_are_refused_with_a_reason(kw, flange, status):
+    assert find(planner(**kw), flange=flange)[0] == status
+
+
+def test_no_hand_eye_no_frame_no_blocks():
+    assert find(planner(handeye=None))[0] == -3
+    empty = PickPlanner(lambda after: None, lambda: 0, lambda: CAMERA_AT_FLANGE, tip_m=TIP)
+    assert find(empty)[0] == -4
+    assert find(planner([scene([])]))[0] == 0
+
+
+def test_the_frame_used_is_newer_than_the_request():
+    asked = []
+    p = PickPlanner(
+        lambda after: asked.append(after) or None, lambda: 41, lambda: CAMERA_AT_FLANGE, tip_m=TIP
+    )
+    find(p)
+    assert asked == [42]  # arrival seq 41 + 2 fresh frames - 1: a frame exposed after the arm stopped
+
+
+# -- the request line --------------------------------------------------------------------------
+
+
+def test_urscripts_to_str_pose_parses():
+    # what to_str(get_actual_tcp_pose()) prints, and the variants URScript uses for small numbers
+    req = parse_request("FIND p[0.4, -0.2, 0.3, 3.14159, 0, -1.2e-05] u=412 v=233\n")
+    assert req == {
+        "verb": "FIND",
+        "flange": [0.4, -0.2, 0.3, 3.14159, 0.0, -1.2e-05],
+        "lean": 0.0,
+        "pixel": (412, 233),
+    }
+    assert "pixel" not in parse_request("FIND p[0,0,0,0,0,0] u=-1 v=-1")  # "any object"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "",
+        "PICK p[0,0,0,0,0,0]",
+        "FIND",
+        "FIND p[0,0,0,0,0]",
+        "FIND p[nan,0,0,0,0,0]",
+        "FIND p[1e308,0,0,0,0,0]",
+        "FIND p[0,0,0,0,0,999]",
+        "REFINE p[0,0,0,0,0,0]",
+        "FIND p[0,0,0,0,0,0] lean=-3",
+        "X" * (MAX_LINE + 1),
+    ],
+)
+def test_malformed_requests_are_refused(line):
+    with pytest.raises(RequestError):
+        parse_request(line)
+    assert planner().answer(line) == format_reply(-9)
+
+
+def test_hostile_text_never_escapes_into_the_log():
+    logged = []
+    p = planner(log=lambda text, ok: logged.append(text))
+    p.answer("\x1b[31mFAKE\nINFO pick FIND: found\x00 p[0,0,0,0,0,0]")
+    assert logged and all("\x1b" not in t and "\n" not in t and "\x00" not in t for t in logged)
+
+
+def test_random_lines_only_ever_get_a_reply():
+    rng = random.Random(7622)
+    p = planner()
+    alphabet = "FINDREFINE p[]0123456789.,-e uv=lean\x00\x1b\té"
+    for _ in range(500):
+        line = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 80)))
+        out = p.answer(line)
+        assert out.startswith("(") and out.endswith(")\n") and len(out.split(",")) == 10
+
+
+# -- over the wire ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def server():
+    srv = PickServer("127.0.0.1", 0, planner())
+    srv.start()
+    yield srv.server_address[1]
+    srv.stop()
+
+
+def _rpc(port: int, lines: list[bytes], timeout=5.0) -> list[str]:
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as s:
+        out, buf = [], b""
+        for line in lines:
+            s.sendall(line)
+            while b"\n" not in buf:
+                chunk = s.recv(4096)
+                if not chunk:
+                    return out
+                buf += chunk
+            text, buf = buf.split(b"\n", 1)
+            out.append(text.decode())
+        return out
+
+
+def test_find_then_refine_on_one_connection_as_the_node_sends_them(server):
+    pose = ", ".join(map(str, FLANGE))
+    first = _rpc(server, [f"FIND p[{pose}]\n".encode()])[0]
+    c = [float(v) for v in first[1:-1].split(",")][1:4]
+    a, b = _rpc(
+        server,
+        [f"FIND p[{pose}]\n".encode(), f"REFINE p[{pose}] p[{c[0]}, {c[1]}, {c[2]}, 0, 0, 0]\n".encode()],
+    )
+    assert a.startswith("(1.0") and b.startswith("(1.0")
+
+
+def test_bad_bytes_get_a_refusal_and_a_huge_line_drops_the_connection(server):
+    assert (
+        _rpc(server, [b"\xff\xfe FIND\n", b"FIND p[0.4,0,0.5,0,3.14159,0]\n"])[0] == format_reply(-9).strip()
+    )
+    with socket.create_connection(("127.0.0.1", server), timeout=5) as s:
+        s.sendall(b"F" * (MAX_LINE + 10) + b"\n")
+        assert s.recv(4096).strip() == format_reply(-9).strip().encode()
+        s.settimeout(2)
+        assert s.recv(4096) == b""  # closed
+
+
+def test_many_controllers_at_once_each_get_their_own_answer(server):
+    pose = ", ".join(map(str, FLANGE))
+    results, errors = [], []
+
+    def one():
+        try:
+            results.append(_rpc(server, [f"FIND p[{pose}]\n".encode()] * 3))
+        except Exception as exc:  # pragma: no cover - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=one) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(20)
+    assert not errors and len(results) == 16
+    assert all(len(r) == 3 and all(x == r[0] and x.startswith("(1.0") for x in r) for r in results)
+
+
+# -- the teach screen's view of the same detector ---------------------------------------------
+
+
+def test_the_cockpit_detect_route_lists_the_blocks_in_pixels():
+    from perception.config import PerceptionConfig
+    from perception.robotlink import RobotLink
+    from perception.webapp import ViewerApp
+    from urctl.config import RobotConfig
+
+    app = ViewerApp(
+        SceneCamera(),
+        config=PerceptionConfig(),
+        robot=RobotLink(RobotConfig(host="fake-ur.invalid"), dry_run=True),
+    )
+    app.start()
+    try:
+        deadline = time.monotonic() + 5
+        while app.latest()[1] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        out = app.pick_detect()
+    finally:
+        app.stop()
+    assert out["ok"] and out["handeye"] and len(out["blocks"]) == 1
+    (b,) = out["blocks"]
+    assert abs(b["pixel"][0] - 55) <= 3 and abs(b["pixel"][1] - 42) <= 3

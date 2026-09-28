@@ -270,6 +270,67 @@ def where_words(p: Sequence[float]) -> str:
     return f"about {math.hypot(p[0], p[1]) * 100:.0f} cm out from my base"
 
 
+def detect_blocks(
+    w: int,
+    h: int,
+    ch: int,
+    rgb: bytes,
+    depth: bytes,
+    depth_scale_m: float,
+    K: dict,
+    T_fc: Transform,
+    T_bf: Transform,
+) -> list[Block]:
+    """White blocks in one aligned RGB-D frame, each top face placed in the base frame
+    through the hand-eye ``T_fc`` (flange → colour camera) and the flange pose ``T_bf``
+    at the frame's instant. Identity transforms give the camera frame (a preview with
+    no robot). Candidates clipped by the frame edge, the wrong size for a block, or off
+    the common surface are dropped. Shared by :meth:`PickCycle.survey` and the robot
+    program's pick server (:mod:`perception.picknode`)."""
+    blocks: list[Block] = []
+    for b in white_blobs(w, h, ch, rgb):
+        x0, y0, x1, y1 = b["bbox"]
+        if x0 <= 6 or y0 <= 6 or x1 >= w - 6 or y1 >= h - 6:
+            continue  # clipped at the frame edge
+        tf = top_face(w, h, ch, rgb, depth, depth_scale_m, K, b["bbox"])
+        if tf is None:
+            continue
+        # The depth has holes on white foam; the colour blob is complete. Take the
+        # centre and extents from every white pixel, back-projected at the top face's
+        # depth, and let the depth points only say how far away that face is.
+        z = tf["centre"][2]
+        pts_cam = []
+        for y in range(y0, min(y1, h)):
+            for x in range(x0, min(x1, w)):
+                i = (y * w + x) * ch
+                r, g, bb = rgb[i], rgb[i + 1], rgb[i + 2]
+                if min(r, g, bb) > WHITE_MIN and max(r, g, bb) - min(r, g, bb) < WHITE_CHROMA:
+                    pts_cam.append(((x - K["ppx"]) * z / K["fx"], (y - K["ppy"]) * z / K["fy"], z))
+        pts_base = [T_bf.apply(T_fc.apply(p)) for p in pts_cam]
+        ax = plane_axes_xy(pts_base)
+        cx, cy = ax["centre_xy"]
+        centre = [cx, cy, sum(p[2] for p in pts_base) / len(pts_base)]
+        # Orientation from the depth points of the top face itself: the colour blob
+        # also holds the side faces seen at an angle, and they turn the axes.
+        if tf["n"] >= 150:
+            ax_depth = plane_axes_xy([T_bf.apply(T_fc.apply(p)) for p in tf["points"]])
+            ax["theta"] = ax_depth["theta"]
+        if ax["major_m"] > 0.07 or ax["minor_m"] > 0.06 or ax["minor_m"] < 0.010:
+            continue  # not a block: a velcro strap (100 x 15 mm), the rail, a speck
+        blocks.append(
+            Block(
+                len(blocks),
+                centre,
+                ax["theta"],
+                ax["major_m"],
+                ax["minor_m"],
+                (b["cx"], b["cy"]),
+                len(pts_cam),
+            )
+        )
+    return reject_off_surface(blocks)
+
+
 # -- the cockpit client ---------------------------------------------------------------------
 
 
@@ -540,52 +601,19 @@ class PickCycle:
         he = (rob.get("handeye") or {}).get("flange_to_color_pose")
         if not he:
             raise CockpitError("the cockpit has no hand-eye (calibrate first)")
-        T_fc = Transform.from_pose(he)
-        T_bf = Transform.from_pose(self._flange())
+        flange = self._flange()
         hdr, w, h, ch, rgb, depth = self.cockpit.frame()
-        K = hdr["intrinsics"]
-        blocks: list[Block] = []
-        for b in white_blobs(w, h, ch, rgb):
-            x0, y0, x1, y1 = b["bbox"]
-            if x0 <= 6 or y0 <= 6 or x1 >= w - 6 or y1 >= h - 6:
-                continue  # clipped at the frame edge
-            tf = top_face(w, h, ch, rgb, depth, hdr["depth_scale_m"], K, b["bbox"])
-            if tf is None:
-                continue
-            # The depth has holes on white foam; the colour blob is complete. Take the
-            # centre and extents from every white pixel, back-projected at the top face's
-            # depth, and let the depth points only say how far away that face is.
-            z = tf["centre"][2]
-            pts_cam = []
-            for y in range(y0, min(y1, h)):
-                for x in range(x0, min(x1, w)):
-                    i = (y * w + x) * ch
-                    r, g, bb = rgb[i], rgb[i + 1], rgb[i + 2]
-                    if min(r, g, bb) > WHITE_MIN and max(r, g, bb) - min(r, g, bb) < WHITE_CHROMA:
-                        pts_cam.append(((x - K["ppx"]) * z / K["fx"], (y - K["ppy"]) * z / K["fy"], z))
-            pts_base = [T_bf.apply(T_fc.apply(p)) for p in pts_cam]
-            ax = plane_axes_xy(pts_base)
-            cx, cy = ax["centre_xy"]
-            centre = [cx, cy, sum(p[2] for p in pts_base) / len(pts_base)]
-            # Orientation from the depth points of the top face itself: the colour blob
-            # also holds the side faces seen at an angle, and they turn the axes.
-            if tf["n"] >= 150:
-                ax_depth = plane_axes_xy([T_bf.apply(T_fc.apply(p)) for p in tf["points"]])
-                ax["theta"] = ax_depth["theta"]
-            if ax["major_m"] > 0.07 or ax["minor_m"] > 0.06 or ax["minor_m"] < 0.010:
-                continue  # not a block: a velcro strap (100 x 15 mm), the rail, a speck
-            blocks.append(
-                Block(
-                    len(blocks),
-                    centre,
-                    ax["theta"],
-                    ax["major_m"],
-                    ax["minor_m"],
-                    (b["cx"], b["cy"]),
-                    len(pts_cam),
-                )
-            )
-        return reject_off_surface(blocks)
+        return detect_blocks(
+            w,
+            h,
+            ch,
+            rgb,
+            depth,
+            hdr["depth_scale_m"],
+            hdr["intrinsics"],
+            Transform.from_pose(he),
+            Transform.from_pose(flange),
+        )
 
     def refine(self, blk: Block, radius_m: float = 0.06) -> Block | None:
         """Re-detect ``blk`` from the current (closer) pose: the survey candidate whose
