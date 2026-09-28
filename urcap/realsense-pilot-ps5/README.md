@@ -5,11 +5,11 @@ robot on PolyScope 5: the wrist RealSense feed inside PolyScope, tap a point, an
 the arm there. It is an **Installation node** (Installation tab → URCaps → RealSense
 Pilot), the PolyScope 5 counterpart of PolyScope X's Application node.
 
-Download: [`../dist/realsense-pilot-ps5-0.1.0.urcap`](../dist/realsense-pilot-ps5-0.1.0.urcap)
+Download: [`../dist/realsense-pilot-ps5-0.2.0.urcap`](../dist/realsense-pilot-ps5-0.2.0.urcap)
 
 ## Install on the robot
 
-1. Copy `realsense-pilot-ps5-0.1.0.urcap` to a USB stick and plug it into the pendant.
+1. Copy `realsense-pilot-ps5-0.2.0.urcap` to a USB stick and plug it into the pendant.
 2. Settings (☰ top right) → System → URCaps → **+** → pick the file → Open, then
    **Restart** when PolyScope asks.
 3. Installation tab → URCaps → **RealSense Pilot**.

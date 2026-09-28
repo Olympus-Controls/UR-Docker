@@ -30,7 +30,7 @@ import urcap5  # noqa: E402
 
 SRC = ROOT / "urcap" / "realsense-pilot-ps5"
 JAVA = SRC / "src" / "com" / "olympuscontrols" / "realsensepilot"
-DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.1.0.urcap"
+DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.2.0.urcap"
 JAVAC = shutil.which("javac")
 HAS_SDK = all(any(urcap5.SDK_DIR.glob(p + "*.jar")) for p in urcap5.SDK_JARS)
 
