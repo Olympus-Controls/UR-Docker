@@ -30,6 +30,7 @@ OPENING_FACTOR = 1.2  # fingers 20 % wider than the object
 GRASP_BELOW_M = 0.015
 LIFT_M = 0.05
 DROP_M = 0.06  # the last stretch of the sweep runs straight down the Z axis
+LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2 m blind zone
 STROKE_M = 0.05  # Hand-E
 
 
@@ -82,6 +83,45 @@ def _blend(prev: Sequence[float], here: Sequence[float], nxt: Sequence[float], c
     return round(max(0.0, min(cap, 0.45 * a, 0.45 * b)), 4)
 
 
+def look_pose(
+    rect: dict,
+    rot: Sequence[float],
+    yaw_deg: float,
+    flange_to_color: Sequence[float],
+    range_m: float = LOOK_M,
+) -> list[float]:
+    """The flange pose (grasp orientation, wrist yawed) that puts the object's top
+    centre on the colour camera's optical axis ``range_m`` away — as close as the D435
+    still sees depth, and in the middle of the picture, clear of the gripper's body."""
+    oriented = Transform.from_pose(tip_pose(rect["centre"], rot, 0.0, yaw_deg))
+    T_fc = Transform.from_pose(flange_to_color)
+    cam_z = oriented.rotate(T_fc.rotate((0.0, 0.0, 1.0)))
+    cam_off = oriented.rotate(T_fc.translation)
+    c = rect["centre"]
+    return [c[i] - range_m * cam_z[i] - cam_off[i] for i in range(3)] + list(oriented.to_pose()[3:])
+
+
+def _raised(pose: Sequence[float], dz: float, twist_deg: float = 0.0) -> list[float]:
+    """``pose`` lifted ``dz`` along base Z and turned ``twist_deg`` about its own Z."""
+    T = Transform.from_pose(pose).compose(Transform.from_pose([0, 0, 0, 0, 0, math.radians(twist_deg)]))
+    out = T.to_pose()
+    return [out[0], out[1], out[2] + dz, *out[3:]]
+
+
+def _legs(start: Sequence[float], stops: list[tuple[str, list[float], dict]], cap: float) -> list[dict]:
+    """``stops`` → path legs, each corner blended as far as its neighbours allow
+    (the last one never)."""
+    path = [list(start)] + [p for _, p, _ in stops]
+    out = []
+    for i, (name, pose, extra) in enumerate(stops):
+        leg = {"name": name, "pose": pose, **extra}
+        if i < len(stops) - 1 and extra.get("blend", True):
+            leg["blend_m"] = _blend(path[i], path[i + 1], path[i + 2], cap)
+        leg.pop("blend", None)
+        out.append(leg)
+    return out
+
+
 def plan(
     rect: dict,
     start_flange: Sequence[float],
@@ -89,6 +129,8 @@ def plan(
     tip_m: float,
     pick: bool = False,
     fancy: bool = False,
+    flange_to_color: Sequence[float] | None = None,
+    look_m: float | None = None,
     hover_m: float = HOVER_M,
     opening_factor: float = OPENING_FACTOR,
     grasp_below_m: float = GRASP_BELOW_M,
@@ -99,68 +141,70 @@ def plan(
     acceleration: float = 0.8,
     skip: Sequence[str] = (),
 ) -> dict:
-    """The program for ``rect`` from ``start_flange``: ``{legs, approach, grasp, lift,
-    yaw_deg, opening_m, gripper_position, vias}``. Flange poses (TCP at the flange);
-    the caller pre-opens the gripper to ``gripper_position`` before running it.
-    ``skip`` drops named fancy vias (the ones the controller's IK can't solve)."""
+    """The programs for ``rect`` from ``start_flange`` (flange poses, TCP at the flange):
+
+    - ``sweep``: blended vias from the picture pose — to the **look** pose when
+      ``flange_to_color`` and ``look_m`` are given (the close second look), else
+      straight on to the hover;
+    - ``final``: over → approach (fingertips ``hover_m`` over the top) [→ grasp,
+      close → lift] — from the look pose, or as the tail of the same program.
+
+    ``legs`` is everything in order (a preview). The caller pre-opens the gripper
+    to ``gripper_position``; ``skip`` drops named fancy vias the IK can't solve."""
     cx, cy, top = rect["centre"]
     rot = grasp_rotation(start_flange, [cx, cy, top], 0.0)  # straight down, heading kept
     yaw = grasp_yaw_deg(rot, rect["theta"] + math.pi / 2, finger_axis)
-    at = lambda h, extra_yaw=0.0: tip_pose([cx, cy, top + h], rot, tip_m, yaw + extra_yaw)  # noqa: E731
-    approach = at(hover_m)
-    over = at(hover_m + DROP_M)
-    vias: list[tuple[str, list[float]]] = []
+    at = lambda h: tip_pose([cx, cy, top + h], rot, tip_m, yaw)  # noqa: E731
+    approach, over = at(hover_m), at(hover_m + DROP_M)
+    look = (
+        look_pose(rect, rot, yaw, flange_to_color, look_m) if flange_to_color is not None and look_m else None
+    )
+    goal = look if look is not None else over
+    fast = {"velocity": velocity, "acceleration": acceleration}
+    stops: list[tuple[str, list[float], dict]] = []
     if fancy:
         # rise out of the picture pose and swing wide, then a flourish over the target
-        mid = [(start_flange[i] + over[i]) / 2 for i in range(3)]
-        dx, dy = over[0] - start_flange[0], over[1] - start_flange[1]
+        mid = [(start_flange[i] + goal[i]) / 2 for i in range(3)]
+        dx, dy = goal[0] - start_flange[0], goal[1] - start_flange[1]
         d = math.hypot(dx, dy) or 1.0
         side = [-dy / d * min(0.08, 0.35 * d), dx / d * min(0.08, 0.35 * d)]
-        swing = [mid[0] + side[0], mid[1] + side[1], max(start_flange[2], over[2]) + 0.10]
-        swing_pose = swing + slerp_rotvec(start_flange, over, 0.5)
-        vias.append(("swing", swing_pose))
-        vias.append(("flourish", at(hover_m + DROP_M + 0.06, extra_yaw=35.0)))
-    vias = [v for v in vias if v[0] not in skip]
-    vias.append(("over", over))
-    path = [list(start_flange)] + [p for _, p in vias] + [approach]
-    legs = []
-    for i, (name, pose) in enumerate(vias):
-        legs.append(
-            {
-                "name": name,
-                "pose": pose,
-                "velocity": velocity,
-                "acceleration": acceleration,
-                "blend_m": _blend(path[i], path[i + 1], path[i + 2], 0.06 if fancy else 0.04),
-            }
-        )
-    legs.append(
-        {
-            "name": "approach",
-            "pose": approach,
-            "velocity": 0.12,
-            "acceleration": 0.6,
-            "dwell_s": 0.3 if pick else 0.0,
-        }
-    )
-    grasp = at(-grasp_below_m)
-    lift = at(hover_m + lift_m)
+        swing = [mid[0] + side[0], mid[1] + side[1], max(start_flange[2], goal[2]) + 0.10]
+        stops.append(("swing", swing + slerp_rotvec(start_flange, goal, 0.5), fast))
+        stops.append(("flourish", _raised(goal, 0.06, 35.0), fast))
+    stops = [st for st in stops if st[0] not in skip]
+    tail = [
+        ("approach", approach, {"velocity": 0.12, "acceleration": 0.6, "dwell_s": 0.3 if pick else 0.0}),
+    ]
     if pick:
-        legs.append(
-            {"name": "grasp", "pose": grasp, "velocity": 0.05, "acceleration": 0.3, "gripper": "close"}
+        tail.append(
+            ("grasp", at(-grasp_below_m), {"velocity": 0.05, "acceleration": 0.3, "gripper": "close"})
         )
-        legs.append({"name": "lift", "pose": lift, "velocity": 0.10, "acceleration": 0.5})
+        tail.append(("lift", at(hover_m + lift_m), {"velocity": 0.10, "acceleration": 0.5}))
+    cap = 0.06 if fancy else 0.04
+    if look is not None:
+        sweep = _legs(
+            start_flange,
+            stops + [("look", look, {"velocity": 0.18, "acceleration": 0.6, "dwell_s": 0.2})],
+            cap,
+        )
+        final = _legs(look, [("over", over, {**fast, "velocity": 0.15})] + tail, 0.03)
+    else:
+        sweep = _legs(start_flange, stops + [("over", over, fast)] + tail, cap)
+        final = []
     opening = min(stroke_m, rect["minor_m"] * opening_factor)
     return {
-        "legs": legs,
+        "sweep": sweep,
+        "final": final,
+        "legs": sweep + final,
+        "look": look,
         "approach": approach,
-        "grasp": grasp,
-        "lift": lift,
+        "grasp": at(-grasp_below_m),
+        "lift": at(hover_m + lift_m),
         "yaw_deg": yaw,
         "opening_m": opening,
         "gripper_position": robotiq_position(opening, stroke_m),
         "fits": rect["minor_m"] * opening_factor <= stroke_m,
-        "vias": [name for name, _ in vias],
+        "vias": [name for name, _, _ in stops] + ["over"],
     }
 
 

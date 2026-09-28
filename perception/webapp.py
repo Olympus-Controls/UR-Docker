@@ -469,10 +469,61 @@ class ViewerApp:
         fp = self.robot.flange_pose() if self.robot is not None else {}
         return list(fp["flange"]) if fp.get("ok") and fp.get("flange") else None
 
-    def pick(self, *, pick: bool = False, fancy: bool = False, plan_only: bool = False) -> dict:
-        """Sweep to the clicked object and hover (``pickplan``): straight down the base
-        Z axis, fingers across its short side opened to 1.2x its width, fingertips
-        25 mm over its top; with ``pick`` down, close and lift. One blended program."""
+    def _handeye_fc(self) -> list[float]:
+        return list(self.robot.handeye.as_dict()["flange_to_color_pose"])
+
+    def _rect_from_mask(self, mask: Mask, frame: RgbdFrame, flange: Sequence[float]) -> dict | None:
+        """The masked object's top face in the base frame (``pickplan.rectangle``)."""
+        from . import pickplan
+
+        T = Transform.from_pose(flange).compose(Transform.from_pose(self._handeye_fc()))
+        k, w = frame.intrinsics, mask.width
+        pts = []
+        for n, i in enumerate(mask.pixels()):
+            if n % 2:
+                continue
+            u, v = i % w, i // w
+            d = frame.depth.distance_m(u, v)
+            if d:
+                pts.append(T.apply(((u - k.ppx) * d / k.fx, (v - k.ppy) * d / k.fy, d)))
+        return pickplan.rectangle(pickplan.top_face(pts))
+
+    def _pixel_of(
+        self, point: Sequence[float], flange: Sequence[float], frame: RgbdFrame
+    ) -> tuple[int, int] | None:
+        """Where a base-frame point lands in ``frame`` taken from ``flange``."""
+        T = Transform.from_pose(flange).compose(Transform.from_pose(self._handeye_fc()))
+        q = T.inverse().apply(point)
+        if q[2] <= 0.05:
+            return None
+        k = frame.intrinsics
+        u, v = round(k.fx * q[0] / q[2] + k.ppx), round(k.fy * q[1] / q[2] + k.ppy)
+        return (u, v) if 0 <= u < frame.color.width and 0 <= v < frame.color.height else None
+
+    def _unreachable(self, legs: list[dict]) -> list[str]:
+        iks = self.robot.robot.inverse_kin([leg["pose"] for leg in legs], tcp=[0.0] * 6)
+        return [leg["name"] for leg, a in zip(legs, iks, strict=True) if a.get("reachable") is False]
+
+    def _run(self, legs: list[dict]) -> dict:
+        return self.robot._tool(
+            "move_tcp_path",
+            {"legs": [{k: v for k, v in leg.items() if k != "name"} for leg in legs], "tcp": [0.0] * 6},
+        )
+
+    def pick(
+        self, *, pick: bool = False, fancy: bool = False, plan_only: bool = False, look: bool = True
+    ) -> dict:
+        """Sweep to the clicked object and hover over it (``pickplan``), in two programs:
+
+        1. a blended sweep (``fancy``: with a swing and a flourish) to the **close look**
+           — the object on the camera's axis 0.24 m off, as near as the D435 sees;
+        2. re-find the object there (its first estimate projected into the new
+           picture, segmented again), re-measure its top face, and run the final
+           program from that: straight down the base Z axis, fingers across its short
+           side opened to 1.2x its width, fingertips 25 mm over its top; with ``pick``
+           down 15 mm under the top, close, lift.
+
+        No close look when ``look`` is off or its pose is out of reach (one program)."""
         from . import pickplan
         from .handeye import tip_m_from_env
 
@@ -483,49 +534,52 @@ class ViewerApp:
         if mask is None or frame is None or not mask.area:
             raise ValueError("no target: click an object first")
         f_then = self._flange_at(mask_t)
-        if f_then is None:
-            return {"ok": False, "error": "no flange pose for the target's frame"}
-        T = Transform.from_pose(f_then).compose(
-            Transform.from_pose(self.robot.handeye.as_dict()["flange_to_color_pose"])
-        )
-        k, w = frame.intrinsics, mask.width
-        pts = []
-        for n, i in enumerate(mask.pixels()):
-            if n % 2:
-                continue
-            u, v = i % w, i // w
-            d = frame.depth.distance_m(u, v)
-            if d:
-                pts.append(T.apply(((u - k.ppx) * d / k.fx, (v - k.ppy) * d / k.fy, d)))
-        rect = pickplan.rectangle(pickplan.top_face(pts))
-        if rect is None:
-            return {"ok": False, "error": "not enough depth on the target's top face"}
         f_now = self._flange_at(time.time())
-        if f_now is None:
-            return {"ok": False, "error": "no live flange pose"}
-        tip = tip_m_from_env()
-        p = pickplan.plan(rect, f_now, tip_m=tip, pick=pick, fancy=fancy)
+        if f_then is None or f_now is None:
+            return {"ok": False, "error": "no flange pose (pose stream or controller)"}
+        rect0 = self._rect_from_mask(mask, frame, f_then)
+        if rect0 is None:
+            return {"ok": False, "error": "not enough depth on the target's top face"}
+        tip, hfc = tip_m_from_env(), self._handeye_fc()
+        notes: list[str] = []
+
+        def build(rect, start, *, with_look, skip=()):
+            return pickplan.plan(
+                rect,
+                start,
+                tip_m=tip,
+                pick=pick,
+                fancy=fancy,
+                skip=skip,
+                flange_to_color=hfc if with_look else None,
+                look_m=pickplan.LOOK_M if with_look else None,
+            )
+
+        p = build(rect0, f_now, with_look=look)
         if pick and not p["fits"]:
             return {
                 "ok": False,
-                "error": f"{rect['minor_m'] * 1000:.0f} mm is too wide for the fingers",
-                "rect": rect,
+                "error": f"{rect0['minor_m'] * 1000:.0f} mm is too wide for the fingers",
+                "rect": rect0,
             }
-        # the controller's IK on every pose; a fancy via it can't solve is dropped
-        iks = self.robot.robot.inverse_kin([leg["pose"] for leg in p["legs"]], tcp=[0.0] * 6)
-        bad = [leg["name"] for leg, a in zip(p["legs"], iks, strict=True) if a.get("reachable") is False]
+        bad = self._unreachable(p["legs"])
         fancy_bad = [b for b in bad if b in ("swing", "flourish")]
-        if fancy_bad:
-            p = pickplan.plan(rect, f_now, tip_m=tip, pick=pick, fancy=fancy, skip=fancy_bad)
-            iks = self.robot.robot.inverse_kin([leg["pose"] for leg in p["legs"]], tcp=[0.0] * 6)
-            bad = [leg["name"] for leg, a in zip(p["legs"], iks, strict=True) if a.get("reachable") is False]
-        summary = {
-            "rect": {**rect, "theta_deg": round(math.degrees(rect["theta"]), 1)},
+        if "look" in bad:
+            notes.append("close look out of reach: approaching from the first estimate")
+            p = build(rect0, f_now, with_look=False, skip=fancy_bad)
+            bad = self._unreachable(p["legs"])
+        elif fancy_bad:
+            p = build(rect0, f_now, with_look=look, skip=fancy_bad)
+            bad = self._unreachable(p["legs"])
+        summary: dict = {
+            "rect": {**rect0, "theta_deg": round(math.degrees(rect0["theta"]), 1)},
             "yaw_deg": round(p["yaw_deg"], 1),
             "opening_mm": round(p["opening_m"] * 1000, 1),
             "gripper_position": p["gripper_position"],
             "vias": p["vias"],
+            "look": p["look"],
             "dropped": fancy_bad,
+            "notes": notes,
             "legs": [{"name": leg["name"], "pose": [round(v, 4) for v in leg["pose"]]} for leg in p["legs"]],
         }
         if bad:
@@ -535,9 +589,64 @@ class ViewerApp:
         g = self.robot.gripper("move", position=p["gripper_position"])
         if not g.get("ok"):
             return {"ok": False, "error": f"gripper: {g.get('error') or 'no answer'}", **summary}
-        legs = [{k2: v2 for k2, v2 in leg.items() if k2 != "name"} for leg in p["legs"]]
-        run = self.robot._tool("move_tcp_path", {"legs": legs, "tcp": [0.0] * 6})
-        done = run.get("completed_legs")
+        run = self._run(p["sweep"])
+        if not run.get("ok"):
+            return {
+                "ok": False,
+                "error": run.get("error") or "sweep stopped",
+                "stage": "sweep",
+                "dry_run": run.get("dry_run"),
+                **summary,
+            }
+        rect, final = rect0, p["final"]
+        if p["look"] is not None:
+            # 2 — a settled frame from the look pose, the object found again in it
+            time.sleep(0.3)
+            seq, _ = self.latest()
+            seq, fr = self.wait_frame(seq, 2.0)
+            f_look = self._flange_at(self._latest_t) or p["look"]
+            px = self._pixel_of(rect0["centre"], f_look, fr) if fr is not None else None
+            rect1 = None
+            if px is not None:
+                try:
+                    self.segment(x=px[0], y=px[1])
+                    with self._seg_lock:
+                        m1, fr1 = self.mask, self.mask_frame
+                    if m1 is not None and m1.area:
+                        rect1 = self._rect_from_mask(m1, fr1, f_look)
+                except (ValueError, RuntimeError) as exc:
+                    notes.append(f"close look: {exc}")
+            shift = math.dist(rect1["centre"][:2], rect0["centre"][:2]) if rect1 else None
+            if rect1 is None or shift > 0.05:
+                notes.append(
+                    "close look found nothing"
+                    if rect1 is None
+                    else f"close look moved it {shift * 1000:.0f} mm — kept the first estimate"
+                )
+            else:
+                rect = rect1
+                notes.append(
+                    f"close look: moved {shift * 1000:.0f} mm, "
+                    f"{rect1['major_m'] * 1000:.0f} x {rect1['minor_m'] * 1000:.0f} mm"
+                )
+            p2 = pickplan.plan(rect, f_look, tip_m=tip, pick=pick, fancy=False)
+            final = p2["sweep"]  # no look: over → approach [→ grasp → lift], from the look pose
+            bad = self._unreachable(final)
+            if bad:
+                return {
+                    "ok": False,
+                    "error": f"out of reach after the close look: {', '.join(bad)}",
+                    **summary,
+                }
+            if abs(p2["gripper_position"] - p["gripper_position"]) > 6:
+                self.robot.gripper("move", position=p2["gripper_position"])
+            summary.update(
+                rect={**rect, "theta_deg": round(math.degrees(rect["theta"]), 1)},
+                yaw_deg=round(p2["yaw_deg"], 1),
+                opening_mm=round(p2["opening_m"] * 1000, 1),
+                gripper_position=p2["gripper_position"],
+            )
+            run = self._run(final)
         held = None
         for leg in run.get("legs") or []:
             gr = leg.get("gripper") if isinstance(leg, dict) else None
@@ -552,7 +661,7 @@ class ViewerApp:
         return {
             "ok": bool(run.get("ok")),
             "error": run.get("error"),
-            "completed_legs": done,
+            "completed_legs": run.get("completed_legs"),
             "held": held,
             "dry_run": run.get("dry_run"),
             "protective_stop": run.get("protective_stop"),

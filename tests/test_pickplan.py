@@ -164,10 +164,12 @@ def test_the_cockpit_plans_and_dry_runs_a_pick(monkeypatch):
         assert wide["ok"] is False and "too wide" in wide["error"]
         plan = post("/api/robot/pick", {"plan_only": True, "fancy": True})
         assert plan["ok"] and plan["plan_only"], plan
-        assert [leg["name"] for leg in plan["legs"]] == ["swing", "flourish", "over", "approach"]
+        assert [leg["name"] for leg in plan["legs"]] == ["swing", "flourish", "look", "over", "approach"]
         assert plan["opening_mm"] == 50.0  # 1.2 x 80 mm, capped at the stroke
         run = post("/api/robot/pick", {})
         assert run["ok"] and run["dry_run"], run
+        # the pose didn't move, so the close look re-finds the object where it was
+        assert any(n.startswith("close look: moved") for n in run["notes"]), run["notes"]
         home = post("/api/robot/home", {})
         assert home["ok"] and home["pose"] == pytest.approx(HOME)
     finally:
@@ -175,3 +177,38 @@ def test_the_cockpit_plans_and_dry_runs_a_pick(monkeypatch):
         srv.shutdown()
         srv.server_close()
         app.stop()
+
+
+UR3_HANDEYE = [0.04332, 0.05955, 0.01279, 0.06471, 0.17204, -3.08350]  # flange → colour, the ur3 cell
+
+
+@pytest.mark.parametrize("fancy", [False, True])
+@pytest.mark.parametrize("pick", [False, True])
+def test_the_close_look_puts_the_object_on_the_optical_axis(fancy, pick):
+    rect = pickplan.rectangle(pickplan.top_face(block(-0.22, 0.38, -0.268, 0.044, 0.024, 30.0)))
+    p = pickplan.plan(rect, HOME, tip_m=TIP, pick=pick, fancy=fancy, flange_to_color=UR3_HANDEYE, look_m=0.24)
+    look = p["look"]
+    assert [leg["name"] for leg in p["sweep"]][-1] == "look" and p["sweep"][-1]["pose"] == look
+    cam = Transform.from_pose(look).compose(Transform.from_pose(UR3_HANDEYE))
+    q = cam.inverse().apply(rect["centre"])  # the object's top centre in the camera frame
+    assert q[0] == pytest.approx(0.0, abs=1e-9) and q[1] == pytest.approx(0.0, abs=1e-9)
+    assert q[2] == pytest.approx(0.24, abs=1e-9)
+    assert Transform.from_pose(look).rotate((0, 0, 1)) == pytest.approx(
+        (0, 0, -1), abs=1e-9
+    )  # already square
+    names = [leg["name"] for leg in p["final"]]
+    assert names == (["over", "approach", "grasp", "lift"] if pick else ["over", "approach"])
+    for start, legs in ((HOME, p["sweep"]), (look, p["final"])):
+        path = [start] + [leg["pose"] for leg in legs]
+        assert "blend_m" not in legs[-1]
+        for i, leg in enumerate(legs):
+            b = leg.get("blend_m", 0.0)
+            assert not b or (
+                b
+                <= 0.45
+                * min(math.dist(path[i][:3], path[i + 1][:3]), math.dist(path[i + 1][:3], path[i + 2][:3]))
+                + 1e-9
+            )
+    # the fingertips at the look stay well clear of the top (camera 0.24 m off it)
+    tip_z = look[2] - TIP
+    assert tip_z - (-0.268) > 0.04
