@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UR-utils · a Universal Robots sandbox</title>
+<meta name="description" content="A Dockerized PolyScope simulator, a zero-dependency toolkit and MCP server that drive it and real UR robots the same way, and an RGB-D cockpit that sends a camera click to the arm.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23020403'/><circle cx='16' cy='16' r='9' fill='none' stroke='%237CF7A2' stroke-width='2'/><circle cx='16' cy='16' r='2' fill='%237CF7A2'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+<!--
+  The landing page in the cockpit's clothes (perception/webui/index.html): one
+  phosphor, scanlines, corner brackets, a teletype and a prompt. The RANGE SCAN
+  in the hero is a synthetic scene drawn with the 2-D canvas — a table, a few
+  blocks, the arm surveying and picking them — so the page needs no camera, no
+  WebGL and no dependencies. STOP pauses every animation.
+-->
+<style>
+  :root {
+    --void: #020403; --glass: #040806;
+    --phos: #7CF7A2; --phos-hi: #D9FFE6; --phos-mid: #3FA768; --phos-dim: #1C4A30; --phos-ghost: #0E2418;
+    --amber: #FFC247; --red: #FF4A3D;
+    --mono: "Share Tech Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --tty: "VT323", "Share Tech Mono", ui-monospace, monospace;
+    --glow: 0 0 6px rgba(124,247,162,.55), 0 0 18px rgba(124,247,162,.18);
+    --glow-amber: 0 0 7px rgba(255,194,71,.55);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 64px; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(ellipse at 40% 18%, #06110b 0%, var(--void) 58%) fixed, var(--void);
+    color: var(--phos); font-family: var(--mono); font-size: 15px; line-height: 1.6; letter-spacing: .03em;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px); mix-blend-mode: multiply; }
+  ::selection { background: var(--phos); color: var(--void); }
+  a { color: var(--phos-hi); text-decoration: none; border-bottom: 1px solid var(--phos-dim); transition: border-color .15s, text-shadow .15s; }
+  a:hover { border-color: var(--phos); text-shadow: var(--glow); }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 1px solid var(--phos-hi); outline-offset: 3px; }
+
+  /* ---- the bar ------------------------------------------------------------------ */
+  header.bar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 22px; padding: 12px 24px 10px;
+    background: linear-gradient(to bottom, rgba(2,4,3,.96) 70%, rgba(2,4,3,0)); text-transform: uppercase; }
+  .ident { font-size: 12px; color: var(--phos-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .ident b { color: var(--phos); font-weight: 400; text-shadow: var(--glow); letter-spacing: .32em; margin-right: 14px; }
+  .lamps { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .lamp { font-size: 11px; letter-spacing: .06em; padding: 2px 7px; border: 1px solid var(--phos-ghost); color: var(--phos-dim); transition: color .25s, border-color .25s, box-shadow .25s; }
+  .lamp.on { color: var(--phos); border-color: var(--phos-mid); text-shadow: var(--glow); box-shadow: inset 0 0 8px rgba(124,247,162,.12); }
+  .lamp.alert { color: var(--amber); border-color: var(--amber); text-shadow: var(--glow-amber); animation: blink 1.1s steps(2) infinite; }
+  .lamp.crit { color: var(--red); border-color: var(--red); text-shadow: 0 0 8px rgba(255,74,61,.7); animation: blink .6s steps(2) infinite; }
+  .clock { font-size: 12px; color: var(--phos-mid); min-width: 9ch; text-align: right; }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- shared furniture ------------------------------------------------------------ */
+  .corners { position: relative; }
+  .corners::before, .corners::after { content: ""; position: absolute; width: 11px; height: 11px; border: 1px solid var(--phos-mid); z-index: 3; pointer-events: none; transition: border-color .6s; }
+  .corners::before { left: -1px; top: -1px; border-right: 0; border-bottom: 0; }
+  .corners::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
+  .tag { position: absolute; top: -19px; left: 2px; right: 2px; font-size: 11px; color: var(--phos-dim); display: flex; gap: 16px;
+    white-space: nowrap; overflow: hidden; text-transform: uppercase; letter-spacing: .06em; }
+  .tag .r { margin-left: auto; }
+  .tag b { color: var(--phos-mid); font-weight: 400; }
+
+  button, .key { font: inherit; font-size: 13px; letter-spacing: .18em; color: var(--phos); background: transparent; cursor: pointer; text-transform: uppercase;
+    border: 1px solid var(--phos-dim); padding: 9px 14px; transition: background .15s, color .15s, box-shadow .15s; display: inline-block; line-height: 1.2; }
+  button:hover, .key:hover { border-color: var(--phos); box-shadow: 0 0 12px rgba(124,247,162,.25), inset 0 0 10px rgba(124,247,162,.12); text-shadow: var(--glow); }
+  button:active, .key:active { background: var(--phos); color: var(--void); }
+  .key { text-decoration: none; }
+  #stopKey { color: var(--red); border-color: var(--red); font-size: 16px; padding: 12px 24px; letter-spacing: .3em;
+    box-shadow: 0 0 16px rgba(255,74,61,.25), inset 0 0 12px rgba(255,74,61,.15); text-shadow: 0 0 8px rgba(255,74,61,.7); }
+  #stopKey:hover { box-shadow: 0 0 26px rgba(255,74,61,.5), inset 0 0 14px rgba(255,74,61,.3); }
+  #stopKey:active { background: var(--red); color: var(--void); }
+  #stopKey.held { color: var(--amber); border-color: var(--amber); text-shadow: var(--glow-amber); box-shadow: 0 0 16px rgba(255,194,71,.25), inset 0 0 12px rgba(255,194,71,.12); }
+
+  /* ---- hero ------------------------------------------------------------------------- */
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 32px; padding: 34px 0 26px; align-items: stretch; }
+  .hero-l { display: flex; flex-direction: column; min-width: 0; container-type: inline-size; }
+  .kicker { font-size: 12px; color: var(--phos-mid); letter-spacing: .32em; text-transform: uppercase; }
+  h1 { font-family: var(--tty); font-weight: 400; font-size: clamp(44px, 18cqi, 124px); white-space: nowrap; line-height: .86; margin: 10px 0 6px; letter-spacing: .04em;
+    color: var(--phos-hi); text-shadow: 0 0 10px rgba(124,247,162,.7), 0 0 34px rgba(124,247,162,.28); }
+  h1 .cur { display: inline-block; width: .5em; height: .72em; background: var(--phos); margin-left: .08em; vertical-align: -.02em; box-shadow: var(--glow); animation: blink 1.1s steps(2) infinite; }
+  .sub { font-family: var(--tty); font-size: clamp(22px, 2.6vw, 30px); line-height: 1.05; color: var(--amber); text-shadow: var(--glow-amber); letter-spacing: .06em; text-transform: uppercase; margin: 0 0 16px; }
+  .lead { color: var(--phos-hi); opacity: .9; max-width: 58ch; margin: 0 0 18px; }
+  .lead code { font-size: .95em; }
+
+  #tty { font-family: var(--tty); font-size: 20px; line-height: 1.04; height: calc(6 * 1.04em); overflow: hidden; margin-top: auto;
+    display: flex; flex-direction: column; justify-content: flex-end; letter-spacing: .04em; text-transform: uppercase;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 55%); mask-image: linear-gradient(to bottom, transparent 0, #000 55%); }
+  #tty .ln { flex: none; white-space: pre; overflow: hidden; text-overflow: ellipsis; text-shadow: var(--glow); }
+  #tty .ln .ts { color: var(--phos-dim); text-shadow: none; }
+  #tty .ln.warn { color: var(--amber); text-shadow: var(--glow-amber); }
+  #tty .ln.crit { color: var(--red); text-shadow: 0 0 8px rgba(255,74,61,.6); }
+  #tty .ln.you, #tty .ln.dim { color: var(--phos-mid); text-shadow: none; }
+  .prompt { display: flex; align-items: center; gap: 1ch; font-family: var(--tty); font-size: 24px; margin: 6px 0 14px; }
+  .prompt .gt { color: var(--phos); text-shadow: var(--glow); }
+  #cmd { flex: 1; background: transparent; border: 0; outline: 0; color: var(--phos-hi); font: inherit; letter-spacing: .06em; text-transform: uppercase;
+    caret-color: var(--phos); text-shadow: var(--glow); padding: 0; min-width: 0; }
+  #cmd::placeholder { color: var(--phos-dim); text-shadow: none; }
+  .keys { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+  #scanStage { position: relative; min-height: 440px; border: 1px solid var(--phos-ghost); background: #010302; }
+  #scan { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: pan-y; }
+  #scan.dragging { cursor: grabbing; }
+  .hint { position: absolute; left: 12px; bottom: 9px; font-size: 10.5px; color: var(--phos-dim); pointer-events: none; text-transform: uppercase; letter-spacing: .06em; }
+  .stamp { position: absolute; right: 12px; bottom: 9px; font-size: 10.5px; color: var(--amber); opacity: .75; pointer-events: none; text-transform: uppercase; letter-spacing: .12em; }
+
+  /* ---- panels ------------------------------------------------------------------------ */
+  .panel { margin: 58px 0 0; padding: 30px 32px 28px; border: 1px solid var(--phos-ghost); background: rgba(4,8,6,.55); transition: border-color .6s, box-shadow .6s; }
+  .panel.lit { border-color: var(--phos-dim); box-shadow: inset 0 0 40px rgba(124,247,162,.03); }
+  .panel:not(.lit)::before, .panel:not(.lit)::after { border-color: var(--phos-dim); }
+  h2 { font-family: var(--tty); font-weight: 400; font-size: clamp(34px, 4.4vw, 48px); line-height: 1; margin: 0 0 14px; letter-spacing: .05em; text-transform: uppercase;
+    color: var(--phos-dim); transition: color .6s, text-shadow .6s; }
+  .panel.lit h2 { color: var(--phos); text-shadow: var(--glow); }
+  h3 { font-weight: 400; font-size: 14px; letter-spacing: .2em; text-transform: uppercase; color: var(--phos); text-shadow: var(--glow); margin: 0 0 6px; }
+  p { margin: 0 0 1em; color: rgba(217,255,230,.84); }
+  .panel > p, .cols p { max-width: 76ch; }
+  strong { color: var(--phos-hi); font-weight: 400; text-shadow: var(--glow); }
+  em { font-style: normal; color: var(--amber); }
+  code { font-family: var(--mono); font-size: .92em; color: var(--phos-hi); background: rgba(124,247,162,.07); border: 1px solid var(--phos-ghost); padding: 0 5px; }
+
+  .term { position: relative; margin: 0 0 1.2em; }
+  pre { margin: 0; background: #010302; border: 1px solid var(--phos-ghost); border-left: 2px solid var(--phos-dim); padding: 14px 18px; overflow-x: auto;
+    font-family: var(--mono); font-size: 13.5px; line-height: 1.7; color: var(--phos-hi); text-shadow: 0 0 5px rgba(124,247,162,.25); }
+  pre .c { color: var(--phos-mid); text-shadow: none; }
+  pre .p { color: var(--phos); user-select: none; }
+  pre .a { color: var(--amber); text-shadow: var(--glow-amber); }
+  .copy { position: absolute; top: 6px; right: 6px; font-size: 10.5px; padding: 3px 8px; letter-spacing: .14em; background: #010302; }
+  .copy.done { color: var(--amber); border-color: var(--amber); }
+
+  .note { border: 1px solid rgba(255,194,71,.35); border-left: 2px solid var(--amber); padding: 12px 16px; margin: 0 0 1.2em; background: rgba(255,194,71,.035); }
+  .note p { margin: 0; color: rgba(255,226,170,.9); }
+  .note b { color: var(--amber); font-weight: 400; letter-spacing: .14em; text-shadow: var(--glow-amber); margin-right: .6ch; }
+
+  /* systems grid */
+  .mods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px 20px; margin-top: 30px; }
+  .mod { padding: 18px 18px 16px; border: 1px solid var(--phos-ghost); background: rgba(1,3,2,.6); }
+  .mod p { font-size: 14px; margin: 0; }
+  .mod .st { font-size: 10.5px; color: var(--phos-mid); letter-spacing: .14em; }
+  .mod .st::before { content: "●"; margin-right: 6px; color: var(--phos); text-shadow: var(--glow); }
+
+  /* numbered steps */
+  .steps { display: grid; gap: 22px; margin-top: 8px; }
+  .step { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 18px; }
+  .step .n { font-family: var(--tty); font-size: 48px; line-height: .8; color: var(--phos); text-shadow: var(--glow); }
+  .step .n::after { content: ""; display: block; width: 1px; height: calc(100% - 40px); margin: 10px 0 0 12px; background: var(--phos-ghost); }
+  .step:last-child .n::after { display: none; }
+
+  .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 0 0 1.2em; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 12px 7px 0; border-bottom: 1px solid var(--phos-ghost); vertical-align: top; }
+  th { font-weight: 400; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--phos-mid); }
+  td { color: rgba(217,255,230,.84); }
+  .tbl { overflow-x: auto; }
+
+  /* program library */
+  .lib { list-style: none; margin: 8px 0 1em; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 30px; }
+  .lib li { display: grid; grid-template-columns: 16ch minmax(0, 1fr); gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--phos-ghost); font-size: 14px; }
+  .lib li b { font-weight: 400; color: var(--phos); text-shadow: var(--glow); text-transform: uppercase; letter-spacing: .08em; }
+  .lib li span { color: rgba(217,255,230,.8); }
+
+  /* archive */
+  .links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 8px; }
+  .links a { display: block; border: 1px solid var(--phos-ghost); padding: 14px 16px; background: rgba(1,3,2,.6); transition: border-color .15s, box-shadow .15s; }
+  .links a:hover { border-color: var(--phos-mid); box-shadow: 0 0 14px rgba(124,247,162,.14), inset 0 0 10px rgba(124,247,162,.06); text-shadow: none; }
+  .links b { display: block; font-weight: 400; color: var(--phos); letter-spacing: .14em; text-transform: uppercase; text-shadow: var(--glow); }
+  .links small { display: block; color: var(--phos-mid); font-size: 12.5px; margin-top: 4px; }
+  .links a.feat { border-color: rgba(255,194,71,.45); }
+  .links a.feat b { color: var(--amber); text-shadow: var(--glow-amber); }
+
+  footer { padding: 40px 0 60px; font-size: 12px; color: var(--phos-dim); text-transform: uppercase; letter-spacing: .1em; display: flex; flex-wrap: wrap; gap: 8px 24px; }
+  footer .r { margin-left: auto; }
+
+  @media (max-width: 1000px) {
+    .hero { grid-template-columns: minmax(0, 1fr); }
+    #scanStage { min-height: 0; height: 58vh; max-height: 520px; }
+    .mods, .links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .lib { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 680px) {
+    .wrap { padding: 0 16px; }
+    header.bar { padding: 10px 16px 8px; flex-wrap: wrap; gap: 8px 14px; }
+    .lamps { margin-left: 0; order: 3; width: 100%; }
+    .clock { margin-left: auto; }
+    .panel { padding: 24px 16px 20px; margin-top: 50px; }
+    .mods, .links, .cols { grid-template-columns: minmax(0, 1fr); }
+    .step { grid-template-columns: 36px minmax(0, 1fr); gap: 12px; }
+    .step .n { font-size: 38px; }
+    .step .n::after { margin-left: 8px; }
+    .lib li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+    #tty { font-size: 17px; }
+    pre { font-size: 12.5px; padding: 12px 14px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .lamp.alert, .lamp.crit, h1 .cur { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="ident"><b>UR-UTILS</b><span id="ident">UNIVERSAL ROBOTS SANDBOX · E-SERIES + POLYSCOPE X</span></div>
+  <div class="lamps" aria-label="system lamps">
+    <span class="lamp" id="lSim" title="URSim in Docker">SIM</span>
+    <span class="lamp" id="lCtl" title="urctl toolkit">URCTL</span>
+    <span class="lamp" id="lMcp" title="MCP server">MCP</span>
+    <span class="lamp" id="lCam" title="RealSense RGB-D cockpit">CAM</span>
+    <span class="lamp" id="lPwr" title="robot mode RUNNING">PWR</span>
+    <span class="lamp" id="lSafe" title="safety NORMAL">SAFE</span>
+  </div>
+  <div class="clock" id="clock">--:--:--</div>
+</header>
+
+<div class="wrap">
+
+  <!-- ======================================================================== HERO -->
+  <section class="hero" id="top">
+    <div class="hero-l">
+      <div class="kicker">A Universal Robots sandbox</div>
+      <h1>UR-UTILS<span class="cur" aria-hidden="true"></span></h1>
+      <p class="sub">A whole robot cell. No robot required.</p>
+      <p class="lead">A Dockerized <strong>PolyScope simulator</strong>, a zero-dependency toolkit
+        (<code>urctl</code>) that drives it and a real controller over the same wire protocols, an
+        <strong>MCP server</strong> so an agent can do the same, and an <strong>RGB-D cockpit</strong>
+        that turns a click on the wrist camera into a move.</p>
+      <div id="tty" aria-live="polite"></div>
+      <label class="prompt"><span class="gt">&gt;</span><input id="cmd" autocomplete="off" spellcheck="false" placeholder="HELP" aria-label="command: type HELP"></label>
+      <div class="keys">
+        <a class="key" href="#start">Cold start</a>
+        <a class="key" href="https://github.com/Olympus-Controls/UR-utils">Source</a>
+        <a class="key" href="realsense-cell.html">Field log</a>
+        <button id="stopKey" type="button" title="stop every animation on this page">Stop</button>
+      </div>
+    </div>
+    <div id="scanStage" class="corners">
+      <div class="tag"><b>RANGE SCAN</b><span>BASE FRAME</span><span class="r" id="scanTag">—</span></div>
+      <canvas id="scan" aria-label="Synthetic range scan: a robot arm with a wrist camera surveys four blocks on a table and picks each in turn. Drag to orbit."></canvas>
+      <div class="hint">DRAG ORBIT · DOUBLE-CLICK RESET</div>
+      <div class="stamp">SYNTHETIC · PERCEPTION --FAKE</div>
+    </div>
+  </section>
+
+  <!-- ======================================================================== SYSTEMS -->
+  <section class="panel corners" id="systems">
+    <div class="tag"><b>01</b><span>SYSTEMS</span><span class="r">6 MODULES · ALL NOMINAL</span></div>
+    <h2>What's on board</h2>
+    <p>Everything a UR cell exposes, reachable from a laptop — the simulator for the
+      experiments, the same code for the hardware, and every capability on four surfaces
+      at once: <strong>MCP</strong> for agents, the <strong>cockpit</strong> for people,
+      a <strong>CLI</strong>, and a <strong>Python library</strong>. Every mutating action
+      passes a safety envelope and lands in an audit log.</p>
+    <div class="mods">
+      <div class="mod corners"><div class="tag"><span>SIM</span></div>
+        <h3>The simulator</h3>
+        <p>URSim 5.26.0 LTS (e-Series, UR10) in Docker: real PolyScope, real Dashboard,
+          Primary and RTDE. The PolyScope X 10.13 sim sits alongside on offset ports.</p>
+        <div class="st">ONLINE · :29999 :30001 :30004</div></div>
+      <div class="mod corners"><div class="tag"><span>URCTL</span></div>
+        <h3>The toolkit</h3>
+        <p>A pure-stdlib Python <code>Robot</code> facade over Dashboard, Primary and RTDE.
+          Windows, macOS, Linux; amd64 and arm64. <code>--host</code> is the only difference
+          between the sim and a real arm.</p>
+        <div class="st">ONLINE · ZERO DEPENDENCIES</div></div>
+      <div class="mod corners"><div class="tag"><span>MCP</span></div>
+        <h3>The agent link</h3>
+        <p><code>urctl-mcp</code> serves every capability as a schema-validated tool over
+          stdio: state, deep telemetry, motion, IO, programs, the full cell snapshot.
+          <code>--dry-run</code> validates without sending.</p>
+        <div class="st">ONLINE · JSON-RPC / STDIO</div></div>
+      <div class="mod corners"><div class="tag"><span>CAM</span></div>
+        <h3>The cockpit</h3>
+        <p>A RealSense D435 on the tool flange: colour, depth, and this range scan in the
+          robot's base frame. Click an object; it becomes a base-frame point and an approach
+          pose, one Move away.</p>
+        <div class="st">ONLINE · <code>perception gui</code></div></div>
+      <div class="mod corners"><div class="tag"><span>URCAP</span></div>
+        <h3>On the pendant</h3>
+        <p>The same click-to-locate as a PolyScope X Application node and a PolyScope 5
+          Installation node — the camera feed inside PolyScope, with PolyScope's own IK
+          doing the move.</p>
+        <div class="st">ONLINE · <code>urcap/dist/</code></div></div>
+      <div class="mod corners"><div class="tag"><span>URP</span></div>
+        <h3>Program authoring</h3>
+        <p>Native PolyScope node trees generated from Python, <code>.script ↔ .urp</code>
+          conversion, and a guided builder that asks Yes/No on the robot's own pendant
+          before it records each step.</p>
+        <div class="st">ONLINE · <code>urctl guided</code></div></div>
+    </div>
+  </section>
+
+  <!-- ======================================================================== COLD START -->
+  <section class="panel corners" id="start">
+    <div class="tag"><b>02</b><span>COLD START</span><span class="r">POWER_OFF → IDLE → RUNNING</span></div>
+    <h2>Start the simulator</h2>
+    <div class="steps">
+      <div class="step"><div class="n">1</div><div>
+        <h3>Clone and bring it up</h3>
+        <p>You need <a href="https://docs.docker.com/engine/install/">Docker</a> for the
+          simulator and Python ≥ 3.10 for the toolkit. The first start pulls the URSim image.</p>
+        <div class="term"><pre><span class="p">&gt; </span>git clone https://github.com/Olympus-Controls/UR-utils &amp;&amp; cd UR-utils
+<span class="p">&gt; </span>docker compose up -d            <span class="c"># the e-Series simulator</span></pre></div>
+      </div></div>
+      <div class="step"><div class="n">2</div><div>
+        <h3>Open the pendant</h3>
+        <p>PolyScope runs over noVNC in your browser:</p>
+        <div class="term"><pre>http://localhost:6080/vnc.html</pre></div>
+        <div class="note"><p><b>NOTE</b>Connect via <code>localhost</code>, not the IP the
+          container prints — that address isn't reachable from the host. On Apple Silicon
+          the e-Series image (amd64-only) won't boot under Docker Desktop; run the PolyScope X
+          sim natively instead: <code>HOST_ARCH=arm64 make simx-up</code>.</p></div>
+      </div></div>
+      <div class="step"><div class="n">3</div><div>
+        <h3>Wake the robot</h3>
+        <p>Set up the environment with <a href="https://docs.astral.sh/uv/">uv</a> and
+          cold-start the controller — power on, then release the brakes:</p>
+        <div class="term"><pre><span class="p">&gt; </span>uv sync                         <span class="c"># or: pip install .</span>
+<span class="p">&gt; </span>uv run urctl bring-up           <span class="c"># POWER_OFF → IDLE → RUNNING</span>
+<span class="p">&gt; </span>uv run urctl state              <span class="c"># robot state as JSON</span></pre></div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ======================================================================== MOTION -->
+  <section class="panel corners" id="drive">
+    <div class="tag"><b>03</b><span>MOTION</span><span class="r">ENVELOPE → CONTROLLER IK → PRIMARY :30001</span></div>
+    <h2>Tell it where to go</h2>
+    <p>Every move is checked before it leaves the laptop — joint limits, speed caps, the
+      robot's state — and absolute Cartesian targets are reach-checked by the
+      <strong>controller's own inverse kinematics</strong>, not a datasheet sphere. Moves hold
+      the socket open until the controller confirms they landed.</p>
+    <div class="cols">
+      <div class="term"><pre><span class="c"># joint space (radians): safe from any pose</span>
+<span class="p">&gt; </span>urctl move-joints 0 -1.57 0 -1.57 0 0
+
+<span class="c"># nudge the tool +50 mm along base +Y</span>
+<span class="p">&gt; </span>urctl move-tcp 0 0.05 0 0 0 0 --relative
+
+<span class="c"># everything about the robot, as JSON</span>
+<span class="p">&gt; </span>urctl rtde-state --deep
+<span class="p">&gt; </span>urctl snapshot
+
+<span class="c"># validate + audit, send nothing</span>
+<span class="p">&gt; </span>urctl --dry-run move-joints 99 0 0 0 0 0</pre></div>
+      <div class="term"><pre><span class="a">from</span> urctl <span class="a">import</span> Robot, RobotConfig
+
+<span class="a">with</span> Robot(RobotConfig(host=<span class="a">"10.0.0.5"</span>)) <span class="a">as</span> robot:
+    robot.bring_up()
+    robot.move_joints([0, -1.0, 1.2, -1.8, -1.57, 0])
+    print(robot.rtde_state(deep=True))</pre></div>
+    </div>
+    <div class="note"><p><b>SINGULARITY</b>A <code>movel</code> from a near-singular pose
+      protective-stops the arm (C154A0) — the default startup pose and the all-zero elbow
+      are both traps. <code>movej</code> to a bent-elbow pose first; <code>urctl bring-up</code>
+      clears a latched stop. To move a lot, stream one trajectory rather than looping single
+      moves.</p></div>
+  </section>
+
+  <!-- ======================================================================== AGENTS -->
+  <section class="panel corners" id="agents">
+    <div class="tag"><b>04</b><span>AGENT LINK</span><span class="r">MCP · STDIO</span></div>
+    <h2>Hand it to an agent</h2>
+    <p>The CLI, the cockpit and the MCP server sit on the same <code>Robot</code>, so an agent
+      gets exactly the tools a person does — schema-validated, safety-enveloped, audited.
+      Pure stdlib; there is no SDK to install.</p>
+    <div class="cols">
+      <div class="term"><pre>{ <span class="a">"mcpServers"</span>: {
+    <span class="a">"ur"</span>: { <span class="a">"command"</span>: <span class="a">"urctl-mcp"</span>,
+            <span class="a">"args"</span>: [<span class="a">"--host"</span>, <span class="a">"10.0.0.5"</span>] } } }</pre></div>
+      <div class="term"><pre><span class="c"># the same registry for any other framework</span>
+<span class="p">&gt; </span>urctl tools
+<span class="p">&gt; </span>urctl call get_state --json '{}'</pre></div>
+    </div>
+    <p><code>perception-mcp</code> (see <code>.mcp.json</code>) adds the camera and cell tools —
+      locate, segment, snapshot, calibrate, doctor — by proxying the running cockpit, since one
+      process owns the USB camera.</p>
+  </section>
+
+  <!-- ======================================================================== COCKPIT -->
+  <section class="panel corners" id="cockpit">
+    <div class="tag"><b>05</b><span>THE PILOT'S SEAT</span><span class="r">D435 · UR3E · HAND-E</span></div>
+    <h2>See what it sees. Send it there.</h2>
+    <p>A RealSense D435 on a printed flange bracket, a laptop as the brain, and a cockpit that
+      looks like the scan above: the wrist feed as a CRT, the depth as a point cloud in the
+      robot's base frame, a light column over every object it finds, and a teletype that
+      narrates what the arm is about to do. The approach is measured from the
+      <strong>fingertips</strong>, not the flange, and the controller's IK decides what's in
+      reach.</p>
+    <div class="cols">
+      <div class="term"><pre><span class="c"># no camera? the same cockpit on a synthetic scene</span>
+<span class="p">&gt; </span>uv run perception --fake gui
+
+<span class="c"># a real cell: pre-flight, then the cockpit</span>
+<span class="p">&gt; </span>uv run perception --cell ur3 doctor
+<span class="p">&gt; </span>uv run perception --cell ur3 gui</pre></div>
+      <div class="term"><pre><span class="c"># survey, fit each block's top, pick it, set it back</span>
+<span class="p">&gt; </span>uv run perception pick-cycle
+
+<span class="c"># four big buttons and a STOP, for an audience</span>
+<span class="p">&gt; </span>uv run perception gui --demo</pre></div>
+    </div>
+    <p>Hand-eye calibration is touch-and-click (or mark-less: the arm orbits a block and
+      clicks every view itself). First picks ran on a UR3e with a Robotiq Hand-E on
+      2026-09-25. The full walkthrough, with a dated field log, is the
+      <a href="realsense-cell.html">pilot's-seat page</a>.</p>
+  </section>
+
+  <!-- ======================================================================== HARDWARE -->
+  <section class="panel corners" id="robot">
+    <div class="tag"><b>06</b><span>REAL HARDWARE</span><span class="r">SAME CODE · ONE FLAG</span></div>
+    <h2>Point it at a real robot</h2>
+    <p>Nothing is hard-wired to <code>localhost</code> — it's only the default. Pass
+      <code>--host</code> or set the environment, and the same commands drive a physical
+      controller.</p>
+    <div class="term"><pre><span class="p">&gt; </span>urctl --host 10.0.0.5 state
+<span class="p">&gt; </span>UR_HOST=10.0.0.5 urctl bring-up
+<span class="p">&gt; </span>UR_PLATFORM=polyscopex UR_ROBOT_API_PORT=8000 urctl state   <span class="c"># PolyScope X</span></pre></div>
+    <div class="tbl"><table>
+      <tr><th>Variable</th><th>Default</th><th>Meaning</th></tr>
+      <tr><td><code>UR_HOST</code></td><td><code>localhost</code></td><td>Controller host or IP</td></tr>
+      <tr><td><code>UR_DASH_PORT</code></td><td><code>29999</code></td><td>Dashboard server</td></tr>
+      <tr><td><code>UR_PRIMARY_PORT</code></td><td><code>30001</code></td><td>Primary client (URScript runs here)</td></tr>
+      <tr><td><code>UR_TIMEOUT_S</code></td><td><code>10</code></td><td>Socket timeout, seconds</td></tr>
+      <tr><td><code>UR_PLATFORM</code></td><td><code>e-series</code></td><td><code>polyscopex</code> swaps Dashboard for the REST Robot-API</td></tr>
+      <tr><td><code>UR_ROBOT_MODEL</code></td><td><em>probed</em></td><td>Sizes the fallback reach cap (UR3e … UR30)</td></tr>
+      <tr><td><code>UR_AUDIT_LOG</code></td><td><em>unset</em></td><td>Append one JSON line per action</td></tr>
+    </table></div>
+    <div class="note"><p><b>REMOTE</b>On a real e-Series, motion over Primary needs the pendant's
+      top-right indicator on <em>Remote</em>. In Local, moves return <code>ok:false</code> with no
+      violation and the arm doesn't move — and there's no network way to flip it.</p></div>
+    <div class="note"><p><b>BACKPLANE</b>These ports are unauthenticated on real hardware. Keep
+      the controller on an isolated network: the client-side envelope is a guard, not a
+      substitute for the controller's own safety configuration. Credentials come from your
+      environment (<code>.env</code>), never from this repo.</p></div>
+  </section>
+
+  <!-- ======================================================================== PROGRAMS -->
+  <section class="panel corners" id="programs">
+    <div class="tag"><b>07</b><span>PROGRAM LIBRARY</span><span class="r">programs/ · 8 ENTRIES</span></div>
+    <h2>Things it already knows</h2>
+    <p>Ready-to-run samples: load any from the pendant (<code>urctl load MotionDemo &amp;&amp; urctl play</code>)
+      or stream it to Primary.</p>
+    <ul class="lib">
+      <li><b>InspectionBot</b><span>A guided, teach-by-prompt inspection tour: freedrive to each station, answer pass/fail on the pendant.</span></li>
+      <li><b>PickPlace</b><span>A basic cycle — grasp at one station, carry, release at another, return home.</span></li>
+      <li><b>PickAndStack</b><span>Pick three items and stack them at one spot; gripper steps left for you to wire in.</span></li>
+      <li><b>AppleStack</b><span>Poses derived from one top-down photo, with no camera calibration at all.</span></li>
+      <li><b>MotionDemo</b><span>Three joint-space poses with textmsg checkpoints — the end-to-end driver's test program.</span></li>
+      <li><b>ElegantDance</b><span>Every joint on its own sinusoid, blended paths; each run is unique.</span></li>
+      <li><b>Dance</b><span>A looping choreography authored as script nodes, the pattern for real-robot cells.</span></li>
+      <li><b>NodeTreeDemo</b><span>A native PolyScope node tree — MoveJ, If, Loop, Set, Popup — built from Python.</span></li>
+    </ul>
+    <p>Author your own with <code>urctl guided MyProgram --save MyProgram.urp</code>: the robot
+      raises a Yes/No on its own pendant for each step and records only what you approve.</p>
+  </section>
+
+  <!-- ======================================================================== ARCHIVE -->
+  <section class="panel corners" id="docs">
+    <div class="tag"><b>08</b><span>ARCHIVE</span><span class="r">WHERE TO GO NEXT</span></div>
+    <h2>Read deeper</h2>
+    <div class="links">
+      <a class="feat" href="realsense-cell.html"><b>The pilot's seat</b><small>The demo walkthrough and its dated field log</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils#readme"><b>README</b><small>Usage, MCP setup, the cockpit, development</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils/blob/main/CLAUDE.md"><b>CLAUDE.md</b><small>The protocol map, file formats, every hard-won gotcha</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils/blob/main/docs/realsense.md"><b>RealSense</b><small>Depth quality, hand-eye, sending a point to the arm</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils/blob/main/docs/harness.md"><b>Harness</b><small>Every read and control surface, and what sits on them</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils/blob/main/docs/program-authoring-best-practices.md"><b>Program authoring</b><small>Waypoint names, Move nodes, blends</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils/blob/main/urcap/README.md"><b>URCaps</b><small>Install the RealSense Pilot node on a pendant</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils/tree/main/hardware/d435-tool-bracket"><b>Flange bracket</b><small>Parametric CadQuery D435 mount, STL/STEP</small></a>
+      <a href="https://github.com/Olympus-Controls/UR-utils"><b>Source</b><small>Code, issues, and the latest changes</small></a>
+    </div>
+  </section>
+
+  <footer>
+    <span>UR-utils · for Universal Robots e-Series and PolyScope X · by Nick Armenta</span>
+    <span class="r">Powered by URSim &amp; PolyScope · not affiliated with Universal Robots</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const clock = () => new Date().toLocaleTimeString([], { hour12: false });
+  const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
+  const f3 = (v) => (v >= 0 ? '+' : '') + v.toFixed(3);
+  let halted = false;   // STOP
+
+  // ---- clock -------------------------------------------------------------------------
+  const tick = () => { $('clock').textContent = clock(); };
+  tick(); setInterval(tick, 1000);
+
+  // ---- teletype ----------------------------------------------------------------------
+  const tty = { q: [], typing: false };
+  function say(text, kind = '') { for (const line of String(text).split('\n')) tty.q.push({ text: line.toUpperCase(), kind }); if (!tty.typing) pump(); }
+  async function pump() {
+    tty.typing = true; const el = $('tty');
+    while (tty.q.length) {
+      const { text, kind } = tty.q.shift();
+      const li = document.createElement('div'); li.className = 'ln ' + kind;
+      const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = clock() + ' ';
+      const tx = document.createElement('span'); li.append(ts, tx); el.appendChild(li);
+      if (reduced || tty.q.length > 3) tx.textContent = text;
+      else for (let i = 1; i <= text.length; i += 2) { tx.textContent = text.slice(0, i + 1); await sleep(11); }
+      while (el.children.length > 30) el.firstChild.remove();
+    }
+    tty.typing = false;
+  }
+
+  // ---- boot: the lamps come on one by one ---------------------------------------------
+  const BOOT = [
+    ['lSim', 'SIM ···· URSIM 5.26.0 LTS E-SERIES · POLYSCOPE X 10.13'],
+    ['lCtl', 'URCTL ·· ZERO DEPENDENCIES · WIN / MAC / LINUX'],
+    ['lMcp', 'MCP ···· TOOLS OVER STDIO · ENVELOPE · AUDIT LOG'],
+    ['lCam', 'CAM ···· REALSENSE D435 ON THE FLANGE · 848×480'],
+    ['lPwr', 'PWR ···· POWER ON · BRAKE RELEASE · RUNNING'],
+    ['lSafe', 'SAFE ··· NORMAL'],
+  ];
+  let booted = false;
+  async function boot() {
+    say('UR-UTILS // UNIVERSAL ROBOTS SANDBOX', 'dim');
+    for (const [id, line] of BOOT) { if (!reduced) await sleep(360); $(id).classList.add('on'); say(line); }
+    if (!reduced) await sleep(500);
+    say('READY · TYPE HELP', 'dim');
+    booted = true;
+  }
+
+  // ---- the prompt ------------------------------------------------------------------------
+  const GO = { START: 'start', SIM: 'start', QUICKSTART: 'start', MOVE: 'drive', MOTION: 'drive', MCP: 'agents', AGENT: 'agents',
+    COCKPIT: 'cockpit', CAM: 'cockpit', ROBOT: 'robot', HARDWARE: 'robot', PROGRAMS: 'programs', DOCS: 'docs', SYSTEMS: 'systems', TOP: 'top' };
+  const hist = []; let hi = -1;
+  function run(raw) {
+    const line = raw.trim().toUpperCase(); if (!line) return;
+    hist.push(line); hi = hist.length;
+    say(`> ${line}`, 'you');
+    const [verb] = line.split(/\s+/);
+    if (verb === 'HELP' || verb === '?') {
+      say('START · MOVE · MCP · COCKPIT · ROBOT · PROGRAMS · DOCS\nSCAN · STOP · RESUME · SOURCE · CLEAR');
+    } else if (GO[verb]) {
+      document.getElementById(GO[verb]).scrollIntoView({ behavior: reduced ? 'auto' : 'smooth' });
+      say(`→ ${GO[verb] === 'top' ? 'TOP' : document.querySelector(`#${GO[verb]} h2`).textContent}`, 'dim');
+    } else if (verb === 'SCAN') { cycle.restart(); say('RE-SURVEY'); }
+    else if (verb === 'STOP' || verb === 'HALT') setHalt(true);
+    else if (verb === 'RESUME' || verb === 'GO') setHalt(false);
+    else if (verb === 'SOURCE' || verb === 'GITHUB') { say('OPENING OLYMPUS-CONTROLS/UR-UTILS', 'dim'); window.open('https://github.com/Olympus-Controls/UR-utils', '_blank', 'noopener'); }
+    else if (verb === 'CLEAR' || verb === 'CLS') $('tty').replaceChildren();
+    else say(`UNKNOWN COMMAND: ${verb.slice(0, 24)} · TRY HELP`, 'warn');
+  }
+  $('cmd').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { run(e.target.value); e.target.value = ''; }
+    else if (e.key === 'ArrowUp' && hist.length) { hi = Math.max(0, hi - 1); e.target.value = hist[hi]; e.preventDefault(); }
+    else if (e.key === 'ArrowDown' && hist.length) { hi = Math.min(hist.length, hi + 1); e.target.value = hist[hi] || ''; e.preventDefault(); }
+  });
+
+  // ---- STOP pauses every animation ---------------------------------------------------------
+  function setHalt(on) {
+    halted = on;
+    const k = $('stopKey'); k.textContent = on ? 'Resume' : 'Stop'; k.classList.toggle('held', on);
+    $('lSafe').classList.toggle('on', !on); $('lSafe').classList.toggle('alert', on);
+    say(on ? 'ALL MOTION STOPPED' : 'RESUMED · SAFETY NORMAL', on ? 'crit' : '');
+    if (!on) kick();
+  }
+  $('stopKey').addEventListener('click', () => setHalt(!halted));
+
+  // ---- copy buttons on every terminal ----------------------------------------------------------
+  for (const t of document.querySelectorAll('.term')) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'copy'; b.textContent = 'Copy';
+    b.addEventListener('click', async () => {
+      const text = [...t.querySelector('pre').childNodes].filter((n) => !(n.classList && n.classList.contains('p'))).map((n) => n.textContent).join('');
+      try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; b.classList.add('done'); }
+      catch (e) { b.textContent = 'Select'; }
+      setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done'); }, 1400);
+    });
+    t.appendChild(b);
+  }
+
+  // ---- panels light as they scroll in -----------------------------------------------------------
+  const panels = document.querySelectorAll('.panel');
+  if (reduced || !('IntersectionObserver' in window)) panels.forEach((p) => p.classList.add('lit'));
+  else {
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('lit'); io.unobserve(e.target); } }), { threshold: 0.18 });
+    panels.forEach((p) => io.observe(p));
+  }
+
+  // ======================================================================================
+  // The RANGE SCAN: a synthetic cell in the base frame (metres, z up). A table 0.27 m
+  // below the base (the UR3e cell), four blocks, an arm whose wrist camera surveys the
+  // table and then visits each block the way pick-cycle does.
+  // ======================================================================================
+  const cv = $('scan'), ctx = cv.getContext('2d');
+  let seed = 7; const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const TABLE_Z = -0.27, TIP = 0.163;   // Hand-E 157 mm + 6 mm adapter
+  const BLOCKS = [
+    { id: 1, c: [0.31, -0.17], s: [0.05, 0.05, 0.05], yaw: 0.35 },
+    { id: 2, c: [0.43, 0.03], s: [0.064, 0.04, 0.04], yaw: -0.55 },
+    { id: 3, c: [0.33, 0.20], s: [0.05, 0.05, 0.05], yaw: 0.95 },
+    { id: 4, c: [0.52, -0.10], s: [0.04, 0.04, 0.06], yaw: 0.12 },
+  ].map((b) => ({ ...b, top: TABLE_Z + b.s[2], lift: 0, target: false, found: false }));
+
+  // points: [x, y, z, block index or -1]
+  const P = [];
+  const inBlock = (x, y) => BLOCKS.findIndex((b) => { const dx = x - b.c[0], dy = y - b.c[1], c = Math.cos(-b.yaw), s = Math.sin(-b.yaw);
+    return Math.abs(dx * c - dy * s) < b.s[0] / 2 + 0.004 && Math.abs(dx * s + dy * c) < b.s[1] / 2 + 0.004; });
+  for (let x = 0.12; x <= 0.68; x += 0.0105) for (let y = -0.36; y <= 0.36; y += 0.0105) {
+    const px = x + (rnd() - 0.5) * 0.006, py = y + (rnd() - 0.5) * 0.006;
+    if (rnd() < 0.05 || inBlock(px, py) >= 0) continue;
+    P.push(px, py, TABLE_Z + (rnd() - 0.5) * 0.003, -1);
+  }
+  BLOCKS.forEach((b, bi) => {
+    const c = Math.cos(b.yaw), s = Math.sin(b.yaw), [w, d, h] = b.s;
+    const put = (u, v, z) => P.push(b.c[0] + u * c - v * s, b.c[1] + u * s + v * c, z, bi);
+    for (let u = -w / 2; u <= w / 2 + 1e-6; u += 0.0045) for (let v = -d / 2; v <= d / 2 + 1e-6; v += 0.0045) put(u, v, b.top + (rnd() - 0.5) * 0.002);
+    for (let z = TABLE_Z + 0.004; z < b.top; z += 0.006) {
+      for (let u = -w / 2; u <= w / 2; u += 0.006) { put(u, -d / 2, z); put(u, d / 2, z); }
+      for (let v = -d / 2; v <= d / 2; v += 0.006) { put(-w / 2, v, z); put(w / 2, v, z); }
+    }
+  });
+  const NP = P.length / 4;
+
+  // ---- the viewer ---------------------------------------------------------------------------
+  const VIEW0 = { yaw: 0.62, pitch: 0.50, dist: 1.62, t: [0.25, 0.0, -0.05] };
+  const U = { yaw: 0, pitch: 0 };   // what the user dragged
+  function camera(t, W, H) {
+    const sway = reduced ? 0 : 0.42 * Math.sin(t * 0.045);
+    const yaw = VIEW0.yaw + sway + U.yaw, pitch = Math.max(0.12, Math.min(1.35, VIEW0.pitch + U.pitch));
+    const cp = Math.cos(pitch), T = VIEW0.t, dist = VIEW0.dist * (W < 520 ? 1.18 : 1);
+    const eye = [T[0] + dist * cp * Math.cos(yaw), T[1] + dist * cp * Math.sin(yaw), T[2] + dist * Math.sin(pitch)];
+    let fx = T[0] - eye[0], fy = T[1] - eye[1], fz = T[2] - eye[2]; let l = Math.hypot(fx, fy, fz); fx /= l; fy /= l; fz /= l;
+    let rx = fy, ry = -fx; l = Math.hypot(rx, ry); rx /= l; ry /= l;           // right = forward × z
+    const ux = ry * fz, uy = -rx * fz, uz = rx * fy - ry * fx;                // up = right × forward
+    const f = H / (2 * Math.tan(0.36));
+    return { eye, f, cx: W / 2, cy: H / 2, fx, fy, fz, rx, ry, ux, uy, uz, yaw };
+  }
+  function proj(C, x, y, z) {
+    const dx = x - C.eye[0], dy = y - C.eye[1], dz = z - C.eye[2];
+    const zc = dx * C.fx + dy * C.fy + dz * C.fz; if (zc < 0.02) return null;
+    return [C.cx + C.f * (dx * C.rx + dy * C.ry) / zc, C.cy - C.f * (dx * C.ux + dy * C.uy + dz * C.uz) / zc, zc];
+  }
+
+  // ---- the arm: a two-link toy in the plane of its azimuth, flange = camera ---------------------
+  const SURVEY = [0.37, 0.0, 0.10];
+  const arm = { p: SURVEY.slice(), goal: SURVEY.slice(), grip: 0.07, gripGoal: 0.07, held: -1 };
+  function armJoints(F) {
+    const S = [0, 0, 0.152], L1 = 0.30, L2 = 0.28, W = [F[0], F[1], F[2] + 0.085];
+    const phi = Math.atan2(W[1], W[0]), r = Math.hypot(W[0], W[1]), h = W[2] - S[2];
+    const d = Math.min(Math.hypot(r, h), L1 + L2 - 1e-3), a = Math.atan2(h, r);
+    const B = Math.acos(Math.max(-1, Math.min(1, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))));
+    const er = L1 * Math.cos(a + B), ez = L1 * Math.sin(a + B);
+    return { S, E: [er * Math.cos(phi), er * Math.sin(phi), S[2] + ez], W, phi };
+  }
+
+  // ---- the cycle: survey → per block lock, hover, descend, close, lift, set back, release ------------
+  const cycle = {
+    steps: [], i: 0, until: 0,
+    build() {
+      const s = [];
+      s.push({ d: 2600, go: () => { arm.goal = SURVEY.slice(); BLOCKS.forEach((b) => { b.found = false; b.target = false; }); say('RANGE SCAN · SURVEY POSE · 0.37 M OVER THE TABLE'); } });
+      s.push({ d: 1600, go: () => { BLOCKS.forEach((b) => { b.found = true; }); say(`${BLOCKS.length} OBJ · TABLE Z ${f3(TABLE_Z)} M · TOPS FITTED`); } });
+      for (const [bi, b] of BLOCKS.entries()) {
+        const over = (dz) => [b.c[0], b.c[1], b.top + TIP + dz];
+        const tag = `TGT ${String(b.id).padStart(2, '0')}`;
+        s.push({ d: 900, go: () => { BLOCKS.forEach((o) => { o.target = false; }); b.target = true;
+          say(`${tag} LOCKED · R ${Math.hypot(...b.c).toFixed(2)} M · YAW ${(b.yaw * 180 / Math.PI).toFixed(0)}°`, 'warn'); } });
+        s.push({ d: 1900, go: () => { arm.goal = over(0.04); arm.gripGoal = Math.min(b.s[0], b.s[1]) + 0.02; say(`HOVER · FINGERTIPS 40 MM OVER ${tag}`); } });
+        s.push({ d: 1300, go: () => { arm.goal = over(-0.015); say('DESCEND · DEPTH BLIND < 0.2 M · BY THE FIT', 'dim'); } });
+        s.push({ d: 800, go: () => { arm.gripGoal = Math.min(b.s[0], b.s[1]); say(`CLOSE · GRIPPED ${(Math.min(b.s[0], b.s[1]) * 1000).toFixed(0)} MM`); } });
+        s.push({ d: 1300, go: () => { arm.held = bi; arm.goal = over(0.0104); say('LIFT 25 MM'); } });
+        s.push({ d: 1100, go: () => { arm.goal = over(-0.015); say('SET BACK', 'dim'); } });
+        s.push({ d: 900, go: () => { arm.held = -1; b.lift = 0; arm.gripGoal = Math.min(b.s[0], b.s[1]) + 0.02; say('RELEASE'); } });
+        s.push({ d: 1200, go: () => { arm.goal = over(0.06); b.target = false; } });
+      }
+      s.push({ d: 1800, go: () => { arm.goal = SURVEY.slice(); arm.gripGoal = 0.07; say(`CYCLE COMPLETE · ${BLOCKS.length}/${BLOCKS.length} PICKED`, ''); } });
+      s.push({ d: 3200, go: () => {} });
+      this.steps = s;
+    },
+    restart() { this.i = 0; this.until = 0; arm.held = -1; BLOCKS.forEach((b) => { b.lift = 0; }); },
+    step(now) {
+      if (!booted) return;
+      if (!this.steps.length) this.build();
+      if (now < this.until) return;
+      const st = this.steps[this.i]; st.go(); this.until = now + st.d; this.i = (this.i + 1) % this.steps.length;
+    },
+  };
+
+  // ---- drawing ---------------------------------------------------------------------------------
+  const LV = 8, buckets = Array.from({ length: LV * 2 }, () => []);
+  const GREEN = (k) => { const t = k / (LV - 1); return `rgba(${40 + 160 * t | 0},${120 + 135 * t | 0},${72 + 143 * t | 0},${0.35 + 0.6 * t})`; };
+  const AMB = (k) => `rgba(255,${176 + 12 * k / (LV - 1) | 0},${60 + 30 * k / (LV - 1) | 0},${0.45 + 0.55 * k / (LV - 1)})`;
+  const STYLES = [...Array.from({ length: LV }, (_, k) => GREEN(k)), ...Array.from({ length: LV }, (_, k) => AMB(k))];
+  function line(C, a, b, style, w) {
+    const p = proj(C, ...a), q = proj(C, ...b); if (!p || !q) return;
+    ctx.strokeStyle = style; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+  }
+  function text(s, x, y, colour, size, align = 'left') {
+    ctx.font = `${size}px "Share Tech Mono", ui-monospace, monospace`; ctx.textAlign = align; ctx.fillStyle = colour;
+    ctx.shadowColor = colour; ctx.shadowBlur = size * 0.7; ctx.fillText(s, x, y); ctx.shadowBlur = 0;
+  }
+  function fit() { const d = DPR(), w = Math.round(cv.clientWidth * d), h = Math.round(cv.clientHeight * d); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } return d; }
+
+  let last = 0, t0 = performance.now(), simT = 0;
+  function frame(now) {
+    const d = fit(), W = cv.width, H = cv.height; if (!W || !H) return;
+    const dt = Math.min(0.1, (now - (last || now)) / 1000); last = now;
+    if (!halted) { simT += dt; cycle.step(now); }
+    // ease the arm
+    const e = 1 - Math.exp(-dt * (halted ? 0 : 3.2));
+    for (let i = 0; i < 3; i++) arm.p[i] += (arm.goal[i] - arm.p[i]) * e;
+    arm.grip += (arm.gripGoal - arm.grip) * e;
+    if (arm.held >= 0) { const b = BLOCKS[arm.held]; b.lift = Math.max(0, arm.p[2] - TIP - b.top + 0.015); }
+
+    const C = camera(reduced ? 0 : simT, W, H);
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'lighter';
+
+    // the table grid (50 mm, heavier every 250 mm)
+    for (let i = 0; i <= 12; i++) {
+      const x = 0.10 + i * 0.05, major = i % 5 === 0, st = `rgba(77,204,128,${major ? 0.16 : 0.06})`;
+      line(C, [x, -0.40, TABLE_Z], [x, 0.40, TABLE_Z], st, d);
+    }
+    for (let i = 0; i <= 16; i++) {
+      const y = -0.40 + i * 0.05, major = i % 5 === 3, st = `rgba(77,204,128,${major ? 0.16 : 0.06})`;
+      line(C, [0.10, y, TABLE_Z], [0.70, y, TABLE_Z], st, d);
+    }
+
+    // the cloud: live where the wrist camera looks, a fainter memory elsewhere
+    for (const b of buckets) b.length = 0;
+    const F = arm.p, tx = Math.tan(0.60), ty = Math.tan(0.37), sweepA = reduced ? -9 : simT * 0.5;
+    for (let i = 0; i < NP; i++) {
+      const bi = P[i * 4 + 3], z = P[i * 4 + 2] + (bi >= 0 ? BLOCKS[bi].lift : 0), x = P[i * 4], y = P[i * 4 + 1];
+      if (bi >= 0 && !BLOCKS[bi].found) continue;
+      const p = proj(C, x, y, z); if (!p) continue;
+      const dz = F[2] - z, live = dz > 0.2 && Math.abs(x - F[0]) < dz * tx && Math.abs(y - F[1]) < dz * ty;
+      const up = Math.min(1, Math.max(0, (z - TABLE_Z - 0.004) / 0.026));
+      const ang = Math.atan2(y, x), sw = Math.max(0, 1 - Math.abs(((ang - sweepA) % 6.2832 + 9.4248) % 6.2832 - 3.1416) / 0.16);
+      let k = (live ? 2.2 : 0.2) + up * 3.2 + sw * 2.4; k = Math.min(LV - 1, Math.max(0, Math.round(k)));
+      const amber = bi >= 0 && BLOCKS[bi].target ? LV : 0;
+      buckets[amber + k].push(p[0], p[1], p[2]);
+    }
+    for (let bk = 0; bk < buckets.length; bk++) {
+      const a = buckets[bk]; if (!a.length) continue;
+      ctx.fillStyle = STYLES[bk];
+      for (let j = 0; j < a.length; j += 3) { const s = Math.max(1, Math.min(3, 2.1 / a[j + 2])) * d; ctx.fillRect(a[j] - s / 2, a[j + 1] - s / 2, s, s); }
+    }
+
+    // the robot: base ring, pedestal down to the table, base X axis
+    const R = 0.064;
+    for (let i = 0; i < 40; i++) { const a0 = i / 40 * 6.2832, a1 = (i + 1) / 40 * 6.2832;
+      line(C, [R * Math.cos(a0), R * Math.sin(a0), 0], [R * Math.cos(a1), R * Math.sin(a1), 0], 'rgba(140,255,180,.7)', d);
+      if (i % 10 === 0) line(C, [R * Math.cos(a0), R * Math.sin(a0), 0], [R * Math.cos(a0), R * Math.sin(a0), TABLE_Z], 'rgba(100,230,150,.28)', d); }
+    line(C, [0, 0, 0], [0.14, 0, 0], 'rgba(217,255,230,.8)', d);
+    // the arm
+    const J = armJoints(F), armSt = 'rgba(160,255,195,.55)';
+    line(C, [0, 0, 0], J.S, armSt, 2 * d); line(C, J.S, J.E, armSt, 2 * d); line(C, J.E, J.W, armSt, 2 * d); line(C, J.W, F, armSt, 2 * d);
+    for (const q of [J.S, J.E, J.W]) { const p = proj(C, ...q); if (p) { ctx.strokeStyle = 'rgba(217,255,230,.7)'; ctx.lineWidth = d; ctx.beginPath(); ctx.arc(p[0], p[1], 3.2 * d, 0, 6.2832); ctx.stroke(); } }
+    // the Hand-E: fingers across the target's short side
+    const tb = BLOCKS.find((b) => b.target), yaw = tb ? tb.yaw : J.phi, gx = -Math.sin(yaw), gy = Math.cos(yaw), g = arm.grip / 2;
+    for (const sgn of [-1, 1]) line(C, [F[0] + sgn * g * gx, F[1] + sgn * g * gy, F[2] - 0.11], [F[0] + sgn * g * gx, F[1] + sgn * g * gy, F[2] - TIP], 'rgba(217,255,230,.8)', 1.5 * d);
+    line(C, [F[0] - g * gx, F[1] - g * gy, F[2] - 0.11], [F[0] + g * gx, F[1] + g * gy, F[2] - 0.11], 'rgba(217,255,230,.6)', d);
+    line(C, F, [F[0], F[1], F[2] - 0.11], 'rgba(217,255,230,.6)', 1.5 * d);
+    // the camera's frustum, off the flange on its bracket
+    const O = [F[0] - 0.05, F[1], F[2] - 0.02], fd = 0.07;
+    const cs = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => [O[0] + u * fd * tx, O[1] + v * fd * ty, O[2] - fd]);
+    for (let i = 0; i < 4; i++) { line(C, O, cs[i], 'rgba(217,255,230,.55)', d); line(C, cs[i], cs[(i + 1) % 4], 'rgba(217,255,230,.55)', d); }
+
+    // light columns over every object found; the target's brightest
+    ctx.globalCompositeOperation = 'lighter';
+    for (const b of BLOCKS) {
+      if (!b.found) continue;
+      const base = proj(C, b.c[0], b.c[1], b.top + b.lift), top = proj(C, b.c[0], b.c[1], b.top + b.lift + 0.22); if (!base || !top) continue;
+      const r = Math.max(b.s[0], b.s[1]) * 0.62, wb = C.f * r / base[2], wt = C.f * r / top[2];
+      const gr = ctx.createLinearGradient(base[0], base[1], top[0], top[1]), a = b.target ? 0.42 : 0.2;
+      gr.addColorStop(0, `rgba(255,194,71,${a})`); gr.addColorStop(1, 'rgba(255,194,71,0)');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.moveTo(base[0] - wb, base[1]); ctx.lineTo(base[0] + wb, base[1]); ctx.lineTo(top[0] + wt, top[1]); ctx.lineTo(top[0] - wt, top[1]); ctx.closePath(); ctx.fill();
+      const gc = ctx.createLinearGradient(base[0], base[1], top[0], top[1]); gc.addColorStop(0, `rgba(255,220,150,${a + 0.25})`); gc.addColorStop(1, 'rgba(255,220,150,0)');
+      ctx.strokeStyle = gc; ctx.lineWidth = d; ctx.beginPath(); ctx.moveTo(base[0], base[1]); ctx.lineTo(top[0], top[1]); ctx.stroke();
+      // a ground ring that breathes
+      const rr = Math.max(b.s[0], b.s[1]) * 0.8 + 0.012 + (reduced || halted ? 0 : Math.sin(now / 420 + b.id) * 0.004);
+      for (let i = 0; i < 32; i++) { const a0 = i / 32 * 6.2832, a1 = (i + 1) / 32 * 6.2832;
+        line(C, [b.c[0] + rr * Math.cos(a0), b.c[1] + rr * Math.sin(a0), TABLE_Z + 0.001], [b.c[0] + rr * Math.cos(a1), b.c[1] + rr * Math.sin(a1), TABLE_Z + 0.001], `rgba(255,194,71,${b.target ? 0.6 : 0.3})`, d); }
+    }
+
+    // labels
+    ctx.globalCompositeOperation = 'source-over';
+    const AM = '#FFC247';
+    for (const b of BLOCKS) {
+      if (!b.found) continue;
+      const p = proj(C, b.c[0], b.c[1], b.top + b.lift + 0.24); if (!p) continue;
+      ctx.strokeStyle = b.target ? 'rgba(255,194,71,.8)' : 'rgba(255,194,71,.4)'; ctx.lineWidth = d;
+      ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0] + 14 * d, p[1] - 10 * d); ctx.lineTo(p[0] + 78 * d, p[1] - 10 * d); ctx.stroke();
+      text(`${b.target ? 'TGT' : 'OBJ'} ${String(b.id).padStart(2, '0')}`, p[0] + 18 * d, p[1] - 14 * d, b.target ? AM : 'rgba(255,194,71,.75)', 12 * d);
+      if (b.target) {
+        text(`${f3(b.c[0])} ${f3(b.c[1])} ${f3(b.top)}`, p[0] + 18 * d, p[1] + 4 * d, 'rgba(255,194,71,.65)', 10 * d);
+        text(`${(b.s[0] * 1000).toFixed(0)}×${(b.s[1] * 1000).toFixed(0)} MM · R ${Math.hypot(...b.c).toFixed(2)} M`, p[0] + 18 * d, p[1] + 17 * d, 'rgba(255,194,71,.45)', 10 * d);
+      }
+    }
+    const bp = proj(C, 0, 0, 0); if (bp) text('BASE', bp[0] + 12 * d, bp[1] - 8 * d, 'rgba(124,247,162,.55)', 11 * d);
+    const found = BLOCKS.filter((b) => b.found).length;
+    $('scanTag').textContent = `${found} OBJ · TABLE ${f3(TABLE_Z)} M · ${halted ? 'HELD' : 'LIVE'}`;
+  }
+
+  // run only while visible, never when reduced (one frame per interaction instead)
+  let raf = 0, visible = true;
+  function loop(now) { raf = 0; frame(now); if (!reduced && visible && !document.hidden) raf = requestAnimationFrame(loop); }
+  function kick() { if (!raf) raf = requestAnimationFrame(loop); }
+  if ('IntersectionObserver' in window) new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible) kick(); }).observe(cv);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) kick(); });
+  addEventListener('resize', kick);
+
+  // drag to orbit
+  let drag = null;
+  cv.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, yaw: U.yaw, pitch: U.pitch }; cv.setPointerCapture(e.pointerId); cv.classList.add('dragging'); });
+  cv.addEventListener('pointermove', (e) => { if (!drag) return; U.yaw = drag.yaw - (e.clientX - drag.x) * 0.008; U.pitch = drag.pitch + (e.clientY - drag.y) * 0.006; kick(); });
+  const end = () => { drag = null; cv.classList.remove('dragging'); };
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  cv.addEventListener('dblclick', () => { U.yaw = 0; U.pitch = 0; say('VIEW RESET', 'dim'); kick(); });
+
+  if (reduced) {   // a still: every object found, no cycle
+    booted = true; BLOCKS.forEach((b) => { b.found = true; }); BLOCKS[1].target = true;
+    BOOT.forEach(([id]) => $(id).classList.add('on'));
+    say('UR-UTILS // UNIVERSAL ROBOTS SANDBOX', 'dim'); BOOT.forEach(([, l]) => say(l)); say('READY · TYPE HELP', 'dim');
+    document.fonts && document.fonts.ready.then(() => requestAnimationFrame(frame));
+    requestAnimationFrame(frame);
+    new ResizeObserver(() => requestAnimationFrame(frame)).observe(cv);
+    cv.addEventListener('pointermove', () => requestAnimationFrame(frame));
+  } else { boot(); kick(); }
+})();
+</script>
+</body>
+</html>
