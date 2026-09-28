@@ -379,7 +379,9 @@
       vM = uHasMask > .5 ? texture(uMask, (vec2(p) + .5) / vec2(uSize)).r : 0.;
       vec4 w = uModel * vec4(X, 1.); vW = w.xyz; vH = w.z - uTableZ;
       vec4 cl = uVP * w;
-      gl_Position = (ok < .5 || X.z > 3.) ? vec4(9., 9., 9., 1.) : cl;
+      // flying pixels (reflections, depth edges) float alone: keep a sample only if two of its neighbours agree
+      float agree = a * step(abs(xr.z - X.z), .02) + b * step(abs(xl.z - X.z), .02) + c * step(abs(yd.z - X.z), .02) + d * step(abs(yu.z - X.z), .02);
+      gl_Position = (ok < .5 || X.z > 3. || agree < 2.) ? vec4(9., 9., 9., 1.) : cl;
       float spacing = X.z * float(uStep) / uK.x;                       // metres between neighbouring samples
       gl_PointSize = clamp(1.8 * spacing * uFocalPx / max(cl.w, 1e-3), 1.5, 14.);
     }`;

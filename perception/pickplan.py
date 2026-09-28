@@ -34,13 +34,21 @@ LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2
 STROKE_M = 0.05  # Hand-E
 
 
-def top_face(points_base: Sequence[Sequence[float]], band_m: float = 0.006) -> list[Sequence[float]]:
-    """The object's top: its points within ``band_m`` of the top height (the 90th
-    percentile of z, so a few flying pixels above it don't decide)."""
+def top_face(
+    points_base: Sequence[Sequence[float]], band_m: float = 0.006, bin_m: float = 0.003
+) -> list[Sequence[float]]:
+    """The object's top: its points within ``band_m`` of the **highest dense** height —
+    the top 3 mm bin holding at least 8 % of the points — so reflections and flying
+    pixels floating above the part (a few, scattered) never set the top."""
     if len(points_base) < 10:
         return []
-    zs = sorted(p[2] for p in points_base)
-    top = zs[min(len(zs) - 1, int(len(zs) * 0.9))]
+    bins: dict[int, int] = {}
+    for p in points_base:
+        k = round(p[2] / bin_m)
+        bins[k] = bins.get(k, 0) + 1
+    need = max(3, int(0.08 * len(points_base)))
+    dense = [k for k, n in bins.items() if n + bins.get(k - 1, 0) + bins.get(k + 1, 0) >= need]
+    top = max(dense) * bin_m if dense else sorted(p[2] for p in points_base)[len(points_base) // 2]
     return [p for p in points_base if abs(p[2] - top) <= band_m]
 
 

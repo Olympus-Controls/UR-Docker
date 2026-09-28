@@ -212,3 +212,18 @@ def test_the_close_look_puts_the_object_on_the_optical_axis(fancy, pick):
     # the fingertips at the look stay well clear of the top (camera 0.24 m off it)
     tip_z = look[2] - TIP
     assert tip_z - (-0.268) > 0.04
+
+
+def test_top_face_ignores_reflections_floating_above_the_part():
+    """Nick, 2026-09-27: 'filter out the obvious outlier reflection pixels floating way
+    above the surface' — a scattered spray up to 10 cm over the block, 15 % of the points."""
+    import random
+
+    random.seed(3)
+    pts = block(0.3, 0.0, -0.1, 0.04, 0.02, 0.0)
+    spray = [
+        [0.3 + random.uniform(-0.03, 0.03), random.uniform(-0.03, 0.03), -0.1 + random.uniform(0.01, 0.10)]
+        for _ in range(len(pts) * 15 // 100)
+    ]
+    top = pickplan.top_face(pts + spray)
+    assert top and all(abs(p[2] + 0.1) < 0.007 for p in top)
