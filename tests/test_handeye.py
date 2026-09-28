@@ -157,7 +157,8 @@ def test_robotlink_locate_then_move_goes_through_the_tool_registry(monkeypatch):
     mv = link.move(loc["approach_pose"])
     assert mv["ok"] and mv["action"] == "move_tcp" and mv["safety"]["ok"]
     movel = [s for s in fake.primary_sends if "movel(" in s][-1]
-    assert "pose_add" not in movel and "v=0.1" in movel and "a=0.3" in movel  # absolute, slow
+    # absolute, slow, and gentle: a=0.1 since 2026-09-27 (Nick: "the stops thud" at 0.3)
+    assert "pose_add" not in movel and "v=0.1" in movel and "a=0.1" in movel
     # ... and the move runs with that fingertip TCP, not the controller's active one
     assert movel.index("set_tcp(p[0.0, 0.0, 0.163, 0.0, 0.0, 0.0])") < movel.index("movel(")
     # audit trail: both actions logged on the same robot
@@ -322,7 +323,7 @@ def test_robotlink_approach_defaults_come_from_the_cell_env(monkeypatch):
         "tip_m": 0.163,
         "tcp": [0.0, 0.0, 0.163, 0.0, 0.0, 0.0],
         "velocity": 0.1,
-        "acceleration": 0.3,
+        "acceleration": 0.1,  # gentle since 2026-09-27 (was 0.3: the stops thudded)
     }
     monkeypatch.setenv("PERCEPTION_APPROACH_REFERENCE", "flange")
     monkeypatch.setenv("PERCEPTION_STANDOFF_M", "0.075")
