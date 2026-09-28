@@ -87,7 +87,14 @@ from urctl.pose import Transform
 from .cell import describe_cell
 from .config import PerceptionConfig
 from .factory import SEGMENT_BACKENDS, make_segmenter
-from .picknode import DEFAULT_PICK_PORT, PickPlanner, PickServer
+from .picknode import (
+    DEFAULT_PICK_PORT,
+    PickPlanner,
+    PickServer,
+    detect_report,
+    parse_preview_request,
+)
+from .picknode import preview as pick_preview
 from .pngio import encode_png
 from .posestream import PoseStream
 from .realsense import (
@@ -877,66 +884,33 @@ class ViewerApp:
     def pick_preview(
         self, pixel: tuple[int, int] | None, *, grip_below_mm: float = 15.0, hover_mm: float = 40.0
     ) -> dict:
-        """The node's teach-time check: what the program would do from where the arm is
-        now — the flange from the robot link (the state broadcast: no script, Local mode
-        works), one FIND, and the hover and grip poses both as flange poses and in the
-        controller's **active** TCP (``polyscope_*``: what PolyScope's hold-to-move screen
-        takes). Moves nothing."""
-        from urctl.pose import pose_trans
-
+        """The node's teach-time check (:func:`perception.picknode.preview`): the
+        flange from the robot link (the state broadcast: no script, Local mode works).
+        Moves nothing."""
         if self.robot is None:
             return {"ok": False, "error": "the cockpit has no robot link (start it with the cell's robot)"}
-        fp = self.robot.flange_pose()
-        if not fp.get("ok") or not fp.get("flange"):
-            return {"ok": False, "error": fp.get("error") or "could not read the flange pose", "robot": fp}
-        planned = self.pick_planner().plan(fp["flange"], pixel)
-        out: dict = {"ok": planned["status"] == 1, **planned, "flange_pose": fp["flange"]}
-        if planned["status"] != 1:
-            out["error"] = planned["reason"]
-            return out
-        top = planned["top_pose"]
-        out["hover_pose"] = pose_trans(top, [0.0, 0.0, -hover_mm / 1000.0, 0.0, 0.0, 0.0])
-        out["grip_pose"] = pose_trans(top, [0.0, 0.0, grip_below_mm / 1000.0, 0.0, 0.0, 0.0])
-        offset = fp.get("tcp_offset")
-        if offset is not None and fp.get("tcp_offset_consistent") is not False:
-            out["polyscope_hover_pose"] = pose_trans(out["hover_pose"], offset)
-            out["polyscope_grip_pose"] = pose_trans(out["grip_pose"], offset)
-        else:
-            out["polyscope_note"] = "the controller's active TCP offset is unknown or inconsistent"
-        return out
+        return pick_preview(
+            self.pick_planner(),
+            self.robot.flange_pose(),
+            pixel,
+            grip_below_mm=grip_below_mm,
+            hover_mm=hover_mm,
+        )
 
     def pick_detect(self) -> dict:
-        """What the program node's teach screen draws: the blocks the pick server
-        would choose among, in image pixels, from the newest frame (camera frame —
-        no robot needed)."""
-        from urctl.pose import Transform
-
-        from .pickcycle import detect_blocks
-
+        """What the program node's teach screen draws (:func:`perception.picknode.detect_report`)."""
         seq, frame = self.latest()
         if frame is None:
             return {"ok": False, "error": "no frame yet", "last_error": self.last_error}
-        _, w, h, ch, rgb, depth, scale, K = self.pick_frame(seq - 1, 0.0) or (None,) * 8
-        if rgb is None:
+        picked = self.pick_frame(seq - 1, 0.0)
+        if picked is None:
             return {"ok": False, "error": "no frame yet"}
-        blocks = detect_blocks(w, h, ch, rgb, depth, scale, K, Transform(), Transform())
-        return {
-            "ok": True,
-            "seq": seq,
-            "width": w,
-            "height": h,
-            "pick_port": self.pick_port,
-            "handeye": self._handeye_pose() is not None,
-            "tip_m": self.robot.tip_m if self.robot is not None else None,
-            "blocks": [
-                {
-                    "pixel": list(b.pixel),
-                    "size_mm": [round(b.major_m * 1000), round(b.minor_m * 1000)],
-                    "distance_m": round(b.centre_base[2], 3),
-                }
-                for b in blocks
-            ],
-        }
+        return detect_report(
+            picked,
+            pick_port=self.pick_port,
+            handeye=self._handeye_pose() is not None,
+            tip_m=self.robot.tip_m if self.robot is not None else None,
+        )
 
     # -- API -------------------------------------------------------------------------
 
@@ -1557,15 +1531,10 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._guarded(lambda: self.app.nearest(float(payload.get("near_ratio", 1.2))))
         elif route == "/api/pick/preview":
             try:
-                u, v = int(payload.get("u", -1)), int(payload.get("v", -1))
-                grip = float(payload.get("grip_below_mm", 15.0))
-                hover = float(payload.get("hover_mm", 40.0))
-                if not (0.0 <= grip <= 60.0 and 0.0 <= hover <= 300.0):
-                    raise ValueError("grip_below_mm must be 0..60 and hover_mm 0..300")
-            except (TypeError, ValueError) as exc:
+                pixel, grip, hover = parse_preview_request(payload)
+            except ValueError as exc:
                 self._send_json({"ok": False, "error": f"bad request: {exc}"}, status=400)
                 return
-            pixel = (u, v) if u >= 0 and v >= 0 else None
             self._guarded(lambda: self.app.pick_preview(pixel, grip_below_mm=grip, hover_mm=hover))
         elif route == "/api/clear":
             self._guarded(self.app.clear)

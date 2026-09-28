@@ -360,8 +360,16 @@ class Cockpit:
     def get(self, path: str) -> dict:
         return json.load(urllib.request.urlopen(self.base + path, timeout=self.timeout_s))
 
-    def frame(self) -> tuple[dict, int, int, int, bytes, bytes]:
-        b = urllib.request.urlopen(self.base + "/api/rgbd", timeout=self.timeout_s).read()
+    def frame(
+        self, after: int | None = None, timeout_ms: int | None = None
+    ) -> tuple[dict, int, int, int, bytes, bytes]:
+        """The newest frame; with ``after``, one newer than that sequence number
+        (the cockpit long-polls up to ``timeout_ms``, then answers with its newest)."""
+        query = [f"after={int(after)}"] if after is not None else []
+        if timeout_ms is not None:
+            query.append(f"timeout_ms={int(timeout_ms)}")
+        url = self.base + "/api/rgbd" + ("?" + "&".join(query) if query else "")
+        b = urllib.request.urlopen(url, timeout=self.timeout_s).read()
         if b[:4] != b"RGBD":
             raise CockpitError("no RGB-D frame from the cockpit")
         hl = struct.unpack(">I", b[4:8])[0]
