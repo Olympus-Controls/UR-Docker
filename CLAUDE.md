@@ -168,7 +168,9 @@ locate/move still need a cockpit with a robot link. **Release tracking:** the UR
 threads / manifest-spec versions); `urcap/track.py check|update|compat` and
 `urcap/e2e.py` (boot that sim, install, load + click the node headless; ~2 min) are
 what `.github/workflows/urcap-track.yml` runs weekly → PR or `urcap-attention` issue.
-10.14.0 verified 2026-09-27 (the 10.14 Services-toggle bug doesn't touch URCaps). **Move (PolyScope)** re-expresses the
+10.14.0 verified 2026-09-27 (the 10.14 Services-toggle bug doesn't touch URCaps), then
+**held at 10.13** the same day to match the local sim image (`"hold": "10.13"` in
+`target.json`: the track re-pins that minor's newest patch, never a newer minor). **Move (PolyScope)** re-expresses the
 cockpit's flange target in *PolyScope's own* active TCP (`getKinematicInfo` DH +
 `convertJointPositionsToTcpPose` at zero joints) before `getInverseKinematics(pose,
 qNear)`, which takes no TCP — handing it the cockpit's `approach_pose` (a pose under the

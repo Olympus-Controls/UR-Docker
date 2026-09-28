@@ -316,11 +316,20 @@ def sdk_zip(src: Sources, tag: str, version: str) -> bytes:
 # -- resolve / diff -------------------------------------------------------------------------------
 
 
-def resolve(src: Sources, start_minor: str) -> tuple[dict | None, dict, list[str]]:
+def held_minor(src: Sources, minor: str) -> tuple[str, str]:
+    """``(minor, html)`` of exactly ``minor``'s release-notes article (a ``hold``)."""
+    status, body = _get(src.notes.format(slug=notes_slug(minor)))
+    if status != 200:
+        raise TrackError(f"the held minor's release notes ({minor}) answered HTTP {status}")
+    return minor, body.decode("utf-8", "replace")
+
+
+def resolve(src: Sources, start_minor: str, hold: str | None = None) -> tuple[dict | None, dict, list[str]]:
     """``(target, notes, pending)``: the newest release as a target.json body
     (``None`` while its SDK or simulator image isn't out), the parsed notes, and
-    what it is still waiting for."""
-    minor, html = newest_minor(src, start_minor)
+    what it is still waiting for. With ``hold``, the newest patch of that minor
+    only — newer minors are not looked at."""
+    minor, html = held_minor(src, hold) if hold else newest_minor(src, start_minor)
     notes = parse_notes(html)
     pending: list[str] = []
     tags = image_tags(src, minor)
@@ -408,8 +417,9 @@ def write_target(target: dict, path: Path = TARGET) -> None:
 
 def doc_line(target: dict) -> str:
     px, sim, sdk = target["polyscope_x"], target["simulator"], target["sdk"]
+    which = f"held at {target['hold']}" if target.get("hold") else "the newest minor"
     return (
-        f"Built and tested for **PolyScope X {px['release']}** (the newest minor, {px['minor']}; "
+        f"Built and tested for **PolyScope X {px['release']}** ({which}, {px['minor']}; "
         f"simulator `{sim['image']}`, URCap SDK {sdk['version']} / contribution-api "
         f"{sdk['contribution_api']}) — pinned in [`target.json`](target.json) and kept current by "
         "`.github/workflows/urcap-track.yml`."
@@ -770,7 +780,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if problems else 0
         pinned = load_target(TARGET) if TARGET.exists() else {}
         start = pinned.get("polyscope_x", {}).get("minor", FIRST_MINOR)
-        latest, notes, pending = resolve(src, start)
+        # "hold": "10.13" in target.json keeps the pin on that minor's newest patch.
+        hold = pinned.get("hold")
+        if hold:
+            print(f"note: held at {hold} (target.json hold); newer minors not tracked", file=sys.stderr)
+        latest, notes, pending = resolve(src, start, hold)
+        if latest is not None and hold:
+            latest = {"hold": hold, **latest}
         if args.cmd == "show":
             print(json.dumps({"target": latest, "pending": pending, "notes": notes}, indent=2))
             return 0

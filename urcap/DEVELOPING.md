@@ -10,7 +10,7 @@ holds to move) or through the cockpit over Primary (urctl's safety envelope).
 It is plain JavaScript: **no Angular, no webpack, no npm** — `urcap/urcapx.py`
 packages and installs it with the stdlib.
 
-<!-- urcap-target -->Built and tested for **PolyScope X 10.14.0** (the newest minor, 10.14; simulator `universalrobots/ursim_polyscopex:10.14.0`, URCap SDK 6.6.66 / contribution-api 22.14.184) — pinned in [`target.json`](target.json) and kept current by `.github/workflows/urcap-track.yml`.<!-- /urcap-target -->
+<!-- urcap-target -->Built and tested for **PolyScope X 10.13.1** (held at 10.13, 10.13; simulator `universalrobots/ursim_polyscopex:10.13.0`, URCap SDK 6.5.65 / contribution-api 21.3.266) — pinned in [`target.json`](target.json) and kept current by `.github/workflows/urcap-track.yml`.<!-- /urcap-target -->
 
 ```
 urcap/

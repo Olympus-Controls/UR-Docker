@@ -410,6 +410,42 @@ def test_resolve_tests_a_patch_without_its_own_sim_on_the_minors_newest(ur):
     assert pending == ["no simulator image for 10.14.1; testing against 10.14.0"]
 
 
+def _held_at_1013(ur) -> None:
+    """A 10.13 world with a newer minor (10.14) published beside it."""
+    ur.standard(minor="10.13", release="10.13.0", sdk="6.5.65")
+    ur.notes("10.14", notes_html(("10.14.0", "August 27th 2026", "0.20.49")))
+
+
+def test_resolve_holds_a_minor_instead_of_walking_forward(ur):
+    _held_at_1013(ur)
+    target, notes, _ = track.resolve(ur.src, "10.13", hold="10.13")
+    assert notes["minor"] == "10.13" and target["polyscope_x"]["release"] == "10.13.0"
+    assert target["simulator"]["image"].endswith(":10.13.0")
+    assert not any("1014x" in h for h in ur.hits)  # never even looked at 10.14
+    assert track.newest_minor(ur.src, "10.13")[0] == "10.14"  # without the hold it moves on
+
+
+def test_cli_update_keeps_the_hold(ur, tmp_path, monkeypatch, capsys):
+    """Held at 10.13 to match the local simulator image (Nick, 2026-09-27): the weekly
+    track must neither move the pin to 10.14 nor drop the hold when it rewrites."""
+    _held_at_1013(ur)
+    target_file, doc = tmp_path / "target.json", tmp_path / "README.md"
+    doc.write_text("<!-- urcap-target --><!-- /urcap-target -->\n", encoding="utf-8")
+    target_file.write_text(
+        json.dumps({**_target(polyscope_x__minor="10.13", polyscope_x__release="10.13.0"), "hold": "10.13"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(track, "TARGET", target_file)
+    monkeypatch.setattr(track, "DOCS", (doc,))
+    monkeypatch.setattr(track, "Sources", lambda: ur.src)
+    assert track.main(["update"]) == 0
+    written = json.loads(target_file.read_text(encoding="utf-8"))
+    assert written["hold"] == "10.13" and written["polyscope_x"]["release"] == "10.13.0"
+    assert "held at 10.13" in doc.read_text(encoding="utf-8")
+    assert "held at 10.13" in capsys.readouterr().err
+    assert track.main(["check"]) == 0
+
+
 def test_resolve_waits_for_the_sdk_and_the_image(ur):
     ur.standard()
     ur.set(f"/gh/repos/{track.SDK_REPO}/releases?per_page=50", [])
