@@ -49,8 +49,12 @@ _CARTESIAN_POSE_BYTES = 48  # X Y Z Rx Ry Rz
 _CARTESIAN_FULL_BYTES = 96  # + TCP offset X Y Z Rx Ry Rz
 _KINEMATICS_BYTES = 24 + 4 * 48  # 6 uint32 checksums, then DH theta, a, d, alpha (6 d each)
 
-# No joint angle (rad), position (m), rotation vector or DH value of a real arm is this big.
+# No joint angle (rad), position (m) or rotation vector of a real arm is this big.
 PLAUSIBLE_ABS = 100.0
+# Calibrated DH is another matter: UR's calibration folds large, cancelling link
+# offsets into d2..d4 — the UR3e on the bench reports d = [0.1516, 100.06, -35.55,
+# -64.38, 0.0851, 0.0917] (2026-09-27; d2+d3+d4 = the nominal 0.131 m).
+PLAUSIBLE_DH_ABS = 1.0e4
 
 # Beyond this the offset the controller reports is not the one its TCP pose used.
 CONSISTENCY_TOLERANCE_M = 0.002
@@ -103,16 +107,17 @@ def parse_robot_state(payload: bytes) -> dict:
     for key in ("joints", "tcp", "tcp_offset"):
         _check(key, out.get(key))
     for key, vals in (out.get("dh") or {}).items():
-        _check(f"DH {key}", vals)
+        _check(f"DH {key}", vals, PLAUSIBLE_DH_ABS)
     return out
 
 
-def _check(what: str, vals: Sequence[float] | None) -> None:
+def _check(what: str, vals: Sequence[float] | None, bound: float = 0.0) -> None:
     """Finite and physically plausible: a corrupted byte can decode to 1e159, which
     is finite but overflows every rotation it touches."""
     if vals is None:
         return
-    if not all(math.isfinite(v) and abs(v) <= PLAUSIBLE_ABS for v in vals):
+    bound = bound or PLAUSIBLE_ABS
+    if not all(math.isfinite(v) and abs(v) <= bound for v in vals):
         raise StateFrameError(f"implausible {what} in the robot state: {list(vals)}")
 
 
