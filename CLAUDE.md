@@ -120,6 +120,27 @@ travel along flange **Y**; a yaw about the tool Z (pointing down) is the negativ
 of the base-heading yaw — `grasp_yaw_deg` handles it and a composed-pose test
 locks it. First runs 2026-09-25 on the UR3e + Hand-E.
 
+**The table is flat and parallel to base XY (Nick, 2026-09-27).** Only its height
+and the parts' heights vary. The UR3e stands on a ~12 in pedestal (parts ~0.27 m below
+the base) and the Hand-E adds 163 mm. `pick-cycle` grasps straight down
+(`grasp_rotation`), leans 12°/24° outward only when the controller's IK can't solve the
+vertical path, and skips a block no lean solves.
+
+**The live pose in every frame (`perception/posestream.py`, 2026-09-27).** The cockpit
+streams RTDE `actual_TCP_pose` + `tcp_offset` at 30 Hz; flange = tcp ∘ offset⁻¹ (identical
+to the `get_flange_pose` script on the UR3e, no Primary program, works in Local). Each
+`/api/rgbd` header carries `flange_pose`, `pose_age_s`, `flange_to_color_pose`; `GET
+/api/robot/pose`; `POST /api/objects` lists every white block with its top-face points.
+The page (`webui/index.html`) is a scan-first ship's-computer UI: the depth as a point
+cloud in the base frame (drag/wheel/WASD/Space/click-to-centre), light columns over
+objects, the feed's target box re-projected through the live pose; `/classic` is the
+old page (calibration lives there). Needs a cockpit restart to pick up server changes;
+the page itself is read from disk per request.
+
+**Hand-eye drift, 2026-09-27 evening:** the 09-25 solve placed blocks 2–5 cm off,
+view-dependently (the tilted survey and a vertical look disagreed by 26–28 mm; both
+grasps missed). Re-run `perception calibrate` before trusting a pick again.
+
 **Approach by the fingertips, always (Nick, 2026-09-27: "the tool offset is
 critical").** The cockpit's default approach reference is `fingertip`: the gripper's
 fingertips (`PERCEPTION_TIP_M` along flange +Z — 0.163 m = Hand-E 157 mm + 6 mm adapter,
