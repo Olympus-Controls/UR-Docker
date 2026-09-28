@@ -623,7 +623,8 @@
         ctx.save(); ctx.shadowColor = vcol(v, 1); ctx.shadowBlur = 16 * d * pulse;
         ctx.strokeStyle = vcol(v, pulse); ctx.lineWidth = 3 * d; ctx.strokeRect(x - 1 * d, y - 1 * d, cardW + 2 * d, cardH + 2 * d); ctx.restore();
       }
-      ctx.strokeStyle = vcol(v, ob.target ? .95 : .6); ctx.lineWidth = d; ctx.strokeRect(x + .5, y + .5, cardW, cardH);
+      const hov = S.hoverId === ob.id;
+      ctx.strokeStyle = vcol(v, ob.target || hov ? .95 : .6); ctx.lineWidth = (hov ? 2 : 1) * d; ctx.strokeRect(x + .5, y + .5, cardW, cardH);
       ctx.beginPath(); ctx.moveTo(top[0], top[1]); ctx.lineTo(x < top[0] ? x + cardW : x, y + cardH / 2); ctx.stroke();
       let yy = y + 4 * d;
       for (const [txt, sz, col] of lines) { yy += lh(sz) * 0.82; label(ctx, txt, x + 8 * d, yy, col, sz * d); yy += lh(sz) * 0.18; }
@@ -647,10 +648,18 @@
   function snap() { autoTarget = false; G.yaw = snapYaw(G.yaw); G.pitch = ISO; touch(); say(`view snapped · isometric ${(((G.yaw * 180 / Math.PI) % 360) + 360) % 360 | 0}°`, 'dim'); }
   let sdrag = null;
   scanCv.addEventListener('contextmenu', (e) => e.preventDefault());
-  scanCv.addEventListener('mousedown', (ev) => { scanCv.focus(); sdrag = { x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, pan: ev.button === 2 || ev.shiftKey, moved: false }; scanCv.classList.add('dragging'); ev.preventDefault(); });
+  scanCv.addEventListener('mousedown', (ev) => { scanCv.focus(); sdrag = { x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t0: performance.now(), pan: ev.button === 2 || ev.shiftKey, moved: false }; scanCv.classList.add('dragging'); ev.preventDefault(); });
+  scanCv.addEventListener('mousemove', (ev) => {   // hover: a pointer and a brighter card over anything selectable
+    if (sdrag) return; const r = scanCv.getBoundingClientRect(), d = DPR();
+    const ob = hitAt((ev.clientX - r.left) * d, (ev.clientY - r.top) * d); S.hoverId = ob ? ob.id : null;
+    scanCv.style.cursor = ob ? 'pointer' : '';
+  });
+  scanCv.addEventListener('mouseleave', () => { S.hoverId = null; scanCv.style.cursor = ''; });
   window.addEventListener('mousemove', (ev) => {
     if (!sdrag) return; const dx = ev.clientX - sdrag.x, dy = ev.clientY - sdrag.y; sdrag.x = ev.clientX; sdrag.y = ev.clientY;
-    if (Math.abs(ev.clientX - sdrag.x0) + Math.abs(ev.clientY - sdrag.y0) > 4) sdrag.moved = true;
+    // a quick press that drifts a little (a trackpad) is still a click: 10 px, or 6 px after 250 ms
+    const drift = Math.abs(ev.clientX - sdrag.x0) + Math.abs(ev.clientY - sdrag.y0);
+    if (drift > (performance.now() - sdrag.t0 < 250 ? 10 : 6)) sdrag.moved = true;
     if (!sdrag.moved) return;
     autoTarget = false;
     if (sdrag.pan) { const k = G.dist * 0.0016, r = [-Math.sin(V.yaw), Math.cos(V.yaw)], f = [-Math.cos(V.yaw), -Math.sin(V.yaw)]; G.t[0] -= (r[0] * dx - f[0] * dy) * k; G.t[1] -= (r[1] * dx - f[1] * dy) * k; V.t = G.t.slice(); }
@@ -669,19 +678,24 @@
     if (ev.key.length === 1 && !ev.metaKey && !ev.ctrlKey) $('cmd').focus();
   });
   scanCv.addEventListener('keyup', (ev) => keys.delete(ev.key.toLowerCase()));
+  // the object under a scan pixel: its card first, then the part (its outline, grown for an easy click)
+  function hitAt(mx, my) {
+    const vp = drawScan.vp, W = scanCv.width, H = scanCv.height, d = DPR(); if (!vp) return null;
+    const card = (S.cards || []).find((c) => mx >= c.x - 4 * d && mx <= c.x + c.w + 4 * d && my >= c.y - 4 * d && my <= c.y + c.h + 4 * d);
+    if (card) return S.objects.find((o) => o.id === card.id) || null;
+    return S.objects.find((ob) => {
+      const poly = rectCorners(ob).map((p) => toScreen(vp, p, W, H)); if (poly.some((p) => !p)) return false;
+      const cx = poly.reduce((a, p) => a + p[0], 0) / 4, cy = poly.reduce((a, p) => a + p[1], 0) / 4;
+      const grown = poly.map(([x, y]) => [cx + (x - cx) * 1.8 + Math.sign(x - cx) * 14 * d, cy + (y - cy) * 1.8 + Math.sign(y - cy) * 14 * d]);
+      let inside = false; for (let i = 0, j = 3; i < 4; j = i++) { const [xi, yi] = grown[i], [xj, yj] = grown[j]; if ((yi > my) !== (yj > my) && mx < (xj - xi) * (my - yi) / (yj - yi) + xi) inside = !inside; }
+      return inside;
+    }) || null;
+  }
   function pickPoint(ev) {
     const h = S.header; if (!h || !S.depth || !drawScan.vp) return;
     const r = scanCv.getBoundingClientRect(), d = DPR(), mx = (ev.clientX - r.left) * d, my = (ev.clientY - r.top) * d, W = scanCv.width, H = scanCv.height, K = h.intrinsics, T = camToWorld(), vp = drawScan.vp;
     // a card, or the part itself, selects that object as the pick target
-    const card = (S.cards || []).find((c) => mx >= c.x && mx <= c.x + c.w && my >= c.y && my <= c.y + c.h);
-    if (card) { selectObject(S.objects.find((o) => o.id === card.id)); return; }
-    const hit = S.objects.find((ob) => {
-      const poly = rectCorners(ob).map((p) => toScreen(vp, p, W, H)); if (poly.some((p) => !p)) return false;
-      const cx = poly.reduce((a, p) => a + p[0], 0) / 4, cy = poly.reduce((a, p) => a + p[1], 0) / 4;
-      const grown = poly.map(([x, y]) => [cx + (x - cx) * 1.6 + Math.sign(x - cx) * 8 * d, cy + (y - cy) * 1.6 + Math.sign(y - cy) * 8 * d]);
-      let inside = false; for (let i = 0, j = 3; i < 4; j = i++) { const [xi, yi] = grown[i], [xj, yj] = grown[j]; if ((yi > my) !== (yj > my) && mx < (xj - xi) * (my - yi) / (yj - yi) + xi) inside = !inside; }
-      return inside;
-    });
+    const hit = hitAt(mx, my);
     if (hit) { selectObject(hit); return; }
     let best = null, bestD = (16 * d) ** 2;
     for (let v = 0; v < h.depth_height; v += 3) for (let u = 0; u < h.depth_width; u += 3) {
