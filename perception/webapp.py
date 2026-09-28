@@ -643,6 +643,7 @@ class ViewerApp:
                 skip=skip,
                 flange_to_color=hfc if with_look else None,
                 look_m=pickplan.LOOK_M if with_look else None,
+                home=self._home_pose(),
             )
 
         p = build(rect0, f_now, with_look=look)
@@ -720,7 +721,7 @@ class ViewerApp:
                 f"close look: {rect1['major_m'] * 1000:.0f} x {rect1['minor_m'] * 1000:.0f} mm at "
                 f"{[round(v, 3) for v in rect1['centre']]}"
             )
-            p2 = pickplan.plan(rect, f_look, tip_m=tip, pick=pick, fancy=False)
+            p2 = pickplan.plan(rect, f_look, tip_m=tip, pick=pick, fancy=False, home=self._home_pose())
             if pick and not p2["fits"]:
                 return {
                     "ok": False,
@@ -749,9 +750,8 @@ class ViewerApp:
             gr = leg.get("gripper") if isinstance(leg, dict) else None
             if isinstance(gr, dict) and gr.get("action") == "close":
                 held = bool(gr.get("object_detected"))
-        homed = None
-        if pick and run.get("ok") and os.environ.get("PERCEPTION_HOME_POSE"):
-            homed = bool(self.home().get("ok"))  # the part is set back; ready for the next one
+        # with a HOME pose the pick's program ends there itself (clear blends into it)
+        homed = bool(run.get("ok")) if pick and self._home_pose() is not None else None
         self.events.add(
             "robot",
             f"{'pick' if pick else 'approach'}{' (fancy)' if fancy else ''} → "
@@ -768,6 +768,14 @@ class ViewerApp:
             "protective_stop": run.get("protective_stop"),
             **summary,
         }
+
+    def _home_pose(self) -> list[float] | None:
+        raw = os.environ.get("PERCEPTION_HOME_POSE", "").strip()
+        try:
+            pose = [float(v) for v in raw.strip("[]").split(",")] if raw else []
+        except ValueError:
+            return None
+        return pose if len(pose) == 6 else None
 
     def home(self) -> dict:
         """One clean movel back to the cell's picture pose (``PERCEPTION_HOME_POSE``,

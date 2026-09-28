@@ -37,10 +37,13 @@ LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2
 STROKE_M = 0.05  # Hand-E
 # Motion (Nick, 2026-09-27: "all moves should be extremely fluid and smooth, not abrupt"):
 # gentle accelerations everywhere; the speed only where the arm is clear of the parts.
-# Again, 2026-09-27 23:25: "the jerk or accel settings are really high, the stops thud".
-TRANSIT = {"velocity": 0.12, "acceleration": 0.12}
-SETTLE = {"velocity": 0.06, "acceleration": 0.08}
-DESCEND = {"velocity": 0.02, "acceleration": 0.05}
+# Again, 2026-09-27 23:25: "the jerk or accel settings are really high, the stops thud" — and
+# 23:50: "I don't mind a high velocity, I just don't want a high acceleration and ideally no stops
+# or slowdowns during moves." So: fast, gently accelerated, blended; stop only where physics needs it
+# (the close look's still frame, the grasp and the release).
+TRANSIT = {"velocity": 0.30, "acceleration": 0.12}
+SETTLE = {"velocity": 0.15, "acceleration": 0.10}
+DESCEND = {"velocity": 0.05, "acceleration": 0.08}
 
 
 def top_face(
@@ -161,6 +164,7 @@ def plan(
     velocity: float = TRANSIT["velocity"],
     acceleration: float = TRANSIT["acceleration"],
     skip: Sequence[str] = (),
+    home: Sequence[float] | None = None,
 ) -> dict:
     """The programs for ``rect`` from ``start_flange`` (flange poses, TCP at the flange):
 
@@ -195,14 +199,17 @@ def plan(
         stops.append(("flourish", _raised(goal, 0.06, 35.0), fast))
     stops = [st for st in stops if st[0] not in skip]
     tail = [
-        ("approach", approach, {**SETTLE, "dwell_s": 0.3 if pick else 0.0}),
+        # picking: one continuous descent over → approach → grasp (the approach only a waypoint)
+        ("approach", approach, dict(DESCEND) if pick else dict(SETTLE)),
     ]
     if pick:
         tail.append(("grasp", at(-grasp_below_m), {**DESCEND, "gripper": "close"}))
-        tail.append(("lift", at(hover_m + lift_m), {**SETTLE, "dwell_s": 0.8}))  # show it off
+        tail.append(("lift", at(hover_m + lift_m), {**SETTLE, "dwell_s": 0.3}))  # show it off
         # the drop sequence: set it back exactly where it was, let go, clear — never leave it in the fingers
         tail.append(("place", at(-grasp_below_m + 0.001), {**DESCEND, "gripper": "open"}))
         tail.append(("clear", at(hover_m + lift_m), dict(SETTLE)))
+        if home is not None:  # and on home without stopping: clear blends into the sweep back
+            tail.append(("home", list(home), dict(TRANSIT)))
     cap = 0.06 if fancy else 0.04
     if look is not None:
         sweep = _legs(

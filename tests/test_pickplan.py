@@ -77,7 +77,7 @@ def test_the_approach_nick_asked_for(theta, fancy, pick):
     assert ("swing" in names and "flourish" in names) == fancy
     if pick:
         # the drop sequence: grasp, lift and show it, set it back where it was, let go, clear
-        assert names[-4:] == ["grasp", "lift", "place", "clear"]
+        assert names[-4:] == ["grasp", "lift", "place", "clear"]  # (no home pose given here)
         grasp, lift, place, clear = p["legs"][-4:]
         assert grasp["gripper"] == "close" and place["gripper"] == "open" and lift.get("dwell_s", 0) > 0
         gz = grasp["pose"][2] - TIP  # the fingertips at the grasp
@@ -287,3 +287,20 @@ def test_a_leg_that_grips_or_dwells_is_never_blended(look):
     for leg in p["sweep"] + p["final"]:
         if leg.get("gripper") or leg.get("dwell_s"):
             assert not leg.get("blend_m"), leg["name"]
+
+
+def test_a_pick_flows_home_without_stopping_and_moves_fast_but_gently():
+    """Nick, 2026-09-27: 'I don't mind a high velocity, I just don't want a high acceleration
+    and ideally no stops or slowdowns during moves.'"""
+    rect = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.047, 0.028, 0.0)))
+    p = pickplan.plan(rect, HOME, tip_m=TIP, pick=True, flange_to_color=UR3_HANDEYE, look_m=0.24, home=HOME)
+    legs = p["sweep"] + p["final"]
+    names = [leg["name"] for leg in legs]
+    assert names[-5:] == ["grasp", "lift", "place", "clear", "home"]
+    by = {leg["name"]: leg for leg in legs}
+    assert by["clear"].get("blend_m", 0) > 0 and "blend_m" not in by["home"]  # clear flows into home
+    assert by["approach"].get("blend_m", 0) > 0 and not by["approach"].get("dwell_s")  # one descent
+    stops = [n for n in names if not legs[names.index(n)].get("blend_m")]
+    assert set(stops) <= {"look", "grasp", "lift", "place", "home"}  # only where physics needs one
+    assert all(leg["acceleration"] <= 0.12 for leg in legs)
+    assert max(leg["velocity"] for leg in legs) >= 0.3
