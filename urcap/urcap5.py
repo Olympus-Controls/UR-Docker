@@ -19,6 +19,11 @@ maven-bundle-plugin; this does the same steps with ``javac`` / ``jdeps`` and
   zips it reproducibly: sorted entries, fixed timestamps, the manifest first. The jar
   also carries ``META-INF/urcap5-sources.sha256`` — a digest of the sources — so a
   test can tell a stale committed ``dist/`` without a JDK.
+* ``release-check TAG [--src SRC] [--dist DIR]`` — before a ``urcap5-v<version>`` tag
+  is published as a GitHub Release (``.github/workflows/release-urcap5.yml``): the tag's
+  version is ``Bundle-Version``, the committed ``dist/`` jar of that version exists, was
+  built from the current sources, and passes PolyScope 5's install checks. Prints the
+  jar's path and sha256 as JSON; exits 1 with the reason otherwise.
 * ``install FILE --container NAME`` — the e-Series URSim image copies ``/urcaps/*.jar``
   into its bundle directory at start (``/entrypoint.sh``), so this copies the jar
   there and restarts the container. On a real robot, install from a USB stick:
@@ -34,6 +39,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -299,9 +306,7 @@ def package(src: str | Path, out_dir: str | Path, *, sdk_dir: Path = SDK_DIR) ->
     if licence.is_file():
         entries.append(("META-INF/LICENSE", licence.read_bytes()))
     out_dir.mkdir(parents=True, exist_ok=True)
-    artifact = props["Bundle-SymbolicName"].rpartition(".")[2]
-    name = "realsense-pilot-ps5" if artifact == "realsensepilot" else artifact
-    out = out_dir / f"{name}-{props['Bundle-Version']}.urcap"
+    out = out_dir / dist_name(props)
     tmp_out = out.with_suffix(".urcap.tmp")
     with zipfile.ZipFile(tmp_out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(zipfile.ZipInfo("META-INF/", FIXED_TIME), b"")
@@ -310,6 +315,13 @@ def package(src: str | Path, out_dir: str | Path, *, sdk_dir: Path = SDK_DIR) ->
             _write(z, path, data)
     tmp_out.replace(out)
     return out
+
+
+def dist_name(props: dict[str, str]) -> str:
+    """The jar's file name for these bundle properties: ``realsense-pilot-ps5-0.4.0.urcap``."""
+    artifact = props["Bundle-SymbolicName"].rpartition(".")[2]
+    name = "realsense-pilot-ps5" if artifact == "realsensepilot" else artifact
+    return f"{name}-{props['Bundle-Version']}.urcap"
 
 
 def _write(z: zipfile.ZipFile, path: str, data: bytes) -> None:
@@ -336,6 +348,40 @@ def read_bundle(path: str | Path) -> dict:
         poms = [n for n in names if n.startswith("META-INF/maven/") and n.endswith("/pom.xml")]
         pom = z.read(poms[0]).decode() if poms else ""
     return {"headers": headers, "names": names, "sources_sha256": digest, "pom": pom}
+
+
+# -- release --------------------------------------------------------------------------------
+
+TAG_PREFIX = "urcap5-v"
+_SEMVER = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
+
+
+def release_check(tag: str, src: str | Path, dist_dir: str | Path) -> dict:
+    """What a ``urcap5-v<version>`` tag may publish: ``{version, path, sha256}``, or
+    Urcap5Error naming what is wrong. Everything is checked against the committed jar —
+    CI cannot rebuild it (the URCap API jars are UR's and live only in the URSim image)
+    and needs not: the build is reproducible and the jar carries its sources' digest."""
+    src, dist_dir = Path(src), Path(dist_dir)
+    if not tag.startswith(TAG_PREFIX) or not _SEMVER.fullmatch(tag[len(TAG_PREFIX) :]):
+        raise Urcap5Error(f"tag {tag!r} is not {TAG_PREFIX}<major>.<minor>.<patch>")
+    version = tag[len(TAG_PREFIX) :]
+    props = read_properties((src / "bundle.properties").read_text(encoding="utf-8"))
+    if props["Bundle-Version"] != version:
+        raise Urcap5Error(
+            f"tag {tag} but {src / 'bundle.properties'} says Bundle-Version={props['Bundle-Version']}"
+        )
+    path = dist_dir / dist_name(props)
+    if not path.is_file():
+        raise Urcap5Error(f"{path} is not committed — run `make urcap5-package` and commit it")
+    bundle = read_bundle(path)
+    h = bundle["headers"]
+    if h.get("Bundle-Version") != version:
+        raise Urcap5Error(f"{path} is Bundle-Version {h.get('Bundle-Version')}, not {version}")
+    if bundle["sources_sha256"] != sources_digest(src):
+        raise Urcap5Error(f"{path} was not built from the current sources — run `make urcap5-package`")
+    if h.get("Bundle-Category", "").lower() != "urcap" or "META-INF/MANIFEST.MF" not in bundle["names"][:2]:
+        raise Urcap5Error(f"{path} would be refused by PolyScope 5's installer (category / manifest order)")
+    return {"version": version, "path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 # -- install --------------------------------------------------------------------------------
@@ -365,6 +411,10 @@ def main(argv: list[str] | None = None) -> int:
     pk = sub.add_parser("package", help="build SRC into a .urcap")
     pk.add_argument("src")
     pk.add_argument("--out", default="urcap/dist")
+    rc = sub.add_parser("release-check", help="check a urcap5-v<version> tag against the committed jar")
+    rc.add_argument("tag")
+    rc.add_argument("--src", default="urcap/realsense-pilot-ps5")
+    rc.add_argument("--dist", default="urcap/dist")
     ins = sub.add_parser("install", help="install a .urcap into a running e-Series URSim container")
     ins.add_argument("file")
     ins.add_argument("--container", required=True)
@@ -375,6 +425,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(jar)
         elif args.cmd == "package":
             print(package(args.src, args.out))
+        elif args.cmd == "release-check":
+            print(json.dumps(release_check(args.tag, args.src, args.dist)))
         else:
             print(install(args.file, args.container))
     except Urcap5Error as exc:
