@@ -284,3 +284,28 @@ def test_the_cockpit_detect_route_lists_the_blocks_in_pixels():
     assert out["ok"] and out["handeye"] and len(out["blocks"]) == 1
     (b,) = out["blocks"]
     assert abs(b["pixel"][0] - 55) <= 3 and abs(b["pixel"][1] - 42) <= 3
+
+
+def test_the_teach_time_preview_gives_hover_and_grip_in_the_active_tcp():
+    from perception.config import PerceptionConfig
+    from perception.robotlink import RobotLink
+    from perception.webapp import ViewerApp
+    from urctl.config import RobotConfig
+
+    link = RobotLink(RobotConfig(host="fake-ur.invalid"), dry_run=True)
+    app = ViewerApp(SceneCamera(), config=PerceptionConfig(), robot=link)
+    app.start()
+    try:
+        deadline = time.monotonic() + 5
+        while app.latest()[1] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        out = app.pick_preview(None, grip_below_mm=15.0, hover_mm=40.0)
+    finally:
+        app.stop()
+    assert out["ok"], out
+    tips = lambda pose: pose_trans(pose, [0.0, 0.0, link.tip_m, 0.0, 0.0, 0.0])[:3]  # noqa: E731
+    # fingertips 40 mm above the top centre, and 15 mm below it, along the tool axis
+    assert math.dist(tips(out["hover_pose"]), out["centre"]) == pytest.approx(0.040, abs=1e-6)
+    assert math.dist(tips(out["grip_pose"]), out["centre"]) == pytest.approx(0.015, abs=1e-6)
+    # the dry-run link's active TCP is the flange: the PolyScope poses equal the flange poses
+    assert out["polyscope_hover_pose"] == pytest.approx(out["hover_pose"], abs=1e-9)
