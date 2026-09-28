@@ -785,7 +785,7 @@ class ViewerApp:
         """Every white block in the newest frame (pick-cycle's detector): per object
         the top-face centre and its white pixels back-projected at the top face's
         depth, camera frame (m), with the frame's pose so the page can place them."""
-        from .pickcycle import WHITE_CHROMA, WHITE_MIN, top_face, white_blobs
+        from .pickcycle import WHITE_CHROMA, top_face, white_blobs, white_level
 
         seq, frame = self.latest()
         if frame is None:
@@ -794,12 +794,13 @@ class ViewerApp:
         K = {"fx": k.fx, "fy": k.fy, "ppx": k.ppx, "ppy": k.ppy}
         w, h, ch, rgb = c.width, c.height, c.channels, c.data
         found = []
-        for b in white_blobs(w, h, ch, rgb):
+        level = white_level(w, h, ch, rgb)  # "white" relative to this picture's brightest neutrals
+        for b in white_blobs(w, h, ch, rgb, white_min=level):
             x0, y0, x1, y1 = b["bbox"]
             if x0 <= 6 or y0 <= 6 or x1 >= w - 6 or y1 >= h - 6:
                 continue  # clipped at the frame edge
-            tf = top_face(w, h, ch, rgb, d.data, d.scale_m, K, b["bbox"])
-            if tf is None:
+            tf = top_face(w, h, ch, rgb, d.data, d.scale_m, K, b["bbox"], white_min=level)
+            if tf is None or tf["n"] < 20:
                 continue
             z = tf["centre"][2]
             pts = []
@@ -807,7 +808,7 @@ class ViewerApp:
                 for x in range(x0, min(x1, w), 2):
                     i = (y * w + x) * ch
                     r, g, bb = rgb[i], rgb[i + 1], rgb[i + 2]
-                    if min(r, g, bb) > WHITE_MIN and max(r, g, bb) - min(r, g, bb) < WHITE_CHROMA:
+                    if min(r, g, bb) > level and max(r, g, bb) - min(r, g, bb) < WHITE_CHROMA:
                         pts.append(
                             [round((x - k.ppx) * z / k.fx, 4), round((y - k.ppy) * z / k.fy, 4), round(z, 4)]
                         )

@@ -230,3 +230,26 @@ def test_top_face_ignores_reflections_floating_above_the_part():
     ]
     top = pickplan.top_face(pts + spray)
     assert top and all(abs(p[2] + 0.1) < 0.007 for p in top)
+
+
+def test_white_level_keeps_a_shadowed_block_and_drops_the_carpet():
+    """The close look on the UR3e (2026-09-27): the block read (169, 180, 178) under the
+    camera's and gripper's shadow — grey to the fixed 180 — while the slats read 238 and the
+    carpet at most 64. The level is relative to the picture's brightest neutrals."""
+    from perception.pickcycle import WHITE_MIN, white_blobs, white_level
+
+    w, h = 160, 120
+    px = bytearray()
+    for y in range(h):
+        for x in range(w):
+            if x < 30:
+                px += bytes((238, 240, 239))  # the aluminium slats
+            elif 70 <= x < 110 and 40 <= y < 80:
+                px += bytes((166, 176, 172))  # the shadowed block
+            else:
+                px += bytes((95, 80, 60))  # carpet
+    lv = white_level(w, h, 3, bytes(px))
+    assert 110 <= lv < 160 and lv < WHITE_MIN
+    blobs = white_blobs(w, h, 3, bytes(px), white_min=lv, min_px=100)
+    assert any(75 <= b["cx"] <= 105 and 45 <= b["cy"] <= 75 for b in blobs)  # the block is found
+    assert not white_blobs(w, h, 3, bytes(px), min_px=100)[1:]  # the fixed 180 only sees the slats

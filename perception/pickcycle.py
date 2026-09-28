@@ -57,8 +57,34 @@ WHITE_MIN, WHITE_CHROMA = 180, 60  # foam reads bluish-white under a cool white 
 # -- image heuristics ----------------------------------------------------------------------
 
 
+def white_level(width: int, height: int, channels: int, rgb: bytes, *, step: int = 8) -> int:
+    """The "white" threshold for this picture: 60 % of the brightest neutral pixels (the
+    99th percentile of min(r, g, b) over low-chroma pixels), never above :data:`WHITE_MIN`
+    and never below 110. Up close, under the camera's and the gripper's own shadow, a
+    foam block reads (169, 180, 178) — grey to a fixed 180 (UR3e, 2026-09-27: block
+    pixels 156-177 against a p99 of 238, the carpet at 64 at most)."""
+    vals = []
+    for y in range(0, height, step):
+        for x in range(0, width, step):
+            i = (y * width + x) * channels
+            r, g, b = rgb[i], rgb[i + 1], rgb[i + 2]
+            if max(r, g, b) - min(r, g, b) < WHITE_CHROMA:
+                vals.append(min(r, g, b))
+    if not vals:
+        return WHITE_MIN
+    vals.sort()
+    return max(110, min(WHITE_MIN, int(0.6 * vals[min(len(vals) - 1, int(len(vals) * 0.99))])))
+
+
 def white_blobs(
-    width: int, height: int, channels: int, rgb: bytes, *, step: int = 4, min_px: int = 400
+    width: int,
+    height: int,
+    channels: int,
+    rgb: bytes,
+    *,
+    step: int = 4,
+    min_px: int = 400,
+    white_min: int = WHITE_MIN,
 ) -> list[dict]:
     """Connected components of bright, low-chroma pixels on a ``step`` grid:
     ``[{px, cx, cy, bbox}]`` largest first."""
@@ -67,7 +93,7 @@ def white_blobs(
         for x in range(0, width, step):
             i = (y * width + x) * channels
             r, g, b = rgb[i], rgb[i + 1], rgb[i + 2]
-            if min(r, g, b) > WHITE_MIN and max(r, g, b) - min(r, g, b) < WHITE_CHROMA:
+            if min(r, g, b) > white_min and max(r, g, b) - min(r, g, b) < WHITE_CHROMA:
                 cells.add((x // step, y // step))
     seen: set[tuple[int, int]] = set()
     out = []
@@ -100,7 +126,17 @@ def white_blobs(
 
 
 def top_face(
-    width: int, height: int, channels: int, rgb: bytes, depth: bytes, scale: float, K: dict, bbox
+    width: int,
+    height: int,
+    channels: int,
+    rgb: bytes,
+    depth: bytes,
+    scale: float,
+    K: dict,
+    bbox,
+    *,
+    white_min: int = WHITE_MIN,
+    max_range_m: float = 2.0,
 ) -> dict | None:
     """The block's top face inside ``bbox``: 3-D points of its white pixels, seeded
     by the nearest 12 mm, refined twice to the plane through them (±5 mm).
@@ -111,9 +147,9 @@ def top_face(
         for x in range(x0, min(x1, width)):
             i = (y * width + x) * channels
             r, g, b = rgb[i], rgb[i + 1], rgb[i + 2]
-            if min(r, g, b) > WHITE_MIN and max(r, g, b) - min(r, g, b) < WHITE_CHROMA:
+            if min(r, g, b) > white_min and max(r, g, b) - min(r, g, b) < WHITE_CHROMA:
                 d = depth[2 * (y * width + x)] | (depth[2 * (y * width + x) + 1] << 8)
-                if d:
+                if d and d * scale <= max_range_m:  # a reflection reads metres away: not the part
                     z = d * scale
                     pts.append(((x - K["ppx"]) * z / K["fx"], (y - K["ppy"]) * z / K["fy"], z))
     if len(pts) < 25:
