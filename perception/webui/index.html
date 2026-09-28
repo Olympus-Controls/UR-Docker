@@ -196,7 +196,7 @@
     while (tty.q.length) {
       const { text, kind } = tty.q.shift();
       const li = document.createElement('div'); li.className = 'ln ' + kind;
-      const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = clock();
+      const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = clock() + ' ';
       const tx = document.createElement('span'); li.append(ts, tx); el.appendChild(li);
       if (reduced || tty.q.length > 3) tx.textContent = text;
       else for (let i = 1; i <= text.length; i += 2) { tx.textContent = text.slice(0, i + 1); await sleep(11); }
