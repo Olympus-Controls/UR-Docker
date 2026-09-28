@@ -925,7 +925,7 @@
       const j = await post('/api/robot/pick', o);
       for (const n of j.notes || []) say(n, /nothing|kept|out of reach/.test(n) ? 'warn' : 'dim');
       if (j.ok) say(j.dry_run ? 'dry run — validated, nothing sent' : `${o.pick ? (j.held ? 'holding it' : 'closed on nothing') : 'hovering 25 mm over it'} · fingers ${j.opening_mm} mm`, o.pick && !j.held && !j.dry_run ? 'warn' : '');
-      else say(`${o.pick ? 'pick' : 'approach'} refused: ${why(j)}`, 'crit');
+      else say(`${o.pick ? 'pick' : 'approach'} refused: ${why(j)}${/FLT=7|not activated/i.test(why(j)) ? ' · type ACTIVATE' : ''}`, 'crit');
       S.plan = null;
     } finally { S.moving = false; armKeys(); events(); state(); }
   }
@@ -955,7 +955,7 @@
     'SCAN           find every block · FIND the nearest · or click / drag the feed',
     'APPROACH       sweep in, a close look, 25 mm over the target (PICK / FANCY boxes)',
     'PICK · FANCY   toggle the boxes · CLEAR drop the targets',
-    'OPEN · CLOSE   the gripper · FREE [ON|OFF] freedrive · JOG X+ 10 (mm, ≤ 50)',
+    'OPEN · CLOSE   the gripper · ACTIVATE it (after LOCAL mode) · FREE [ON|OFF] · JOG X+ 10',
     'DESC 01 TEXT   describe object 01 · NOTE 01 TEXT  a comment / context',
     'ISO · FRAME    snap isometric · frame every object again',
     'FLIP           the feed: AUTO (robot view) · ON · OFF',
@@ -974,6 +974,7 @@
     SCAN: () => scanObjects(true), FIND: () => segment({ nearest: true }, 'find'), NEAREST: () => segment({ nearest: true }, 'find'),
     CLEAR: clearTarget, APPROACH: approach, GO: approach, PICK: () => tick('optPick'), FANCY: () => tick('optFancy'),
     OPEN: () => act('/api/robot/gripper', { action: 'open' }, 'gripper open'),
+    ACTIVATE: () => act('/api/robot/gripper', { action: 'activate' }, 'gripper activate'),
     CLOSE: async () => { const j = await act('/api/robot/gripper', { action: 'close' }, 'gripper close'); if (j.ok) say(j.object_detected ? 'gripper: holding' : 'gripper: closed on nothing', j.object_detected ? '' : 'warn'); },
     FREE: async (arg) => { const on = arg ? arg === 'ON' : !S.freedrive; const j = await act('/api/robot/freedrive', { enable: on }, `freedrive ${on ? 'on' : 'off'}`); if (j.ok !== false) S.freedrive = on; },
     JOG: (axis, mm) => { const m = /^([XYZ])([+-])$/.exec(axis || ''), step = Math.min(50, Math.abs(parseFloat(mm) || 10)); if (!m) { say('jog: axis like X+ Y- Z+', 'warn'); return; }
