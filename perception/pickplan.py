@@ -204,7 +204,7 @@ def plan(
         "opening_m": opening,
         "gripper_position": robotiq_position(opening, stroke_m),
         "fits": rect["minor_m"] * opening_factor <= stroke_m,
-        "vias": [name for name, _, _ in stops] + ["over"],
+        "vias": [leg["name"] for leg in sweep + final if leg["name"] not in ("approach", "grasp", "lift")],
     }
 
 
