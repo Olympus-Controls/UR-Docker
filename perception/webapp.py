@@ -85,6 +85,7 @@ from .cell import describe_cell
 from .config import PerceptionConfig
 from .factory import SEGMENT_BACKENDS, make_segmenter
 from .pngio import encode_png
+from .posestream import PoseStream
 from .realsense import (
     DEFAULT_DEPTH_FILTERS,
     LASER_MAX,
@@ -287,9 +288,13 @@ class ViewerApp:
         robot: RobotLink | None = None,
         views: list[ViewSource] | None = None,
         cors: Sequence[str] | None = None,
+        pose_stream: PoseStream | None = None,
     ):
         self.camera = camera
         self.robot = robot
+        # The live flange pose (RTDE), so each frame carries the pose it was taken at.
+        self.pose_stream = pose_stream
+        self._latest_t = 0.0  # host time the newest frame arrived
         # Origins allowed to call the API from another page (a PolyScope X URCap on
         # the pendant, `urcap/realsense-pilot`). Empty = same-origin only (the default).
         self.cors_origins = [o.strip() for o in (cors or []) if o and o.strip()]
@@ -341,6 +346,8 @@ class ViewerApp:
             pass
         for view in self.views:
             view.stop()
+        if self.pose_stream is not None:
+            self.pose_stream.stop()
 
     def view_frame(self, index: int, after: int | None, timeout_s: float) -> tuple[int, bytes | None, str]:
         """``(seq, image bytes | None, content type)`` of view ``index`` (long-poll
@@ -387,6 +394,7 @@ class ViewerApp:
             now = time.monotonic()
             with self._cond:
                 self._latest = frame
+                self._latest_t = time.time()
                 self._seq += 1
                 self.frames_read += 1
                 self._fps_window.append(now)
@@ -429,8 +437,65 @@ class ViewerApp:
         seq, frame = self.wait_frame(after, timeout_s) if after is not None else self.latest()
         if frame is None:
             return None
-        meta = {"fps": round(self.fps(), 2), "mask_seq": self.mask_seq}
+        meta = {"fps": round(self.fps(), 2), "mask_seq": self.mask_seq, **self.frame_pose()}
         return pack_rgbd(frame, seq=seq, meta=meta)
+
+    def frame_pose(self) -> dict:
+        """``flange_pose`` (base frame, at the newest frame's arrival), ``pose_age_s``
+        and the hand-eye ``flange_to_color_pose`` — what a page needs for
+        ``T_base_colour`` — or ``{}`` without a live pose."""
+        if self.pose_stream is None:
+            return {}
+        with self._cond:
+            t = self._latest_t
+        flange, age = self.pose_stream.at(t)
+        if flange is None:
+            return {}
+        out: dict = {"flange_pose": [round(v, 6) for v in flange], "pose_age_s": round(age or 0.0, 3)}
+        if self.robot is not None:
+            out["flange_to_color_pose"] = self.robot.handeye.as_dict().get("flange_to_color_pose")
+        return out
+
+    def objects(self) -> dict:
+        """Every white block in the newest frame (pick-cycle's detector): per object
+        the top-face centre and its white pixels back-projected at the top face's
+        depth, camera frame (m), with the frame's pose so the page can place them."""
+        from .pickcycle import WHITE_CHROMA, WHITE_MIN, top_face, white_blobs
+
+        seq, frame = self.latest()
+        if frame is None:
+            raise RuntimeError("no frame yet" + (f" ({self.last_error})" if self.last_error else ""))
+        c, d, k = frame.color, frame.depth, frame.intrinsics
+        K = {"fx": k.fx, "fy": k.fy, "ppx": k.ppx, "ppy": k.ppy}
+        w, h, ch, rgb = c.width, c.height, c.channels, c.data
+        found = []
+        for b in white_blobs(w, h, ch, rgb):
+            x0, y0, x1, y1 = b["bbox"]
+            if x0 <= 6 or y0 <= 6 or x1 >= w - 6 or y1 >= h - 6:
+                continue  # clipped at the frame edge
+            tf = top_face(w, h, ch, rgb, d.data, d.scale_m, K, b["bbox"])
+            if tf is None:
+                continue
+            z = tf["centre"][2]
+            pts = []
+            for y in range(y0, min(y1, h), 2):
+                for x in range(x0, min(x1, w), 2):
+                    i = (y * w + x) * ch
+                    r, g, bb = rgb[i], rgb[i + 1], rgb[i + 2]
+                    if min(r, g, bb) > WHITE_MIN and max(r, g, bb) - min(r, g, bb) < WHITE_CHROMA:
+                        pts.append(
+                            [round((x - k.ppx) * z / k.fx, 4), round((y - k.ppy) * z / k.fy, 4), round(z, 4)]
+                        )
+            step = max(1, len(pts) // 300)
+            found.append(
+                {
+                    "centre_cam": [round(v, 4) for v in tf["centre"]],
+                    "pixel": [b["cx"], b["cy"]],
+                    "bbox": list(b["bbox"]),
+                    "points_cam": pts[::step],
+                }
+            )
+        return {"ok": True, "seq": seq, "objects": found, **self.frame_pose()}
 
     def color_png(self, after: int | None, timeout_s: float) -> tuple[int, bytes | None]:
         """The colour image alone as a PNG (``GET /api/color.png``): what a page that
@@ -960,6 +1025,9 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._guarded(
                 lambda: {"ok": True, "robot": self.app.robot.describe() if self.app.robot else None}
             )
+        elif route == "/api/robot/pose":
+            ps = self.app.pose_stream
+            self._send_json(ps.latest() if ps is not None else {"ok": False, "error": "no pose stream"})
         elif route == "/api/rgbd":
             try:
                 after = int(qs["after"][0]) if "after" in qs else None
@@ -1036,6 +1104,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
                     _box(payload),
                 )
             )
+        elif route == "/api/objects":
+            self._guarded(self.app.objects)
         elif route == "/api/nearest":
             self._guarded(lambda: self.app.nearest(float(payload.get("near_ratio", 1.2))))
         elif route == "/api/clear":
@@ -1229,7 +1299,11 @@ def serve(
     ``demo`` opens the browser on the classic page's demo view
     (``/classic?demo=1``: one picture, four big buttons, one light).
     ``views`` are the extra webcam viewpoints (:mod:`perception.views`)."""
-    app = ViewerApp(camera, config=config, robot=robot, views=views, cors=cors)
+    pose_stream = None
+    if robot is not None and not robot.dry_run and os.environ.get("PERCEPTION_POSE_STREAM", "1") != "0":
+        pose_stream = PoseStream(robot.config)
+        pose_stream.start()
+    app = ViewerApp(camera, config=config, robot=robot, views=views, cors=cors, pose_stream=pose_stream)
     server = ThreadingHTTPServer((bind, port), ViewerHandler)
     server.daemon_threads = True
     server.app = app  # type: ignore[attr-defined]
