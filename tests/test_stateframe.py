@@ -254,3 +254,54 @@ def test_get_flange_pose_falls_back_to_textmsg_when_the_broadcast_is_absent(monk
     )
     fp = robot.get_flange_pose()
     assert fp["ok"] and fp["source"] == "textmsg" and "refused" in fp["state_error"].lower()
+
+
+# The UR3e on the bench, read off its Secondary port (PolyScope 5.25.1, 2026-09-27):
+# calibrated DH with the large cancelling link offsets UR's calibration produces,
+# the joints, and the TCP pose it reported with the Hand-E fingertip TCP active.
+BENCH_DH = {
+    "theta": [
+        -1.281476251155378e-07,
+        -1.4562422764115688,
+        8.367349622187538,
+        -0.6279207247759568,
+        1.0861911390463996e-07,
+        -2.603403141742891e-07,
+    ],
+    "a": [
+        -0.00013386812374456634,
+        -0.027851736714409464,
+        -0.1724790284756545,
+        0.00011523034302439698,
+        -0.0001498449388158725,
+        0.0,
+    ],
+    "d": [
+        0.15158089807159253,
+        100.06002687488497,
+        -35.55268363657086,
+        -64.3763730754473,
+        0.08510672056820152,
+        0.09169521791319205,
+    ],
+    "alpha": [
+        1.570311694056516,
+        -0.0024192545683140412,
+        0.001941007315769765,
+        1.5719407775751715,
+        -1.5725669782759901,
+        0.0,
+    ],
+}
+
+
+def test_the_bench_ur3e_calibration_decodes_and_its_kinematics_match_its_tcp():
+    # a 100 m DH offset is real, not corruption: the plausibility bound must pass it
+    q = [-1.3716, -0.4904, 1.6085, -2.6907, -1.5707, 0.6099]
+    st = stateframe.parse_robot_state(
+        _pkg(stateframe.PKG_JOINT_DATA, joint_data(q))
+        + _pkg(stateframe.PKG_KINEMATICS_INFO, kinematics(BENCH_DH))
+    )
+    flange = stateframe.flange_from_joints(q, st["dh"])
+    # the bench read: TCP [-0.207, 0.359, -0.18001, …] with the 163 mm fingertip TCP active
+    assert _close(pose_trans(flange, HANDE)[:3], [-0.207, 0.359, -0.18001], 2e-4)
