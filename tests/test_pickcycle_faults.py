@@ -222,8 +222,12 @@ def test_bad_survey_pose_is_refused_by_the_envelope_not_sent(rig):
 
 def test_blocks_beyond_the_working_reach_are_skipped_before_any_program(rig):
     fake, cycle, events = rig
-    fake.model = "UR3"  # 0.5 m reach → 0.45 m working limit by default
-    blk = Block(0, [0.34, 0.34, -0.25], 0.0, 0.045, 0.028, (0, 0), 500)  # 0.48 m out
+    # 0.5 m reach − 50 mm margin + what the Hand-E buys leaned 24° out (0.163·sin 24° = 66 mm)
+    # → 0.516 m working limit; inside it the controller's IK decides per block
+    fake.model = "UR3"
+    near = Block(0, [0.34, 0.34, -0.25], 0.0, 0.045, 0.028, (0, 0), 500)  # 0.48 m out
+    assert cycle._out_of_band(near) is None
+    blk = Block(0, [0.39, 0.39, -0.25], 0.0, 0.045, 0.028, (0, 0), 500)  # 0.55 m out
     assert "beyond this arm" in (cycle._out_of_band(blk) or "")
     cycle.max_radius_m = 0.6
     assert cycle._out_of_band(blk) is None

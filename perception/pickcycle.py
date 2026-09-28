@@ -192,6 +192,29 @@ def tip_pose(
     return [tip[i] - zax[i] * tip_m for i in range(3)] + list(yawed.to_pose()[3:])
 
 
+def grasp_rotation(flange_pose: Sequence[float], top: Sequence[float], lean_deg: float = 0.0) -> list[float]:
+    """A pose (zero translation) whose tool Z points straight down — the work surface
+    is flat and parallel to the base XY plane (Nick, 2026-09-27) — or leaned
+    ``lean_deg`` outward, tipping the fingertips away from the base column toward
+    ``top`` so the tool's length buys reach. The flange heading (its X axis, projected)
+    is kept from ``flange_pose`` so wrist 3 turns as little as possible."""
+    t = math.radians(lean_deg)
+    r = math.hypot(top[0], top[1]) or 1.0
+    z = (math.sin(t) * top[0] / r, math.sin(t) * top[1] / r, -math.cos(t))
+    x0 = Transform.from_pose(flange_pose).rotate((1.0, 0.0, 0.0))
+    d = sum(x0[i] * z[i] for i in range(3))
+    x = [x0[i] - d * z[i] for i in range(3)]
+    if math.hypot(*x) < 1e-6:  # the flange X was along the new Z: any heading will do
+        x = [1.0, 0.0, 0.0]
+        d = sum(x[i] * z[i] for i in range(3))
+        x = [x[i] - d * z[i] for i in range(3)]
+    n = math.hypot(*x)
+    x = [v / n for v in x]
+    y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]]
+    rot = tuple(tuple((x, y, z)[j][i] for j in range(3)) for i in range(3))
+    return Transform(rot, (0.0, 0.0, 0.0)).to_pose()  # type: ignore[arg-type]
+
+
 def reject_off_surface(blocks: list, tolerance_m: float = 0.03) -> list:
     """Blocks lie on one surface: drop any candidate whose top height is more than
     ``tolerance_m`` from the median of the others (a strap end on the rail, a
@@ -300,6 +323,7 @@ class PickCycle:
     force: int = 80
     stroke_m: float = 0.05  # Hand-E
     finger_axis: str = "y"  # flange axis the fingers travel along
+    leans_deg: tuple = (0.0, 12.0, 24.0)  # straight down first; lean out only if the IK needs it
     dry_run: bool = False
     log: list[dict] = field(default_factory=list)
     t0: float = field(default_factory=time.time)
@@ -545,6 +569,40 @@ class PickCycle:
             cand.major_m, cand.minor_m = blk.major_m, blk.minor_m
         return cand
 
+    def _grasp_legs(
+        self, fl: Sequence[float], blk: Block, lean: float
+    ) -> tuple[list[float], list[list[float]]]:
+        """The rotation for ``lean`` and every flange pose the block's program visits."""
+        rot = grasp_rotation(fl, blk.centre_base, lean)
+        yaw = grasp_yaw_deg(rot, blk.theta + math.pi / 2, self.finger_axis)
+        h0 = tip_pose(blk.centre_base, rot, self.tip_m, yaw)
+        zax = Transform.from_pose(h0).rotate((0.0, 0.0, 1.0))
+        mms = (
+            max(self.hover_mm, self.look_mm),
+            self.hover_mm,
+            0.0,
+            -self.grasp_below_mm,
+            self.lift_mm,
+            self.clear_mm,
+        )
+        return rot, [[h0[i] - zax[i] * (mm / 1000.0) for i in range(3)] + list(h0[3:]) for mm in mms]
+
+    def _choose_lean(self, fl: Sequence[float], blk: Block) -> tuple[float, list[float] | None]:
+        """The first lean (0 = straight down) whose whole path the controller's IK
+        solves. No IK answer (dry run, no direct robot) → straight down, and the
+        envelope/controller judge the move as before."""
+        for lean in self.leans_deg:
+            rot, poses = self._grasp_legs(fl, blk, lean)
+            if self.robot is None or self.dry_run:
+                return lean, rot
+            answers = self.robot.inverse_kin(poses, tcp=[0.0] * 6)
+            verdicts = [a.get("reachable") for a in answers]
+            if any(v is None for v in verdicts):
+                return lean, rot
+            if all(verdicts):
+                return lean, rot
+        return 0.0, None
+
     # -- one block --------------------------------------------------------------------
     def cycle_block(self, blk: Block, *, drop: bool = False) -> dict:
         label = f"block {blk.index + 1}"
@@ -555,8 +613,24 @@ class PickCycle:
                 f"{self.stroke_m * 1000:.0f} mm stroke — skipping"
             )
             return {"block": blk.index, "ok": False, "stage": "stroke"}
-        yaw = grasp_yaw_deg(fl, blk.theta + math.pi / 2, self.finger_axis)
         top = blk.centre_base
+        lean, rot = self._choose_lean(fl, blk)
+        if rot is None:
+            self.say(
+                f"{label}: no approach the controller can solve (vertical, or leaned up to "
+                f"{max(self.leans_deg):.0f} deg) — skipping",
+                think=f"Block {blk.index + 1} is {where_words(top)} — past what I can reach, even leaning "
+                "my hand out.",
+                do="Skipping it.",
+            )
+            return {"block": blk.index, "ok": False, "stage": "reach"}
+        yaw = grasp_yaw_deg(rot, blk.theta + math.pi / 2, self.finger_axis)
+        if lean:
+            self.say(
+                f"{label}: vertical approach unsolvable; leaning the tool {lean:.0f} deg outward",
+                think="It's near the edge of my reach, so I'll lean my hand out toward it — "
+                "the gripper's length gets me the last few centimetres.",
+            )
         self.say(
             f"{label}: top at {[round(v, 3) for v in top]} m, "
             f"{blk.major_m * 1000:.0f} x {blk.minor_m * 1000:.0f} mm; "
@@ -567,9 +641,8 @@ class PickCycle:
             do=f"Turning my wrist {abs(yaw):.0f}° to line my fingers up, and moving over it — high enough "
             "for my camera to take a closer look.",
         )
-        # everything below runs along the TOOL axis (the camera's optical axis, tilted with the wrist),
-        # not base Z: hover back along it, descend along it
-        hover0 = tip_pose(top, fl, self.tip_m, yaw)  # tip on the top centre, yawed
+        # everything below runs along the TOOL axis — straight down unless leaned for reach
+        hover0 = tip_pose(top, rot, self.tip_m, yaw)  # tip on the top centre, yawed
         zax = Transform.from_pose(hover0).rotate((0.0, 0.0, 1.0))  # tool z, pointing into the part
         along = lambda mm: [hover0[i] - zax[i] * (mm / 1000.0) for i in range(3)] + list(hover0[3:])  # noqa: E731
         look = along(max(self.hover_mm, self.look_mm))
@@ -580,8 +653,9 @@ class PickCycle:
         if seen is not None:
             shift = math.hypot(seen.centre_base[0] - top[0], seen.centre_base[1] - top[1]) * 1000
             blk, top = seen, seen.centre_base
-            yaw = grasp_yaw_deg(self._flange(), blk.theta + math.pi / 2, self.finger_axis)
-            hover0 = tip_pose(top, self._flange(), self.tip_m, yaw)
+            rot = grasp_rotation(fl, top, lean)
+            yaw = grasp_yaw_deg(rot, blk.theta + math.pi / 2, self.finger_axis)
+            hover0 = tip_pose(top, rot, self.tip_m, yaw)
             zax = Transform.from_pose(hover0).rotate((0.0, 0.0, 1.0))
             along = lambda mm: [hover0[i] - zax[i] * (mm / 1000.0) for i in range(3)] + list(hover0[3:])  # noqa: E731
             self.say(
@@ -701,7 +775,8 @@ class PickCycle:
                 if callable(probe):
                     probe()  # the reach cap is sized from the model on first use
                 reach = self.robot.max_reach
-                limit = float(reach() if callable(reach) else reach) - 0.05
+                lean = math.radians(max(self.leans_deg or (0.0,)))
+                limit = float(reach() if callable(reach) else reach) - 0.05 + self.tip_m * math.sin(lean)
             except Exception:
                 limit = 0.0
         if limit and r > limit:

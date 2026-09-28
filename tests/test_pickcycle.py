@@ -16,6 +16,7 @@ from perception.pickcycle import (
     Block,
     Cockpit,
     PickCycle,
+    grasp_rotation,
     grasp_yaw_deg,
     plane_axes_xy,
     reject_off_surface,
@@ -207,3 +208,24 @@ def test_cli_parser_carries_every_option_the_runner_reads():
     used = set(re.findall(r"args\.([a-z_]+)", inspect.getsource(run_pick_cycle)))
     missing = sorted(a for a in used if not hasattr(ns, a))
     assert not missing, missing
+
+
+# -- the flat-table grasp (pick-cycle) --------------------------------------------------
+
+TILTED = [-0.19, 0.19, 0.21, -2.583, 0.568, 0.0]  # the 09-27 survey pose: tool 28.5 deg off vertical
+
+
+@pytest.mark.parametrize("top", [[-0.221, 0.381, -0.268], [0.3, 0.0, -0.1], [0.0, -0.35, -0.27]])
+@pytest.mark.parametrize("lean", [0.0, 12.0, 24.0])
+def test_grasp_rotation_points_down_and_leans_outward(top, lean):
+    T = Transform.from_pose(grasp_rotation(TILTED, top, lean))
+    x, y, z = (T.rotate(a) for a in ((1, 0, 0), (0, 1, 0), (0, 0, 1)))
+    assert math.degrees(math.acos(-z[2])) == pytest.approx(lean, abs=1e-6)
+    for a, b in ((x, y), (y, z), (x, z)):
+        assert sum(p * q for p, q in zip(a, b, strict=True)) == pytest.approx(0.0, abs=1e-9)
+    if lean:  # the fingertips tip away from the column: z has a positive radial part
+        r = math.hypot(top[0], top[1])
+        assert (z[0] * top[0] + z[1] * top[1]) / r > 0
+    # the heading stays the flange's: X projected, not spun
+    x0 = Transform.from_pose(TILTED).rotate((1, 0, 0))
+    assert sum(p * q for p, q in zip(x, x0, strict=True)) > 0.8
