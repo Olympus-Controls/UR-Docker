@@ -41,9 +41,11 @@ STROKE_M = 0.05  # Hand-E
 # 23:50: "I don't mind a high velocity, I just don't want a high acceleration and ideally no stops
 # or slowdowns during moves." So: fast, gently accelerated, blended; stop only where physics needs it
 # (the close look's still frame, the grasp and the release).
-TRANSIT = {"velocity": 0.30, "acceleration": 0.12}
-SETTLE = {"velocity": 0.15, "acceleration": 0.10}
-DESCEND = {"velocity": 0.05, "acceleration": 0.08}
+# 23:55: "everything should be much faster … robot moves much quicker since it's a safe demo space":
+# double again, still under the 0.8 m/s^2 that thudded; blends keep it flowing.
+TRANSIT = {"velocity": 0.60, "acceleration": 0.35}
+SETTLE = {"velocity": 0.30, "acceleration": 0.30}
+DESCEND = {"velocity": 0.10, "acceleration": 0.25}
 
 
 def top_face(
@@ -214,7 +216,7 @@ def plan(
     if look is not None:
         sweep = _legs(
             start_flange,
-            stops + [("look", look, {**SETTLE, "dwell_s": 0.4})],
+            stops + [("look", look, {**SETTLE, "dwell_s": 0.15})],
             cap,
         )
         final = _legs(look, [("over", over, dict(SETTLE))] + tail, 0.03)

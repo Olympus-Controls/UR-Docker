@@ -1067,7 +1067,15 @@
   say('click a part in the feed · approach · HELP for commands', 'dim');
   setInterval(() => { $('clock').textContent = clock(); }, 1000);
   info(); setInterval(info, 3000); setInterval(() => { if (!S.moving) state(); }, 2500); events(); setInterval(events, 1500);
-  setInterval(() => { if (S.running && S.header) scanObjects(false); }, 2500);
+  // objects are world-fixed once found: rescan only when the camera has moved and settled (and once at start)
+  let scanPose = null, stillSince = 0, lastPose = null;
+  setInterval(() => {
+    const p = S.header && S.header.flange_pose; if (!S.running || !p) return;
+    const moved = (a, b) => !a || !b || Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 0.003 || Math.hypot(a[3] - b[3], a[4] - b[4], a[5] - b[5]) > 0.01;
+    const now = performance.now();
+    if (moved(p, lastPose)) { lastPose = p.slice(); stillSince = now; return; }
+    if (now - stillSince > 600 && moved(p, scanPose) && !S.moving) { scanPose = p.slice(); scanObjects(false); }
+  }, 300);
   frames(); requestAnimationFrame(frame); input.focus();
 })();
 </script>

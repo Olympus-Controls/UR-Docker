@@ -302,5 +302,6 @@ def test_a_pick_flows_home_without_stopping_and_moves_fast_but_gently():
     assert by["approach"].get("blend_m", 0) > 0 and not by["approach"].get("dwell_s")  # one descent
     stops = [n for n in names if not legs[names.index(n)].get("blend_m")]
     assert set(stops) <= {"look", "grasp", "lift", "place", "home"}  # only where physics needs one
-    assert all(leg["acceleration"] <= 0.12 for leg in legs)
-    assert max(leg["velocity"] for leg in legs) >= 0.3
+    # 23:55 "much faster, a safe demo space": fast transit, accelerations well under the 0.8 m/s^2 that thudded
+    assert all(leg["acceleration"] <= 0.35 for leg in legs)
+    assert max(leg["velocity"] for leg in legs) >= 0.6

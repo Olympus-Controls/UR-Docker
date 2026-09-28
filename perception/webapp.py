@@ -560,9 +560,9 @@ class ViewerApp:
         pixel and measured (``_rect_from_mask``). ``(rect, flange, why-not)``."""
         from . import pickplan
 
-        time.sleep(0.4)
+        time.sleep(0.1)
         seq, _ = self.latest()
-        self.wait_frame(seq, 2.0)
+        self.wait_frame(seq, 1.0)
         objs = self.objects()
         f_look = objs.get("flange_pose") or self._flange_at(time.time()) or list(look)
         T = Transform.from_pose(f_look).compose(Transform.from_pose(self._handeye_fc()))
@@ -578,16 +578,9 @@ class ViewerApp:
             n = len(objs.get("objects") or [])
             return None, f_look, f"{n} block(s) in view, none within {gate_m * 1000:.0f} mm of the estimate"
         _, o, r = best
-        try:
-            self.segment(x=o["pixel"][0], y=o["pixel"][1])
-        except (ValueError, RuntimeError):
-            return r, f_look, ""
-        with self._seg_lock:
-            m1, fr1 = self.mask, self.mask_frame
-        r1 = self._rect_from_mask(m1, fr1, f_look) if m1 is not None and m1.area else None
-        if r1 is None or math.dist(r1["centre"][:2], r["centre"][:2]) > 0.03:
-            return r, f_look, ""  # the segment wandered: the detector's own measurement
-        return r1, f_look, ""
+        # programmatic, not semantic: the detector's own top face (every white pixel cast at the
+        # top's depth) is the measurement — no second segmentation pass
+        return r, f_look, ""
 
     def _unreachable(self, legs: list[dict]) -> list[str]:
         iks = self.robot.robot.inverse_kin([leg["pose"] for leg in legs], tcp=[0.0] * 6)
@@ -694,12 +687,14 @@ class ViewerApp:
             # 2 — find the block again from up close, by identity (the real block nearest the
             # estimate), re-centre once if it is off the camera's axis, then measure it there
             rect1, f_look, why_not = self._refind(rect0["centre"], p["look"])
-            if rect1 is not None and math.dist(rect1["centre"][:2], rect0["centre"][:2]) > 0.01:
+            # re-centre only when the block sits far off the camera's axis (the look measures well
+            # anywhere near the middle of the picture): one move and one look saved most times
+            if rect1 is not None and math.dist(rect1["centre"][:2], rect0["centre"][:2]) > 0.04:
                 rot = grasp_rotation(f_look, rect1["centre"], 0.0)
                 yaw = grasp_yaw_deg(rot, rect1["theta"] + math.pi / 2, "y")
                 look2 = pickplan.look_pose(rect1, rot, yaw, hfc, pickplan.LOOK_M)
                 if not self._unreachable([{"name": "look", "pose": look2}]):
-                    self._run([{"name": "look", "pose": look2, **pickplan.SETTLE, "dwell_s": 0.4}])
+                    self._run([{"name": "look", "pose": look2, **pickplan.SETTLE, "dwell_s": 0.15}])
                     again, f2, _ = self._refind(rect1["centre"], look2)
                     if again is not None:
                         d1 = math.dist(rect1["centre"][:2], rect0["centre"][:2]) * 1000
