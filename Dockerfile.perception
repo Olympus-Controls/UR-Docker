@@ -36,6 +36,8 @@ COPY urctl ./urctl
 COPY perception ./perception
 COPY scripts/urp_convert.py ./scripts/urp_convert.py
 RUN pip install --no-cache-dir . && python -c "import perception.realsense as r; print(r.load_api().version)"
-VOLUME ["/captures"]
+# The cockpit writes snapshots + the hand-eye file under ./captures (relative
+# to WORKDIR); keep them on the volume so a recreate doesn't lose a calibration.
+VOLUME ["/app/captures"]
 EXPOSE 7621
-CMD ["perception-gui", "--bind", "0.0.0.0", "--port", "7621", "--no-browser", "--out", "/captures"]
+CMD ["perception-gui", "--bind", "0.0.0.0", "--port", "7621", "--no-browser"]

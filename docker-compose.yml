@@ -117,7 +117,7 @@ services:
     privileged: true
     volumes:
       - /dev/bus/usb:/dev/bus/usb
-      - ./captures:/captures
+      - ./captures:/app/captures
     ports:
       - "7621:7621"
     environment:
