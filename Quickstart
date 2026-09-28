@@ -1,0 +1,5 @@
+#/usr/bin/env bash
+
+sudo env -u PERCEPTION_T_FLANGE_CAMERA .venv/bin/perception --cell ur3 gui --rs-lean --bind 0.0.0.0 --cors http://localhost:8001
+
+
