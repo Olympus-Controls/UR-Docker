@@ -167,6 +167,15 @@ class PickPlanner:
         self.log(f"pick {req['verb']}: {what}{where}", status == 1)
         return format_reply(status, centre, pose)
 
+    def plan(self, flange: Sequence[float], pixel: tuple[int, int] | None = None, lean: float = 0.0) -> dict:
+        """A FIND for a caller that already has the flange pose (the node's teach-time
+        check through the cockpit): ``{status, reason, centre, top_pose}``."""
+        req = {"verb": "FIND", "flange": [float(v) for v in flange], "lean": float(lean)}
+        if pixel is not None:
+            req["pixel"] = pixel
+        status, centre, pose = self._plan(req)
+        return {"status": status, "reason": STATUS.get(status, "?"), "centre": centre, "top_pose": pose}
+
     def _plan(self, req: dict) -> tuple[int, list[float] | None, list[float] | None]:
         he = self.handeye()
         if not he:

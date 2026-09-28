@@ -800,6 +800,37 @@ class ViewerApp:
             log=lambda text, ok: self.events.add("pick", text, ok=ok),
         )
 
+    def pick_preview(
+        self, pixel: tuple[int, int] | None, *, grip_below_mm: float = 15.0, hover_mm: float = 40.0
+    ) -> dict:
+        """The node's teach-time check: what the program would do from where the arm is
+        now — the flange from the robot link (the state broadcast: no script, Local mode
+        works), one FIND, and the hover and grip poses both as flange poses and in the
+        controller's **active** TCP (``polyscope_*``: what PolyScope's hold-to-move screen
+        takes). Moves nothing."""
+        from urctl.pose import pose_trans
+
+        if self.robot is None:
+            return {"ok": False, "error": "the cockpit has no robot link (start it with the cell's robot)"}
+        fp = self.robot.flange_pose()
+        if not fp.get("ok") or not fp.get("flange"):
+            return {"ok": False, "error": fp.get("error") or "could not read the flange pose", "robot": fp}
+        planned = self.pick_planner().plan(fp["flange"], pixel)
+        out: dict = {"ok": planned["status"] == 1, **planned, "flange_pose": fp["flange"]}
+        if planned["status"] != 1:
+            out["error"] = planned["reason"]
+            return out
+        top = planned["top_pose"]
+        out["hover_pose"] = pose_trans(top, [0.0, 0.0, -hover_mm / 1000.0, 0.0, 0.0, 0.0])
+        out["grip_pose"] = pose_trans(top, [0.0, 0.0, grip_below_mm / 1000.0, 0.0, 0.0, 0.0])
+        offset = fp.get("tcp_offset")
+        if offset is not None and fp.get("tcp_offset_consistent") is not False:
+            out["polyscope_hover_pose"] = pose_trans(out["hover_pose"], offset)
+            out["polyscope_grip_pose"] = pose_trans(out["grip_pose"], offset)
+        else:
+            out["polyscope_note"] = "the controller's active TCP offset is unknown or inconsistent"
+        return out
+
     def pick_detect(self) -> dict:
         """What the program node's teach screen draws: the blocks the pick server
         would choose among, in image pixels, from the newest frame (camera frame —
@@ -1449,6 +1480,18 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._guarded(self.app.objects)
         elif route == "/api/nearest":
             self._guarded(lambda: self.app.nearest(float(payload.get("near_ratio", 1.2))))
+        elif route == "/api/pick/preview":
+            try:
+                u, v = int(payload.get("u", -1)), int(payload.get("v", -1))
+                grip = float(payload.get("grip_below_mm", 15.0))
+                hover = float(payload.get("hover_mm", 40.0))
+                if not (0.0 <= grip <= 60.0 and 0.0 <= hover <= 300.0):
+                    raise ValueError("grip_below_mm must be 0..60 and hover_mm 0..300")
+            except (TypeError, ValueError) as exc:
+                self._send_json({"ok": False, "error": f"bad request: {exc}"}, status=400)
+                return
+            pixel = (u, v) if u >= 0 and v >= 0 else None
+            self._guarded(lambda: self.app.pick_preview(pixel, grip_below_mm=grip, hover_mm=hover))
         elif route == "/api/clear":
             self._guarded(self.app.clear)
         elif route == "/api/robot/state":
