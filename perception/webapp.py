@@ -494,20 +494,42 @@ class ViewerApp:
         return list(self.robot.handeye.as_dict()["flange_to_color_pose"])
 
     def _rect_from_mask(self, mask: Mask, frame: RgbdFrame, flange: Sequence[float]) -> dict | None:
-        """The masked object's top face in the base frame (``pickplan.rectangle``)."""
+        """The masked object's top face in the base frame (``pickplan.rectangle``).
+
+        The height comes from the depth (the top face, ``pickplan.top_face``), the
+        outline from the colour mask: white foam leaves holes in the depth — on the UR3e
+        the depth-bearing points of a 27 mm block formed a 10 mm strip (2026-09-27) — so
+        every mask pixel that is on the top face or a hole in it is cast along its ray
+        onto the horizontal plane at the top's height (the table is flat and level).
+        Pixels whose depth says side or floor are left out."""
         from . import pickplan
 
         T = Transform.from_pose(flange).compose(Transform.from_pose(self._handeye_fc()))
         k, w = frame.intrinsics, mask.width
-        pts = []
-        for n, i in enumerate(mask.pixels()):
-            if n % 2:
-                continue
-            u, v = i % w, i // w
+        pix = [(i % w, i // w) for i in mask.pixels()]
+        with_depth = []
+        for u, v in pix[:: max(1, len(pix) // 4000)]:
             d = frame.depth.distance_m(u, v)
             if d:
-                pts.append(T.apply(((u - k.ppx) * d / k.fx, (v - k.ppy) * d / k.fy, d)))
-        return pickplan.rectangle(pickplan.top_face(pts))
+                with_depth.append(T.apply(((u - k.ppx) * d / k.fx, (v - k.ppy) * d / k.fy, d)))
+        top = pickplan.top_face(with_depth)
+        if len(top) < 10:
+            return None
+        top_z = sorted(p[2] for p in top)[len(top) // 2]
+        o = T.translation
+        pts = []
+        for u, v in pix:
+            d = frame.depth.distance_m(u, v)
+            if d:
+                q = T.apply(((u - k.ppx) * d / k.fx, (v - k.ppy) * d / k.fy, d))
+                if abs(q[2] - top_z) > 0.006:
+                    continue  # a side or the floor
+            ray = T.rotate(((u - k.ppx) / k.fx, (v - k.ppy) / k.fy, 1.0))
+            if ray[2] >= -1e-6:
+                continue
+            t = (top_z - o[2]) / ray[2]
+            pts.append((o[0] + t * ray[0], o[1] + t * ray[1], top_z))
+        return pickplan.rectangle(pts)
 
     def _pixel_of(
         self, point: Sequence[float], flange: Sequence[float], frame: RgbdFrame
