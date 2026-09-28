@@ -284,7 +284,7 @@ class Robot:
         }
         return self._log("get_state", {}, ok=True, result=result)
 
-    def get_flange_pose(self, *, collect_for: float = 3.0) -> dict:
+    def get_flange_pose(self, *, collect_for: float = 3.0, script_fallback: bool = True) -> dict:
         """The tool-flange pose in the base frame, alongside the active TCP pose
         and TCP offset it was derived from — what a camera on the flange needs
         to put its measurements into base coordinates (``perception.handeye``).
@@ -302,7 +302,10 @@ class Robot:
         ``get_actual_tcp_pose()`` and ``get_tcp_offset()``; the flange is
         ``pose_trans(tcp, pose_inv(offset))`` (also computed host-side by
         :mod:`urctl.pose` and cross-checked against the controller's own
-        arithmetic). (``source: "textmsg"``.) In ``dry_run`` a stand-in pose is
+        arithmetic). (``source: "textmsg"``.) ``script_fallback=False`` skips it: a
+        caller that must never replace a running program (the stand-alone pick
+        server, beside an operator's program) gets ``ok: False`` instead. In
+        ``dry_run`` a stand-in pose is
         returned (tool pointing down, 0.5 m out and up) so cockpits can be
         exercised without a controller.
         """
@@ -341,6 +344,8 @@ class Robot:
                 }
                 return self._log("get_flange_pose", {}, ok=True, result=result)
             state_error = "the state broadcast had no joints/TCP pose"
+        if not script_fallback:
+            return self._log("get_flange_pose", {}, ok=False, result={"error": state_error})
         captured = self.primary.run_and_capture(
             'textmsg("urctl/flange/tcp=", get_actual_tcp_pose())\n'
             'textmsg("urctl/flange/offset=", get_tcp_offset())\n'

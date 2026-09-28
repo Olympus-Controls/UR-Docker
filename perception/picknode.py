@@ -208,6 +208,83 @@ class PickPlanner:
         return 1, list(blk.centre_base), tip_pose(blk.centre_base, rot, self.tip_m, yaw)
 
 
+# -- the node's teach screen (the cockpit's routes and the stand-alone pick server's) ---------
+
+
+def parse_preview_request(payload: dict) -> tuple[tuple[int, int] | None, float, float]:
+    """``POST /api/pick/preview``'s body -> ``(pixel, grip_below_mm, hover_mm)``;
+    ValueError when a field isn't a number or is out of range."""
+    try:
+        u, v = int(payload.get("u", -1)), int(payload.get("v", -1))
+        grip = float(payload.get("grip_below_mm", 15.0))
+        hover = float(payload.get("hover_mm", 40.0))
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(str(exc)) from None
+    if not (0.0 <= grip <= 60.0 and 0.0 <= hover <= 300.0):
+        raise ValueError("grip_below_mm must be 0..60 and hover_mm 0..300")
+    return ((u, v) if u >= 0 and v >= 0 else None), grip, hover
+
+
+def preview(
+    planner: PickPlanner,
+    flange_pose: dict,
+    pixel: tuple[int, int] | None,
+    *,
+    grip_below_mm: float = 15.0,
+    hover_mm: float = 40.0,
+) -> dict:
+    """The node's teach-time check: what the program would do from where the arm is
+    now. ``flange_pose`` is a ``get_flange_pose`` result (``flange``, ``tcp_offset``,
+    ``tcp_offset_consistent``); one FIND, and the hover and grip poses both as flange
+    poses and in the controller's **active** TCP (``polyscope_*``: what PolyScope's
+    hold-to-move screen takes). Moves nothing."""
+    from urctl.pose import pose_trans
+
+    fp = flange_pose
+    if not fp.get("ok") or not fp.get("flange"):
+        return {"ok": False, "error": fp.get("error") or "could not read the flange pose", "robot": fp}
+    planned = planner.plan(fp["flange"], pixel)
+    out: dict = {"ok": planned["status"] == 1, **planned, "flange_pose": fp["flange"]}
+    if planned["status"] != 1:
+        out["error"] = planned["reason"]
+        return out
+    top = planned["top_pose"]
+    out["hover_pose"] = pose_trans(top, [0.0, 0.0, -hover_mm / 1000.0, 0.0, 0.0, 0.0])
+    out["grip_pose"] = pose_trans(top, [0.0, 0.0, grip_below_mm / 1000.0, 0.0, 0.0, 0.0])
+    offset = fp.get("tcp_offset")
+    if offset is not None and fp.get("tcp_offset_consistent") is not False:
+        out["polyscope_hover_pose"] = pose_trans(out["hover_pose"], offset)
+        out["polyscope_grip_pose"] = pose_trans(out["grip_pose"], offset)
+    else:
+        out["polyscope_note"] = "the controller's active TCP offset is unknown or inconsistent"
+    return out
+
+
+def detect_report(frame: tuple, *, pick_port: int | None, handeye: bool, tip_m: float | None) -> dict:
+    """What the node's teach screen draws: the blocks the pick server would choose
+    among, in image pixels, from one ``(seq, w, h, ch, rgb, depth, scale, K)`` frame
+    (camera frame — no robot needed)."""
+    seq, w, h, ch, rgb, depth, scale, K = frame
+    blocks = detect_blocks(w, h, ch, rgb, depth, scale, K, Transform(), Transform())
+    return {
+        "ok": True,
+        "seq": seq,
+        "width": w,
+        "height": h,
+        "pick_port": pick_port,
+        "handeye": handeye,
+        "tip_m": tip_m,
+        "blocks": [
+            {
+                "pixel": list(b.pixel),
+                "size_mm": [round(b.major_m * 1000), round(b.minor_m * 1000)],
+                "distance_m": round(b.centre_base[2], 3),
+            }
+            for b in blocks
+        ],
+    }
+
+
 class _Handler(socketserver.StreamRequestHandler):
     timeout = 30.0  # a controller that connects and goes quiet does not hold a thread
 
