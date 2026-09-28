@@ -168,7 +168,8 @@ def plan(
       ``flange_to_color`` and ``look_m`` are given (the close second look), else
       straight on to the hover;
     - ``final``: over → approach (fingertips ``hover_m`` over the top) [→ grasp,
-      close → lift] — from the look pose, or as the tail of the same program.
+      close → lift and hold → place it back, open → clear] — from the look pose, or as
+      the tail of the same program.
 
     ``legs`` is everything in order (a preview). The caller pre-opens the gripper
     to ``gripper_position``; ``skip`` drops named fancy vias the IK can't solve."""
@@ -198,7 +199,10 @@ def plan(
     ]
     if pick:
         tail.append(("grasp", at(-grasp_below_m), {**DESCEND, "gripper": "close"}))
-        tail.append(("lift", at(hover_m + lift_m), dict(SETTLE)))
+        tail.append(("lift", at(hover_m + lift_m), {**SETTLE, "dwell_s": 0.8}))  # show it off
+        # the drop sequence: set it back exactly where it was, let go, clear — never leave it in the fingers
+        tail.append(("place", at(-grasp_below_m + 0.001), {**DESCEND, "gripper": "open"}))
+        tail.append(("clear", at(hover_m + lift_m), dict(SETTLE)))
     cap = 0.06 if fancy else 0.04
     if look is not None:
         sweep = _legs(

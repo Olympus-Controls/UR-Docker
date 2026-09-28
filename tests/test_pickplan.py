@@ -73,12 +73,20 @@ def test_the_approach_nick_asked_for(theta, fancy, pick):
     assert p["opening_m"] == pytest.approx(max(1.2 * rect["minor_m"], rect["minor_m"] + 0.016))
     assert p["gripper_position"] == pickplan.robotiq_position(p["opening_m"])
     names = [leg["name"] for leg in p["legs"]]
-    assert names[-1 if not pick else -3] == "approach"
+    assert names[-1 if not pick else -5] == "approach"
     assert ("swing" in names and "flourish" in names) == fancy
     if pick:
-        assert names[-2:] == ["grasp", "lift"] and p["legs"][-2]["gripper"] == "close"
-        gz = p["legs"][-2]["pose"][2] - TIP  # the fingertips at the grasp
+        # the drop sequence: grasp, lift and show it, set it back where it was, let go, clear
+        assert names[-4:] == ["grasp", "lift", "place", "clear"]
+        grasp, lift, place, clear = p["legs"][-4:]
+        assert grasp["gripper"] == "close" and place["gripper"] == "open" and lift.get("dwell_s", 0) > 0
+        gz = grasp["pose"][2] - TIP  # the fingertips at the grasp
         assert gz == pytest.approx(-0.268 - 0.015, abs=1e-6)
+        assert (
+            place["pose"][:2] == pytest.approx(grasp["pose"][:2])
+            and abs(place["pose"][2] - grasp["pose"][2]) < 0.002
+        )
+        assert clear["pose"][2] > place["pose"][2] + 0.05
     # every blend is under half its neighbouring segments, and never on the last leg's successor
     path = [HOME] + [leg["pose"] for leg in p["legs"]]
     for i, leg in enumerate(p["legs"]):
@@ -201,7 +209,9 @@ def test_the_close_look_puts_the_object_on_the_optical_axis(fancy, pick):
         (0, 0, -1), abs=1e-9
     )  # already square
     names = [leg["name"] for leg in p["final"]]
-    assert names == (["over", "approach", "grasp", "lift"] if pick else ["over", "approach"])
+    assert names == (
+        ["over", "approach", "grasp", "lift", "place", "clear"] if pick else ["over", "approach"]
+    )
     for start, legs in ((HOME, p["sweep"]), (look, p["final"])):
         path = [start] + [leg["pose"] for leg in legs]
         assert "blend_m" not in legs[-1]

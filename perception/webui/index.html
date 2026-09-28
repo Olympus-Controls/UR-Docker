@@ -921,7 +921,7 @@
     try {
       const j = await post('/api/robot/pick', o);
       for (const n of j.notes || []) say(n, /nothing|kept|out of reach/.test(n) ? 'warn' : 'dim');
-      if (j.ok) say(j.dry_run ? 'dry run — validated, nothing sent' : `${o.pick ? (j.held ? 'holding it' : 'closed on nothing') : 'hovering 25 mm over it'} · fingers ${j.opening_mm} mm`, o.pick && !j.held && !j.dry_run ? 'warn' : '');
+      if (j.ok) say(j.dry_run ? 'dry run — validated, nothing sent' : `${o.pick ? (j.held ? `picked · set back · ${j.homed ? 'home' : 'clear'}` : 'closed on nothing') : 'hovering 25 mm over it'} · fingers ${j.opening_mm} mm`, o.pick && !j.held && !j.dry_run ? 'warn' : '');
       else say(`${o.pick ? 'pick' : 'approach'} refused: ${why(j)}${/FLT=7|not activated/i.test(why(j)) ? ' · type ACTIVATE' : ''}`, 'crit');
       S.plan = null;
     } finally { S.moving = false; armKeys(); events(); state(); }
@@ -950,7 +950,7 @@
     'START          power on + brake release · HOME  back to the picture pose',
     'STOP           stop all motion (esc esc)',
     'SCAN           find every block · FIND the nearest · or click / drag the feed',
-    'APPROACH       sweep in, a close look, 25 mm over the target (PICK / FANCY boxes)',
+    'APPROACH       sweep in, a close look, 25 mm over the target · PICK: grasp, lift, set back, home',
     'PICK · FANCY   toggle the boxes · CLEAR drop the targets',
     'OPEN · CLOSE   the gripper · ACTIVATE it (after LOCAL mode) · FREE [ON|OFF] · JOG X+ 10',
     'DESC 01 TEXT   describe object 01 · NOTE 01 TEXT  a comment / context',

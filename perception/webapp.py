@@ -740,6 +740,9 @@ class ViewerApp:
             gr = leg.get("gripper") if isinstance(leg, dict) else None
             if isinstance(gr, dict) and gr.get("action") == "close":
                 held = bool(gr.get("object_detected"))
+        homed = None
+        if pick and run.get("ok") and os.environ.get("PERCEPTION_HOME_POSE"):
+            homed = bool(self.home().get("ok"))  # the part is set back; ready for the next one
         self.events.add(
             "robot",
             f"{'pick' if pick else 'approach'}{' (fancy)' if fancy else ''} → "
@@ -751,6 +754,7 @@ class ViewerApp:
             "error": run.get("error"),
             "completed_legs": run.get("completed_legs"),
             "held": held,
+            "homed": homed,
             "dry_run": run.get("dry_run"),
             "protective_stop": run.get("protective_stop"),
             **summary,
