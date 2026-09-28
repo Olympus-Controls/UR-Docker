@@ -87,6 +87,7 @@ from urctl.pose import Transform
 from .cell import describe_cell
 from .config import PerceptionConfig
 from .factory import SEGMENT_BACKENDS, make_segmenter
+from .picknode import DEFAULT_PICK_PORT, PickPlanner, PickServer
 from .pngio import encode_png
 from .posestream import PoseStream
 from .realsense import (
@@ -324,6 +325,7 @@ class ViewerApp:
         self.events = EventLog()
         self.views = [ViewPump(v, i, self.events) for i, v in enumerate(views or [])]
         self._last_logged_error: str | None = None
+        self.pick_port: int | None = None  # the robot program's pick server (serve(pick_port=…))
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -761,6 +763,75 @@ class ViewerApp:
             return seq, None
         color = frame.color if frame.color.channels == 3 else frame.color.to_rgb()
         return seq, encode_png(color.width, color.height, 3, color.data)
+
+    # -- the robot program's pick server (perception.picknode) ------------------------
+
+    def pick_frame(self, after: int, timeout_s: float = 2.0) -> tuple | None:
+        """A frame newer than ``after`` as the detector takes it:
+        ``(seq, w, h, ch, rgb, depth, depth_scale_m, K)``, or None."""
+        seq, frame = self.wait_frame(after, timeout_s)
+        if frame is None or seq <= after:
+            return None
+        c = frame.color if frame.color.channels == 3 else frame.color.to_rgb()
+        return (
+            seq,
+            c.width,
+            c.height,
+            3,
+            c.data,
+            frame.depth.data,
+            frame.depth.scale_m,
+            frame.intrinsics.as_dict(),
+        )
+
+    def _handeye_pose(self) -> list[float] | None:
+        if self.robot is None:
+            return None
+        return self.robot.handeye.as_dict().get("flange_to_color_pose")
+
+    def pick_planner(self) -> PickPlanner:
+        from .handeye import tip_m_from_env
+
+        return PickPlanner(
+            self.pick_frame,
+            lambda: self.latest()[0],
+            self._handeye_pose,
+            tip_m=self.robot.tip_m if self.robot is not None else tip_m_from_env(),
+            log=lambda text, ok: self.events.add("pick", text, ok=ok),
+        )
+
+    def pick_detect(self) -> dict:
+        """What the program node's teach screen draws: the blocks the pick server
+        would choose among, in image pixels, from the newest frame (camera frame —
+        no robot needed)."""
+        from urctl.pose import Transform
+
+        from .pickcycle import detect_blocks
+
+        seq, frame = self.latest()
+        if frame is None:
+            return {"ok": False, "error": "no frame yet", "last_error": self.last_error}
+        _, w, h, ch, rgb, depth, scale, K = self.pick_frame(seq - 1, 0.0) or (None,) * 8
+        if rgb is None:
+            return {"ok": False, "error": "no frame yet"}
+        blocks = detect_blocks(w, h, ch, rgb, depth, scale, K, Transform(), Transform())
+        return {
+            "ok": True,
+            "seq": seq,
+            "width": w,
+            "height": h,
+            "pick_port": self.pick_port,
+            "handeye": self._handeye_pose() is not None,
+            "tip_m": self.robot.tip_m if self.robot is not None else None,
+            "blocks": [
+                {
+                    "pixel": list(b.pixel),
+                    "size_mm": [round(b.major_m * 1000), round(b.minor_m * 1000)],
+                    "distance_m": round(b.centre_base[2], 3),
+                }
+                for b in blocks
+            ],
+        }
 
     # -- API -------------------------------------------------------------------------
 
@@ -1330,6 +1401,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self._cors_headers()
                 self.end_headers()
                 self.wfile.write(data)
+        elif route == "/api/pick/detect":
+            self._guarded(self.app.pick_detect)
         elif route == "/api/color.png":
             try:
                 after = int(qs["after"][0]) if "after" in qs else None
@@ -1562,8 +1635,11 @@ def serve(
     demo: bool = False,
     views: list[ViewSource] | None = None,
     cors: Sequence[str] | None = None,
+    pick_port: int = DEFAULT_PICK_PORT,
 ) -> None:
     """Run the cockpit until interrupted (the ``perception gui`` entry point).
+    ``pick_port`` (0 = off) serves the PolyScope 5 RealSense Pick program node's
+    line protocol on the same interface (:mod:`perception.picknode`).
     ``demo`` opens the browser on the classic page's demo view
     (``/classic?demo=1``: one picture, four big buttons, one light).
     ``views`` are the extra webcam viewpoints (:mod:`perception.views`)."""
@@ -1593,6 +1669,16 @@ def serve(
         print(f"WARNING: bound to {bind} with no authentication — only do this on a trusted cell network.")
     if app.cors_origins:
         print(f"CORS: API callable from {', '.join(app.cors_origins)} (a PolyScope X URCap page, say)")
+    pick = None
+    if pick_port:
+        try:
+            pick = PickServer(bind, pick_port, app.pick_planner())
+        except OSError as exc:
+            print(f"WARNING: pick server not started on {bind}:{pick_port}: {exc}")
+        else:
+            app.pick_port = pick.server_address[1]
+            pick.start()
+            print(f"pick server (PolyScope RealSense Pick node) on {bind}:{app.pick_port}")
     app.start()
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
@@ -1602,10 +1688,21 @@ def serve(
         pass
     finally:
         server.server_close()
+        if pick is not None:
+            pick.stop()
         app.stop()
 
 
 ENV_CORS = "PERCEPTION_CORS"
+
+
+def add_pick_port_arg(ap) -> None:
+    ap.add_argument(
+        "--pick-port",
+        type=int,
+        default=DEFAULT_PICK_PORT,
+        help=f"TCP port for the PolyScope RealSense Pick program node (default {DEFAULT_PICK_PORT}; 0 = off)",
+    )
 
 
 def add_cors_arg(ap) -> None:
@@ -1829,6 +1926,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--demo", action="store_true", help="open the classic page's demo view: one picture, four big buttons"
     )
+    add_pick_port_arg(ap)
     add_cors_arg(ap)
     ap.add_argument(
         "--cell", default=None, help="cell profile (sim|ur3|ur20 or a .env path; default: $UR_CELL)"
@@ -1861,6 +1959,7 @@ def main(argv: list[str] | None = None) -> int:
         demo=bool(getattr(args, "demo", False)),
         views=views_from_args(args, config),
         cors=cors_from_args(args),
+        pick_port=args.pick_port,
     )
     return 0
 
