@@ -9,18 +9,18 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
 <!--
-  The cockpit as a ship's computer: one phosphor, a teletype, a prompt.
-  Zero dependencies. WebGL2 does the picture — the wrist colour feed through a
-  CRT shader (VIS / TRUE), the raw depth as a contour map (RANGE), and an
-  orbiting point cloud straight from the depth texture (the SCAN panel). The
-  API is the classic page's (/classic keeps every control this one leaves out:
-  hand-eye calibration, tables, depth range).
+  The cockpit as a ship's computer. The RANGE SCAN is the instrument: the depth
+  as a point cloud in the robot's base frame (each frame carries the flange pose
+  it was taken at — perception/posestream.py — so the table stays put while the
+  wrist moves), with the robot base, the camera, and a light column over every
+  object found. The wrist colour feed and the room views are tiles beside it.
+  Zero dependencies; WebGL2. /classic keeps every control this page leaves out.
 -->
 <style>
   :root {
     --void: #020403; --glass: #040806;
     --phos: #7CF7A2; --phos-hi: #D9FFE6; --phos-mid: #3FA768; --phos-dim: #1C4A30; --phos-ghost: #0E2418;
-    --amber: #FFB547; --amber-dim: #6B4A1C; --red: #FF4A3D; --red-dim: #5A1712;
+    --amber: #FFC247; --red: #FF4A3D;
     --mono: "Share Tech Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --tty: "VT323", "Share Tech Mono", ui-monospace, monospace;
     --glow: 0 0 6px rgba(124,247,162,.55), 0 0 18px rgba(124,247,162,.18);
@@ -29,73 +29,68 @@
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: radial-gradient(ellipse at 50% 38%, #06110b 0%, var(--void) 62%);
+    background: radial-gradient(ellipse at 40% 40%, #06110b 0%, var(--void) 62%);
     color: var(--phos); font-family: var(--mono); font-size: 13px; letter-spacing: .06em;
-    display: grid; grid-template-rows: auto 1fr auto; overflow: hidden;
-    text-transform: uppercase;
+    display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; text-transform: uppercase;
   }
-  body::after {  /* the glass: faint scanlines over everything that is not WebGL */
-    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 50;
-    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px);
-    mix-blend-mode: multiply;
-  }
+  body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px); mix-blend-mode: multiply; }
   ::selection { background: var(--phos); color: var(--void); }
-  a { color: inherit; }
 
-  /* ---- top line ---- */
   header { display: flex; align-items: center; gap: 22px; padding: 14px 24px 10px; }
   .ident { font-size: 12px; color: var(--phos-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ident b { color: var(--phos); font-weight: 400; text-shadow: var(--glow); letter-spacing: .32em; margin-right: 14px; }
   .lamps { display: flex; gap: 6px; margin-left: auto; }
   .lamp { font-size: 11px; padding: 2px 7px; border: 1px solid var(--phos-ghost); color: var(--phos-dim); transition: color .25s, border-color .25s, box-shadow .25s; }
   .lamp.on { color: var(--phos); border-color: var(--phos-mid); text-shadow: var(--glow); box-shadow: inset 0 0 8px rgba(124,247,162,.12); }
-  .lamp.alert { color: var(--amber); border-color: var(--amber); text-shadow: 0 0 6px rgba(255,181,71,.6); animation: blink 1.1s steps(2) infinite; }
+  .lamp.alert { color: var(--amber); border-color: var(--amber); text-shadow: 0 0 6px rgba(255,194,71,.6); animation: blink 1.1s steps(2) infinite; }
   .lamp.crit { color: var(--red); border-color: var(--red); text-shadow: 0 0 8px rgba(255,74,61,.7); animation: blink .6s steps(2) infinite; }
   .clock { font-size: 12px; color: var(--phos-mid); min-width: 9ch; text-align: right; }
   @keyframes blink { 50% { opacity: .35; } }
 
-  /* ---- the screen ---- */
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; padding: 26px 24px 0; min-height: 0; }
-  .screen { position: relative; align-self: start; justify-self: center;
-            width: min(100%, calc((100dvh - 256px) * var(--arn))); aspect-ratio: var(--arn); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 34%); gap: 20px; padding: 26px 24px 0; min-height: 0; }
+  .tag { position: absolute; top: -18px; left: 2px; right: 2px; font-size: 11px; color: var(--phos-dim); display: flex; gap: 16px; white-space: nowrap; }
+  .tag .r { margin-left: auto; }
+  .tag b { color: var(--phos-mid); font-weight: 400; }
+  .corners::before, .corners::after { content: ""; position: absolute; width: 11px; height: 11px; border: 1px solid var(--phos-mid); z-index: 3; pointer-events: none; }
+  .corners::before { left: -1px; top: -1px; border-right: 0; border-bottom: 0; }
+  .corners::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
+
+  /* the instrument */
+  #scanStage { position: relative; min-height: 0; border: 1px solid var(--phos-ghost); background: #010302; }
+  #scan, #scanOv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #scan { cursor: grab; outline: none; }
+  #scan.dragging { cursor: grabbing; }
+  #scanOv { pointer-events: none; }
+  .hint { position: absolute; left: 12px; bottom: 9px; font-size: 10.5px; color: var(--phos-dim); pointer-events: none; transition: color .3s; }
+  #scanStage.focus .hint { color: var(--phos-mid); }
+  #scanStage.focus { border-color: var(--phos-dim); }
+
+  aside { display: flex; flex-direction: column; gap: 24px; min-height: 0; overflow: hidden; }
+  .screen { position: relative; width: 100%; aspect-ratio: var(--arn); flex: none; }
   .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   #ov { cursor: none; }
-  .frame-tag { position: absolute; top: -18px; left: 2px; font-size: 11px; color: var(--phos-dim); display: flex; gap: 16px; width: 100%; }
-  .frame-tag .r { margin-left: auto; margin-right: 4px; }
   .modes { display: inline-flex; gap: 10px; }
   .modes span { cursor: pointer; }
   .modes span.sel { color: var(--phos); text-shadow: var(--glow); }
   .modes span.sel::before { content: "▸"; margin-right: 3px; }
-  #nosignal { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--tty); font-size: 28px;
-              color: var(--amber); text-shadow: 0 0 10px rgba(255,181,71,.6); letter-spacing: .3em; pointer-events: none; }
-  #nosignal[hidden] { display: none; }
-
-  aside { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
-  .tile { position: relative; border: 1px solid var(--phos-ghost); background: var(--glass); }
-  .tile .lbl { position: absolute; left: 7px; top: 5px; font-size: 10.5px; color: var(--phos-mid); z-index: 2; pointer-events: none; text-shadow: 0 0 4px #000; }
-  .tile .lbl.r { left: auto; right: 7px; }
-  .tile::before, .tile::after { content: ""; position: absolute; width: 9px; height: 9px; border: 1px solid var(--phos-mid); z-index: 2; pointer-events: none; }
-  .tile::before { left: -1px; top: -1px; border-right: 0; border-bottom: 0; }
-  .tile::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
-  #scanTile { aspect-ratio: 4 / 3; }
-  #scan { width: 100%; height: 100%; display: block; }
-  .view { aspect-ratio: 4 / 3; overflow: hidden; }
-  .view img { width: 100%; height: 100%; object-fit: cover; display: block;
-              filter: grayscale(1) sepia(1) hue-rotate(78deg) saturate(2.6) brightness(.9) contrast(1.25); opacity: .92; }
-  .view.wait img { opacity: 0; }
+  .nosig { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--tty); font-size: 22px;
+           color: var(--amber); text-shadow: 0 0 10px rgba(255,194,71,.6); letter-spacing: .3em; pointer-events: none; }
+  .nosig[hidden] { display: none; }
+  .views { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: none; }
+  .view { position: relative; aspect-ratio: 4 / 3; }
+  .view canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .view[hidden] { display: none; }
 
-  /* ---- teletype + prompt ---- */
   footer { padding: 10px 24px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 24px; align-items: end; }
   #tty { font-family: var(--tty); font-size: 21px; line-height: 1.02; height: calc(5 * 1.02em); overflow: hidden;
          display: flex; flex-direction: column; justify-content: flex-end; letter-spacing: .04em;
          -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 60%); mask-image: linear-gradient(to bottom, transparent 0, #000 60%); }
   #tty .ln { flex: none; white-space: pre; overflow: hidden; text-overflow: ellipsis; text-shadow: var(--glow); }
   #tty .ln .ts { color: var(--phos-dim); margin-right: 1.2ch; text-shadow: none; }
-  #tty .ln.warn { color: var(--amber); text-shadow: 0 0 7px rgba(255,181,71,.55); }
+  #tty .ln.warn { color: var(--amber); text-shadow: 0 0 7px rgba(255,194,71,.55); }
   #tty .ln.crit { color: var(--red); text-shadow: 0 0 8px rgba(255,74,61,.6); }
-  #tty .ln.you { color: var(--phos-mid); text-shadow: none; }
-  #tty .ln.dim { color: var(--phos-mid); text-shadow: none; }
+  #tty .ln.you, #tty .ln.dim { color: var(--phos-mid); text-shadow: none; }
   .prompt { grid-column: 1; display: flex; align-items: center; gap: 1ch; font-family: var(--tty); font-size: 24px; }
   .prompt .gt { color: var(--phos); text-shadow: var(--glow); }
   #cmd { flex: 1; background: transparent; border: 0; outline: 0; color: var(--phos-hi); font: inherit; letter-spacing: .06em;
@@ -113,12 +108,10 @@
   #stopKey:hover { box-shadow: 0 0 26px rgba(255,74,61,.5), inset 0 0 14px rgba(255,74,61,.3); border-color: var(--red); }
   #stopKey:active { background: var(--red); color: var(--void); }
 
-  @media (max-width: 900px) {
-    body { overflow: auto; }
-    main { grid-template-columns: 1fr; padding: 0 16px; }
-    .screen { width: 100%; }
-    aside { flex-direction: row; flex-wrap: wrap; }
-    aside .tile { flex: 1 1 140px; }
+  @media (max-width: 980px) {
+    body { overflow: auto; grid-template-rows: auto auto auto; }
+    main { grid-template-columns: 1fr; padding: 26px 16px 0; }
+    #scanStage { height: 62vh; }
     header { padding: 12px 16px 8px; flex-wrap: wrap; gap: 10px; }
     .lamps { margin-left: 0; }
     footer { grid-template-columns: 1fr; padding: 10px 16px 16px; }
@@ -133,6 +126,7 @@
   <div class="ident"><b>PERCEPTION</b><span id="ident">— ESTABLISHING LINK —</span></div>
   <div class="lamps">
     <span class="lamp" id="lCam" title="camera streaming">CAM</span>
+    <span class="lamp" id="lPose" title="live flange pose (RTDE) in every frame">POSE</span>
     <span class="lamp" id="lLink" title="robot controller answers">LINK</span>
     <span class="lamp" id="lPwr" title="robot mode RUNNING">PWR</span>
     <span class="lamp" id="lSafe" title="safety NORMAL">SAFE</span>
@@ -142,19 +136,23 @@
 </header>
 
 <main>
-  <div class="screen" id="screen">
-    <div class="frame-tag">
-      <span class="modes" id="modes"><span data-m="VIS" class="sel">VIS</span><span data-m="TRUE">TRUE</span><span data-m="RANGE">RANGE</span></span>
-      <span class="r" id="feedTag">— · —</span>
-    </div>
-    <canvas id="gl"></canvas>
-    <canvas id="ov"></canvas>
-    <div id="nosignal">NO SIGNAL</div>
+  <div id="scanStage" class="corners">
+    <div class="tag"><b>RANGE SCAN</b><span id="scanFrame">CAMERA FRAME</span><span class="r" id="scanTag">—</span></div>
+    <canvas id="scan" tabindex="0" aria-label="range scan: drag to orbit, wheel to zoom, WASD to pan, space to snap, click to recentre"></canvas>
+    <canvas id="scanOv"></canvas>
+    <div class="hint">DRAG ORBIT · RIGHT-DRAG PAN · WHEEL ZOOM · WASD/QE PAN · SPACE SNAP · CLICK A POINT TO CENTRE</div>
   </div>
   <aside>
-    <div class="tile" id="scanTile"><span class="lbl">RANGE SCAN</span><span class="lbl r" id="scanTag">—</span><canvas id="scan"></canvas></div>
-    <div class="tile view wait" id="view0" hidden><span class="lbl" id="view0Name">VIEW 1</span><img id="view0Img" alt=""></div>
-    <div class="tile view wait" id="view1" hidden><span class="lbl" id="view1Name">VIEW 2</span><img id="view1Img" alt=""></div>
+    <div class="screen corners" id="screen">
+      <div class="tag"><span class="modes" id="modes"><span data-m="VIS" class="sel">VIS</span><span data-m="TRUE">TRUE</span><span data-m="RANGE">RANGE</span></span><span class="r" id="feedTag">— · —</span></div>
+      <canvas id="gl"></canvas>
+      <canvas id="ov"></canvas>
+      <div class="nosig" id="nosignal">NO SIGNAL</div>
+    </div>
+    <div class="views">
+      <div class="view corners" id="view0" hidden><div class="tag"><span id="view0Name">VIEW 1</span></div><canvas id="view0Cv"></canvas><div class="nosig" id="view0Wait">—</div></div>
+      <div class="view corners" id="view1" hidden><div class="tag"><span id="view1Name">VIEW 2</span></div><canvas id="view1Cv"></canvas><div class="nosig" id="view1Wait">—</div></div>
+    </div>
   </aside>
 </main>
 
@@ -163,8 +161,8 @@
   <label class="prompt"><span class="gt">&gt;</span><input id="cmd" autocomplete="off" spellcheck="false" placeholder="HELP" aria-label="command"></label>
   <div class="keys">
     <button id="kStart" title="power on + brake release (START)">Start</button>
-    <button id="kFind" title="pick out the nearest object (FIND)">Find</button>
-    <button id="kGo" disabled title="over the object, down to the standoff, back (APPROACH)">Approach</button>
+    <button id="kFind" title="find every block (SCAN) — click the feed for one object">Scan</button>
+    <button id="kGo" disabled title="over the target, down to the standoff, back (APPROACH)">Approach</button>
     <button id="stopKey" title="stop all motion now (STOP, or Esc twice)">Stop</button>
   </div>
 </footer>
@@ -177,22 +175,24 @@
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clock = () => new Date().toLocaleTimeString([], { hour12: false });
   const f3 = (v, d = 3) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : (v >= 0 ? '+' : '') + v.toFixed(d);
-  const vec = (v, d = 3) => v ? v.map((x) => f3(x, d)).join(' ') : '—';
+  const vec = (v, d = 3) => v ? Array.from(v).map((x) => f3(x, d)).join(' ') : '—';
+  const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
+  const ISO = Math.asin(1 / Math.sqrt(3));   // 35.26°: the isometric elevation
   const S = {
-    seq: 0, running: true, header: null, depth: null, feat: null, maskSeq: 0, hover: null, drag: null, box: null,
+    seq: 0, running: true, header: null, depth: null, feat: null, drag: null, hover: null,
     robot: null, located: null, mode: 'VIS', lastEvent: 0, state: null, confirm: null, busy: false,
-    acquiredAt: 0, frameAt: 0, cloudCentre: [0, 0, 0.4], history: [], hist: -1, freedrive: false,
+    acquiredAt: 0, frameAt: 0, history: [], hist: -1, freedrive: false,
+    Tbc: null,            // colour camera → base (4×4, column-major) of the newest frame, or null
+    tableZ: null,         // the work surface height in the scan's world frame
+    objects: [],          // [{id, c:[x,y,z], ax:[[..],[..]], ext:[a,b], seen, missed, target}]
+    nextId: 1, poi: null, // point of interest {p, at}
   };
 
   // ---- teletype ---------------------------------------------------------------------
   const tty = { q: [], typing: false };
-  function say(text, kind = '') {
-    for (const line of String(text).split('\n')) tty.q.push({ text: line.toUpperCase(), kind });
-    if (!tty.typing) pump();
-  }
+  function say(text, kind = '') { for (const line of String(text).split('\n')) tty.q.push({ text: line.toUpperCase(), kind }); if (!tty.typing) pump(); }
   async function pump() {
-    tty.typing = true;
-    const el = $('tty');
+    tty.typing = true; const el = $('tty');
     while (tty.q.length) {
       const { text, kind } = tty.q.shift();
       const li = document.createElement('div'); li.className = 'ln ' + kind;
@@ -204,8 +204,6 @@
     }
     tty.typing = false;
   }
-
-  // ---- api ------------------------------------------------------------------------
   async function post(url, body) {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
     let j; try { j = await r.json(); } catch (e) { j = { ok: false, error: `HTTP ${r.status}` }; }
@@ -215,105 +213,41 @@
   const why = (j) => j.error || j.reply || (j.safety && j.safety.violations && j.safety.violations.map((v) => v.message || v.kind || v).join('; '))
     || (j.protective_stop ? 'protective stop' : 'refused');
 
-  // ---- WebGL2: the CRT feed + the point cloud ------------------------------------------
-  const K_BARREL = 0.035;
-  const barrel = (x, y) => { const cx = x - .5, cy = y - .5, r2 = (cx * cx + cy * cy) * 4, k = 1 + K_BARREL * r2; return [.5 + cx * k, .5 + cy * k]; };
-  const unbarrel = (fx, fy) => {   // feed uv → screen uv (fixed-point on the forward map)
-    let x = fx, y = fy;
-    for (let i = 0; i < 4; i++) { const cx = x - .5, cy = y - .5, k = 1 + K_BARREL * (cx * cx + cy * cy) * 4; x = .5 + (fx - .5) / k; y = .5 + (fy - .5) / k; }
-    return [x, y];
+  // ---- 3-D maths (column-major 4×4) -----------------------------------------------------
+  const M = {
+    ident() { return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]); },
+    mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; },
+    persp(fov, asp, n, f) { const t = 1 / Math.tan(fov / 2), o = new Float32Array(16); o[0] = t / asp; o[5] = t; o[10] = (f + n) / (n - f); o[11] = -1; o[14] = 2 * f * n / (n - f); return o; },
+    lookAt(e, t, up) {
+      let zx = e[0] - t[0], zy = e[1] - t[1], zz = e[2] - t[2]; let l = Math.hypot(zx, zy, zz) || 1; zx /= l; zy /= l; zz /= l;
+      let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx; l = Math.hypot(xx, xy, xz) || 1; xx /= l; xy /= l; xz /= l;
+      const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+      return new Float32Array([xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0,
+        -(xx * e[0] + xy * e[1] + xz * e[2]), -(yx * e[0] + yy * e[1] + yz * e[2]), -(zx * e[0] + zy * e[1] + zz * e[2]), 1]);
+    },
+    fromPose(p) {   // UR pose [x y z rx ry rz] (axis-angle) → 4×4
+      const [x, y, z, rx, ry, rz] = p, th = Math.hypot(rx, ry, rz), o = M.ident();
+      if (th > 1e-12) {
+        const kx = rx / th, ky = ry / th, kz = rz / th, c = Math.cos(th), s = Math.sin(th), v = 1 - c;
+        const R = [[c + kx * kx * v, kx * ky * v - kz * s, kx * kz * v + ky * s], [ky * kx * v + kz * s, c + ky * ky * v, ky * kz * v - kx * s], [kz * kx * v - ky * s, kz * ky * v + kx * s, c + kz * kz * v]];
+        for (let r = 0; r < 3; r++) for (let cc = 0; cc < 3; cc++) o[cc * 4 + r] = R[r][cc];
+      }
+      o[12] = x; o[13] = y; o[14] = z; return o;
+    },
+    invRigid(m) {
+      const o = M.ident();
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) o[c * 4 + r] = m[r * 4 + c];
+      for (let r = 0; r < 3; r++) o[12 + r] = -(o[r] * m[12] + o[4 + r] * m[13] + o[8 + r] * m[14]);
+      return o;
+    },
+    apply(m, p) { return [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]]; },
+    clip(m, p) { const x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13], w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15]; return [x, y, w]; },
   };
-  const glc = $('gl'), gl = glc.getContext('webgl2', { antialias: false, premultipliedAlpha: false });
-  const scanc = $('scan'), sgl = scanc.getContext('webgl2', { antialias: true, premultipliedAlpha: false });
-  const VS_QUAD = `#version 300 es
-    in vec2 p; out vec2 vS; void main() { vS = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
-  const FS_CRT = `#version 300 es
-    precision highp float; precision highp usampler2D;
-    in vec2 vS; out vec4 o;
-    uniform sampler2D uFeed, uMask; uniform usampler2D uDepth;
-    uniform vec2 uRes, uFeedSize; uniform float uTime, uPower, uScale, uHasMask, uHasDepth, uHasFeed, uDpr, uAcq; uniform int uMode;
-    const vec3 P0 = vec3(.006, .03, .016), P1 = vec3(.40, .95, .58), P2 = vec3(.86, 1., .9), AMB = vec3(1., .71, .28);
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-    vec3 phos(float l) { vec3 c = mix(P0, P1, smoothstep(.02, .78, l)); return mix(c, P2, smoothstep(.72, 1., l)); }
-    float luma(vec3 c) { return dot(c, vec3(.299, .587, .114)); }
-    void main() {
-      vec2 s = vec2(vS.x, 1. - vS.y);                       // screen uv, y down
-      vec2 c = s - .5; float k = 1. + ${K_BARREL.toFixed(3)} * dot(c, c) * 4.;
-      vec2 f = .5 + c * k;                                   // feed uv (the tube's curvature)
-      float inside = step(0., f.x) * step(f.x, 1.) * step(0., f.y) * step(f.y, 1.);
-      // power-on: a bright line opens into the picture
-      float pw = clamp(uPower, 0., 1.), openY = smoothstep(.15, 1., pw), openX = smoothstep(0., .25, pw);
-      float gate = step(abs(s.y - .5), max(.002, openY * .5)) * step(abs(s.x - .5), openX * .5);
-      vec3 col = vec3(0.);
-      if (uMode == 2 && uHasDepth > .5) {
-        uint d = texture(uDepth, f).r; float z = float(d) * uScale;
-        if (d == 0u) col = P0 * (.6 + .8 * hash(floor(f * uFeedSize * .5) + floor(uTime * 12.)));
-        else {
-          float t = z / .025, w = fwidth(t);   // an isoline every 25 mm, a heavier one every 100 mm
-          float minor = 1. - clamp(abs(fract(t + .5) - .5) / max(w, 1e-4) - .2, 0., 1.);
-          float major = 1. - clamp(abs(fract(z / .1 + .5) - .5) / max(fwidth(z / .1), 1e-4) - .3, 0., 1.);
-          float near = 1. - smoothstep(.15, 1.6, z);
-          col = phos(.12 + .35 * near) * .55 + P1 * minor * .55 + P2 * major * .8;
-        }
-      } else if (uHasFeed > .5) {
-        vec3 rgb;
-        if (uMode == 1) {   // TRUE: colour, a little convergence error
-          vec2 ca = (f - .5) * .0025;
-          rgb = vec3(texture(uFeed, f + ca).r, texture(uFeed, f).g, texture(uFeed, f - ca).b);
-          vec3 bl = textureLod(uFeed, f, 4.).rgb;
-          col = rgb * .92 + bl * .22;
-        } else {            // VIS: one phosphor, bloom from the mip chain
-          float l = luma(texture(uFeed, f).rgb);
-          float b = luma(textureLod(uFeed, f, 3.).rgb) * .55 + luma(textureLod(uFeed, f, 5.).rgb) * .45;
-          col = phos(l) + P1 * pow(b, 1.6) * .38;
-        }
-      }
-      if (uHasMask > .5) {  // the target: amber tint, bright rim, a scan line sweeping it while acquiring
-        vec2 px = 2. / uFeedSize;
-        float m = texture(uMask, f).r;
-        float e = abs(m - .25 * (texture(uMask, f + vec2(px.x, 0)).r + texture(uMask, f - vec2(px.x, 0)).r
-                                + texture(uMask, f + vec2(0, px.y)).r + texture(uMask, f - vec2(0, px.y)).r));
-        float sweep = uAcq < 1. ? smoothstep(.02, 0., abs(f.y - uAcq)) : 0.;
-        col = mix(col, col * .45 + AMB * (.18 + .35 * luma(col)), m * .85) + AMB * clamp(e * 5., 0., 1.) * 1.3 + AMB * sweep * m;
-      }
-      // the tube: scanlines, grain, flicker, a slow rolling band, vignette
-      float sl = .80 + .20 * pow(cos(gl_FragCoord.y / uDpr * 1.7), 2.);
-      float grain = (hash(gl_FragCoord.xy + fract(uTime) * 91.) - .5) * .06;
-      float roll = 1. + .045 * smoothstep(.06, 0., abs(fract(s.y - uTime * .06) - .5));
-      float flick = .985 + .015 * sin(uTime * 97.);
-      vec2 v = f * (1. - f); float vig = pow(clamp(v.x * v.y * 16., 0., 1.), .22);
-      col = (col * sl * roll * flick + grain * P1) * vig;
-      col += P2 * (1. - smoothstep(0., .02, pw)) * step(abs(s.y - .5), .004) * 2.;   // the power-on line
-      o = vec4(col * inside * gate, 1.);
-    }`;
-  const VS_CLOUD = `#version 300 es
-    precision highp float; precision highp usampler2D;
-    uniform usampler2D uDepth; uniform sampler2D uMask; uniform vec4 uK; uniform ivec2 uSize; uniform int uStep, uCols;
-    uniform float uScale, uDpr, uHasMask; uniform mat4 uMVP; uniform vec3 uC;
-    out float vZ; out float vM;
-    void main() {
-      ivec2 p = ivec2((gl_VertexID % uCols) * uStep, (gl_VertexID / uCols) * uStep);
-      uint d = texelFetch(uDepth, p, 0).r; float z = float(d) * uScale;
-      vM = uHasMask > .5 ? texture(uMask, (vec2(p) + .5) / vec2(uSize)).r : 0.;
-      vZ = z;
-      vec3 X = vec3((float(p.x) - uK.z) / uK.x * z, (float(p.y) - uK.w) / uK.y * z, z);
-      gl_Position = (d == 0u || z > 3.) ? vec4(9., 9., 9., 1.) : uMVP * vec4(X - uC, 1.);
-      gl_PointSize = (1.25 + vM * 1.2) * uDpr;
-    }`;
-  const FS_CLOUD = `#version 300 es
-    precision highp float; in float vZ; in float vM; out vec4 o; uniform float uTime, uZc;
-    void main() {
-      float near = clamp(1.25 - vZ / (uZc * 1.4), .12, 1.);
-      float sweep = smoothstep(.035, 0., abs(fract(vZ * 2.2 - uTime * .35) - .5));
-      vec3 c = mix(vec3(.40, .95, .58) * near, vec3(.86, 1., .9), sweep * .7);
-      c = mix(c, vec3(1., .71, .28) * 1.2, vM);
-      o = vec4(c, .30 + .55 * max(vM, sweep));
-    }`;
-  const VS_LINES = `#version 300 es
-    in vec3 p; uniform mat4 uMVP; void main() { gl_Position = uMVP * vec4(p, 1.); }`;
-  const FS_LINES = `#version 300 es
-    precision highp float; out vec4 o; uniform float uA; void main() { o = vec4(.25, .65, .40, uA); }`;
+  // no live pose: a stand-in world where the camera looks straight down from the origin
+  const CAM_DOWN = new Float32Array([1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1]);
+  const camToWorld = () => S.Tbc || CAM_DOWN;
 
+  // ---- WebGL plumbing -----------------------------------------------------------------------
   function program(g, vs, fs) {
     const mk = (type, src) => { const sh = g.createShader(type); g.shaderSource(sh, src); g.compileShader(sh);
       if (!g.getShaderParameter(sh, g.COMPILE_STATUS)) throw new Error(g.getShaderInfoLog(sh)); return sh; };
@@ -323,204 +257,458 @@
     for (let i = 0; i < n; i++) { const a = g.getActiveUniform(p, i); u[a.name] = g.getUniformLocation(p, a.name); }
     return { p, u };
   }
-  function texture(g, integer) {
+  function texture(g, integer, mips) {
     const t = g.createTexture(); g.bindTexture(g.TEXTURE_2D, t);
     const filt = integer ? g.NEAREST : g.LINEAR;
-    g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, filt); g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, filt);
+    g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, mips ? g.LINEAR_MIPMAP_LINEAR : filt); g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, filt);
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE); g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
     if (integer) g.texImage2D(g.TEXTURE_2D, 0, g.R16UI, 1, 1, 0, g.RED_INTEGER, g.UNSIGNED_SHORT, new Uint16Array(1));
     else g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, 1, 1, 0, g.RGBA, g.UNSIGNED_BYTE, new Uint8Array(4));
     return t;
   }
-  let R = null;   // main renderer
-  let C = null;   // cloud renderer
-  try {
-    if (!gl) throw new Error('no WebGL2');
-    const crt = program(gl, VS_QUAD, FS_CRT);
-    const quad = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, quad);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-    const loc = gl.getAttribLocation(crt.p, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    R = { crt, vao, feed: texture(gl), mask: texture(gl), depth: texture(gl, true), hasFeed: 0, hasMask: 0, hasDepth: 0 };
-    gl.bindTexture(gl.TEXTURE_2D, R.feed); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  } catch (e) { R = null; setTimeout(() => say(`display: ${e.message} — no picture on this browser`, 'crit'), 1200); }
+  function upload(g, tex, integer, w, h, data, mips) {
+    g.bindTexture(g.TEXTURE_2D, tex); g.pixelStorei(g.UNPACK_ALIGNMENT, 1);
+    if (integer) g.texImage2D(g.TEXTURE_2D, 0, g.R16UI, w, h, 0, g.RED_INTEGER, g.UNSIGNED_SHORT, data);
+    else g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, g.RGBA, g.UNSIGNED_BYTE, data);
+    if (mips) g.generateMipmap(g.TEXTURE_2D);
+  }
+  function fit(cv) { const d = DPR(), w = Math.round(cv.clientWidth * d), h = Math.round(cv.clientHeight * d); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } return d; }
+
+  // ---- the CRT tube: the wrist feed (VIS / TRUE / RANGE) and the room views (VIEW) ----------------
+  const K_BARREL = 0.035;
+  const barrel = (x, y) => { const cx = x - .5, cy = y - .5, k = 1 + K_BARREL * (cx * cx + cy * cy) * 4; return [.5 + cx * k, .5 + cy * k]; };
+  const unbarrel = (fx, fy) => { let x = fx, y = fy; for (let i = 0; i < 4; i++) { const cx = x - .5, cy = y - .5, k = 1 + K_BARREL * (cx * cx + cy * cy) * 4; x = .5 + (fx - .5) / k; y = .5 + (fy - .5) / k; } return [x, y]; };
+  const VS_QUAD = `#version 300 es
+    in vec2 p; out vec2 vS; void main() { vS = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
+  const FS_CRT = `#version 300 es
+    precision highp float; precision highp usampler2D;
+    in vec2 vS; out vec4 o;
+    uniform sampler2D uFeed, uMask; uniform usampler2D uDepth;
+    uniform vec2 uFeedSize; uniform float uTime, uPower, uScale, uHasMask, uHasDepth, uHasFeed, uDpr, uAcq; uniform int uMode;
+    const vec3 P0 = vec3(.006, .03, .016), P1 = vec3(.40, .95, .58), P2 = vec3(.86, 1., .9), AMB = vec3(1., .76, .28);
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    vec3 phos(float l) { vec3 c = mix(P0, P1, smoothstep(.02, .78, l)); return mix(c, P2, smoothstep(.72, 1., l)); }
+    float luma(vec3 c) { return dot(c, vec3(.299, .587, .114)); }
+    void main() {
+      vec2 s = vec2(vS.x, 1. - vS.y), c = s - .5;
+      vec2 f = .5 + c * (1. + ${K_BARREL.toFixed(3)} * dot(c, c) * 4.);
+      float inside = step(0., f.x) * step(f.x, 1.) * step(0., f.y) * step(f.y, 1.);
+      float pw = clamp(uPower, 0., 1.), gate = step(abs(s.y - .5), max(.002, smoothstep(.15, 1., pw) * .5)) * step(abs(s.x - .5), smoothstep(0., .25, pw) * .5);
+      vec3 col = vec3(0.);
+      if (uMode == 2 && uHasDepth > .5) {            // RANGE: isolines every 25 mm, heavier every 100 mm
+        uint d = texture(uDepth, f).r; float z = float(d) * uScale;
+        if (d == 0u) col = P0 * (.6 + .8 * hash(floor(f * uFeedSize * .5) + floor(uTime * 12.)));
+        else {
+          float t = z / .025, w = fwidth(t);
+          float minor = 1. - clamp(abs(fract(t + .5) - .5) / max(w, 1e-4) - .2, 0., 1.);
+          float major = 1. - clamp(abs(fract(z / .1 + .5) - .5) / max(fwidth(z / .1), 1e-4) - .3, 0., 1.);
+          col = phos(.12 + .35 * (1. - smoothstep(.15, 1.6, z))) * .55 + P1 * minor * .55 + P2 * major * .8;
+        }
+      } else if (uHasFeed > .5) {
+        if (uMode == 1) {                               // TRUE: colour, a little convergence error
+          vec2 ca = (f - .5) * .0025;
+          col = vec3(texture(uFeed, f + ca).r, texture(uFeed, f).g, texture(uFeed, f - ca).b) * .92 + textureLod(uFeed, f, 4.).rgb * .22;
+        } else if (uMode == 3) {                        // VIEW: near-natural colour through the same glass
+          vec3 rgb = texture(uFeed, f).rgb, bl = textureLod(uFeed, f, 3.).rgb;
+          float l = luma(rgb);
+          col = mix(rgb, vec3(l) * vec3(.93, 1., .95), .35) * .95 + bl * .16;
+          col = (col - .5) * 1.08 + .5;
+        } else {                                        // VIS: one phosphor, bloom from the mip chain
+          float l = luma(texture(uFeed, f).rgb), b = luma(textureLod(uFeed, f, 3.).rgb) * .55 + luma(textureLod(uFeed, f, 5.).rgb) * .45;
+          col = phos(l) + P1 * pow(b, 1.6) * .38;
+        }
+      }
+      if (uHasMask > .5) {
+        vec2 px = 2. / uFeedSize; float m = texture(uMask, f).r;
+        float e = abs(m - .25 * (texture(uMask, f + vec2(px.x, 0)).r + texture(uMask, f - vec2(px.x, 0)).r + texture(uMask, f + vec2(0, px.y)).r + texture(uMask, f - vec2(0, px.y)).r));
+        float sweep = uAcq < 1. ? smoothstep(.02, 0., abs(f.y - uAcq)) : 0.;
+        col = mix(col, col * .45 + AMB * (.18 + .35 * luma(col)), m * .85) + AMB * clamp(e * 5., 0., 1.) * 1.3 + AMB * sweep * m;
+      }
+      float sl = .80 + .20 * pow(cos(gl_FragCoord.y / uDpr * 1.7), 2.);
+      float grain = (hash(gl_FragCoord.xy + fract(uTime) * 91.) - .5) * (uMode == 3 ? .10 : .06);
+      float roll = 1. + .045 * smoothstep(.06, 0., abs(fract(s.y - uTime * .06) - .5));
+      float flick = .985 + .015 * sin(uTime * 97.);
+      vec2 v = f * (1. - f); float vig = pow(clamp(v.x * v.y * 16., 0., 1.), .22);
+      col = (col * sl * roll * flick + grain * (uMode == 3 ? vec3(1.) : P1)) * vig;
+      col += P2 * (1. - smoothstep(0., .02, pw)) * step(abs(s.y - .5), .004) * 2.;
+      o = vec4(col * inside * gate, 1.);
+    }`;
+  function makeTube(cv, withDepth) {
+    const g = cv.getContext('webgl2', { antialias: false, premultipliedAlpha: false });
+    if (!g) return null;
+    const crt = program(g, VS_QUAD, FS_CRT);
+    const buf = g.createBuffer(); g.bindBuffer(g.ARRAY_BUFFER, buf); g.bufferData(g.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), g.STATIC_DRAW);
+    const vao = g.createVertexArray(); g.bindVertexArray(vao); const loc = g.getAttribLocation(crt.p, 'p'); g.enableVertexAttribArray(loc); g.vertexAttribPointer(loc, 2, g.FLOAT, false, 0, 0);
+    return { g, cv, crt, vao, feed: texture(g, false, true), mask: texture(g), depth: withDepth ? texture(g, true) : null, hasFeed: 0, hasMask: 0, hasDepth: 0, w: 848, h: 480, born: performance.now() };
+  }
+  function drawTube(T, mode, now) {
+    const g = T.g, dpr = fit(T.cv), t = (now - T.born) / 1000, h = S.header;
+    g.viewport(0, 0, T.cv.width, T.cv.height); g.useProgram(T.crt.p); g.bindVertexArray(T.vao);
+    g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, T.feed); g.uniform1i(T.crt.u.uFeed, 0);
+    g.activeTexture(g.TEXTURE1); g.bindTexture(g.TEXTURE_2D, T.mask); g.uniform1i(T.crt.u.uMask, 1);
+    if (T.depth) { g.activeTexture(g.TEXTURE2); g.bindTexture(g.TEXTURE_2D, T.depth); g.uniform1i(T.crt.u.uDepth, 2); }
+    g.uniform2f(T.crt.u.uFeedSize, T.w, T.h); g.uniform1f(T.crt.u.uTime, reduced ? 0 : t); g.uniform1f(T.crt.u.uDpr, dpr);
+    g.uniform1f(T.crt.u.uPower, reduced ? 1 : Math.min(1, Math.max(0, (t - 0.35) / 0.9)));
+    g.uniform1f(T.crt.u.uScale, h ? h.depth_scale_m : 0.001);
+    g.uniform1f(T.crt.u.uHasFeed, T.hasFeed); g.uniform1f(T.crt.u.uHasMask, T.hasMask); g.uniform1f(T.crt.u.uHasDepth, T.hasDepth);
+    g.uniform1f(T.crt.u.uAcq, S.acquiredAt ? Math.min(1.01, (now - S.acquiredAt) / 700) : 2);
+    g.uniform1i(T.crt.u.uMode, mode);
+    g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
+  }
+  let feedTube = null, viewTubes = [null, null];
+  try { feedTube = makeTube($('gl'), true); } catch (e) { setTimeout(() => say(`display: ${e.message}`, 'crit'), 1200); }
+  try { viewTubes = [makeTube($('view0Cv'), false), makeTube($('view1Cv'), false)]; } catch (e) { viewTubes = [null, null]; }
+
+  // ---- the RANGE SCAN ------------------------------------------------------------------------------
+  const VS_CLOUD = `#version 300 es
+    precision highp float; precision highp usampler2D;
+    uniform usampler2D uDepth; uniform sampler2D uMask; uniform vec4 uK; uniform ivec2 uSize; uniform int uStep, uCols;
+    uniform float uScale, uDpr, uHasMask, uTableZ; uniform mat4 uModel, uVP;
+    out float vH; out float vM; out vec3 vW;
+    void main() {
+      ivec2 p = ivec2((gl_VertexID % uCols) * uStep, (gl_VertexID / uCols) * uStep);
+      uint d = texelFetch(uDepth, p, 0).r; float z = float(d) * uScale;
+      vM = uHasMask > .5 ? texture(uMask, (vec2(p) + .5) / vec2(uSize)).r : 0.;
+      vec3 X = vec3((float(p.x) - uK.z) / uK.x * z, (float(p.y) - uK.w) / uK.y * z, z);
+      vec4 w = uModel * vec4(X, 1.); vW = w.xyz; vH = w.z - uTableZ;
+      vec4 c = uVP * w;
+      gl_Position = (d == 0u || z > 3.) ? vec4(9., 9., 9., 1.) : c;
+      gl_PointSize = clamp(2.2 / c.w, 1., 4.) * uDpr * (1. + vM * .6);
+    }`;
+  const FS_CLOUD = `#version 300 es
+    precision highp float; in float vH; in float vM; in vec3 vW; out vec4 o; uniform float uTime, uSweep, uDensity;
+    void main() {
+      float up = smoothstep(.004, .03, vH);                       // what stands off the table glows
+      vec3 c = mix(vec3(.16, .50, .30), vec3(.62, 1., .74), up);
+      float ang = atan(vW.y, vW.x), s = fract((ang / 6.2831853) - uTime * .08);   // the motion-tracker sweep round the base
+      float sweep = uSweep * smoothstep(.06, 0., s) ;
+      c += vec3(.55, 1., .7) * sweep * .8;
+      c = mix(c, vec3(1., .78, .3) * 1.25, vM);
+      o = vec4(c, (.30 + .45 * up + .35 * sweep) * uDensity + .5 * vM);   // fewer screen pixels per point when far: dim them
+    }`;
+  const VS_LINES = `#version 300 es
+    in vec3 p; in vec4 c; uniform mat4 uVP; out vec4 vC; void main() { vC = c; gl_Position = uVP * vec4(p, 1.); }`;
+  const FS_LINES = `#version 300 es
+    precision highp float; in vec4 vC; out vec4 o; void main() { o = vC; }`;
+  const VS_BEAM = `#version 300 es
+    in vec3 p; in vec2 a; uniform mat4 uVP; out vec2 vA; void main() { vA = a; gl_Position = uVP * vec4(p, 1.); }`;
+  const FS_BEAM = `#version 300 es
+    precision highp float; in vec2 vA; out vec4 o; uniform float uTime;
+    void main() {   // vA.x: 0 at the base → 1 at the top; vA.y: 0 at the rim → 1 facing the viewer (the column's core)
+      float fall = pow(1. - vA.x, 1.6), core = pow(vA.y, 2.2);
+      float ripple = .75 + .25 * sin(vA.x * 22. - uTime * 3.);
+      o = vec4(vec3(1., .78, .30) * (.25 + .75 * core), fall * (.10 + .55 * core) * ripple);
+    }`;
+  const scanCv = $('scan'), sgl = scanCv.getContext('webgl2', { antialias: true, premultipliedAlpha: false });
+  let C = null;
   try {
     if (!sgl) throw new Error('no WebGL2');
-    const pts = program(sgl, VS_CLOUD, FS_CLOUD), lines = program(sgl, VS_LINES, FS_LINES);
-    const lbuf = sgl.createBuffer(); const lvao = sgl.createVertexArray(); sgl.bindVertexArray(lvao); sgl.bindBuffer(sgl.ARRAY_BUFFER, lbuf);
-    const ll = sgl.getAttribLocation(lines.p, 'p'); sgl.enableVertexAttribArray(ll); sgl.vertexAttribPointer(ll, 3, sgl.FLOAT, false, 0, 0);
-    C = { pts, lines, lbuf, lvao, empty: sgl.createVertexArray(), depth: texture(sgl, true), mask: texture(sgl), hasMask: 0, n: 0 };
-  } catch (e) { C = null; }
+    const cloud = program(sgl, VS_CLOUD, FS_CLOUD), lines = program(sgl, VS_LINES, FS_LINES), beam = program(sgl, VS_BEAM, FS_BEAM);
+    const mkVao = (prog, attrs) => {
+      const vao = sgl.createVertexArray(), buf = sgl.createBuffer(); sgl.bindVertexArray(vao); sgl.bindBuffer(sgl.ARRAY_BUFFER, buf);
+      const stride = attrs.reduce((s, [, n]) => s + n, 0) * 4; let off = 0;
+      for (const [name, n] of attrs) { const l = sgl.getAttribLocation(prog.p, name); sgl.enableVertexAttribArray(l); sgl.vertexAttribPointer(l, n, sgl.FLOAT, false, stride, off); off += n * 4; }
+      return { vao, buf, n: 0 };
+    };
+    C = { cloud, lines, beam, empty: sgl.createVertexArray(), depth: texture(sgl, true), mask: texture(sgl), hasMask: 0,
+          L: mkVao(lines, [['p', 3], ['c', 4]]), B: mkVao(beam, [['p', 3], ['a', 2]]) };
+  } catch (e) { C = null; setTimeout(() => say(`scan: ${e.message}`, 'crit'), 1400); }
 
-  // mat4, column-major
-  const M = {
-    mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; },
-    persp(fov, asp, n, f) { const t = 1 / Math.tan(fov / 2), o = new Float32Array(16); o[0] = t / asp; o[5] = t; o[10] = (f + n) / (n - f); o[11] = -1; o[14] = 2 * f * n / (n - f); return o; },
-    rotY(a) { const c = Math.cos(a), s = Math.sin(a); return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]); },
-    rotX(a) { const c = Math.cos(a), s = Math.sin(a); return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]); },
-    tr(x, y, z) { return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]); },
-    camToGl: new Float32Array([1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1]),   // camera (x right, y down, z ahead) → GL
-  };
-
-  function fit(cv) {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
-    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-    return dpr;
+  // the viewer: orbit about a target; `goal` eases, the drift is slow and stops when touched
+  const V = { t: [0, 0, -0.3], yaw: 0.8, pitch: ISO, dist: 1.1 };
+  const G = { t: [0, 0, -0.3], yaw: 0.8, pitch: ISO, dist: 1.1 };
+  let touchedAt = -1e9, autoTarget = true;
+  const touch = () => { touchedAt = performance.now(); };
+  function viewMatrices(W, H) {
+    const cp = Math.cos(V.pitch), eye = [V.t[0] + V.dist * cp * Math.cos(V.yaw), V.t[1] + V.dist * cp * Math.sin(V.yaw), V.t[2] + V.dist * Math.sin(V.pitch)];
+    const view = M.lookAt(eye, V.t, [0, 0, 1]), proj = M.persp(0.72, W / H, 0.01, 20);
+    return { vp: M.mul(proj, view), eye };
   }
-  const bootAt = performance.now();
-  function frame(now) {
-    const t = (now - bootAt) / 1000, h = S.header;
-    const dpr = fit(glc); fit($('ov'));
-    if (R) {
-      gl.viewport(0, 0, glc.width, glc.height); gl.useProgram(R.crt.p); gl.bindVertexArray(R.vao);
-      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, R.feed); gl.uniform1i(R.crt.u.uFeed, 0);
-      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, R.mask); gl.uniform1i(R.crt.u.uMask, 1);
-      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, R.depth); gl.uniform1i(R.crt.u.uDepth, 2);
-      gl.uniform2f(R.crt.u.uRes, glc.width, glc.height);
-      gl.uniform2f(R.crt.u.uFeedSize, h ? h.width : 848, h ? h.height : 480);
-      gl.uniform1f(R.crt.u.uTime, reduced ? 0 : t); gl.uniform1f(R.crt.u.uDpr, dpr);
-      gl.uniform1f(R.crt.u.uPower, reduced ? 1 : Math.min(1, Math.max(0, (t - 0.35) / 0.9)));
-      gl.uniform1f(R.crt.u.uScale, h ? h.depth_scale_m : 0.001);
-      gl.uniform1f(R.crt.u.uHasFeed, R.hasFeed); gl.uniform1f(R.crt.u.uHasMask, R.hasMask); gl.uniform1f(R.crt.u.uHasDepth, R.hasDepth);
-      gl.uniform1f(R.crt.u.uAcq, S.acquiredAt ? Math.min(1.01, (now - S.acquiredAt) / 700) : 2);
-      gl.uniform1i(R.crt.u.uMode, S.mode === 'TRUE' ? 1 : (S.mode === 'RANGE' ? 2 : 0));
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  function toScreen(vp, p, W, H) { const [x, y, w] = M.clip(vp, p); if (w <= 0.01) return null; return [(x / w * .5 + .5) * W, (1 - (y / w * .5 + .5)) * H]; }
+
+  function buildLines(now) {
+    const v = [], add = (a, b, c) => v.push(a[0], a[1], a[2], ...c, b[0], b[1], b[2], ...c);
+    const tz = S.tableZ ?? -0.3;
+    // the table grid: 50 mm, heavier every 250 mm, 1.5 m round the target
+    const cx = Math.round(V.t[0] / 0.25) * 0.25, cy = Math.round(V.t[1] / 0.25) * 0.25, R = 0.75;
+    for (let i = -30; i <= 30; i++) {
+      const k = i * 0.05, major = i % 5 === 0, a = major ? 0.20 : 0.075, col = [0.30, 0.80, 0.50, a];
+      add([cx + k, cy - R, tz], [cx + k, cy + R, tz], col); add([cx - R, cy + k, tz], [cx + R, cy + k, tz], col);
     }
-    if (C && h) drawCloud(t);
-    drawOverlay(now);
-    $('nosignal').hidden = !!(S.frameAt && now - S.frameAt < 3000) || t < 1.4;
-    requestAnimationFrame(frame);
+    if (S.Tbc) {   // the robot: base ring, pedestal down to the table, base axes
+      const ring = 0.064, col = [0.55, 1, 0.7, 0.75];
+      for (let i = 0; i < 48; i++) { const a0 = i / 48 * 6.2832, a1 = (i + 1) / 48 * 6.2832;
+        add([ring * Math.cos(a0), ring * Math.sin(a0), 0], [ring * Math.cos(a1), ring * Math.sin(a1), 0], col);
+        if (i % 12 === 0) add([ring * Math.cos(a0), ring * Math.sin(a0), 0], [ring * Math.cos(a0), ring * Math.sin(a0), tz], [0.4, 0.9, 0.6, 0.35]); }
+      add([0, 0, 0], [0.15, 0, 0], [0.86, 1, 0.9, 0.9]); add([0, 0, 0], [0, 0.10, 0], [0.4, 0.95, 0.58, 0.6]); add([0, 0, 0], [0, 0, 0.10], [0.4, 0.95, 0.58, 0.6]);
+      // the camera: a small frustum where the wrist is looking from
+      const h = S.header, K = h.intrinsics, T = S.Tbc, d = 0.07, o = M.apply(T, [0, 0, 0]);
+      const cs = [[0, 0], [h.width, 0], [h.width, h.height], [0, h.height]].map(([u, w]) => M.apply(T, [(u - K.ppx) / K.fx * d, (w - K.ppy) / K.fy * d, d]));
+      const fc = [0.86, 1, 0.9, 0.8];
+      for (let i = 0; i < 4; i++) { add(o, cs[i], fc); add(cs[i], cs[(i + 1) % 4], fc); }
+    }
+    // objects: their top rectangle, a ground ring that breathes
+    for (const ob of S.objects) {
+      const col = ob.target ? [1, 0.85, 0.35, 1] : [1, 0.76, 0.28, 0.85], k = rectCorners(ob);
+      for (let i = 0; i < 4; i++) add(k[i], k[(i + 1) % 4], col);
+      const r = Math.max(ob.ext[0], ob.ext[1]) * 0.75 + 0.012 + (reduced ? 0 : Math.sin(now / 420 + ob.id) * 0.004);
+      for (let i = 0; i < 40; i++) { const a0 = i / 40 * 6.2832, a1 = (i + 1) / 40 * 6.2832;
+        add([ob.c[0] + r * Math.cos(a0), ob.c[1] + r * Math.sin(a0), tz + 0.001], [ob.c[0] + r * Math.cos(a1), ob.c[1] + r * Math.sin(a1), tz + 0.001], [1, 0.76, 0.28, 0.45]); }
+    }
+    if (S.poi) {   // the point of interest: a crosshair on the table under it
+      const p = S.poi.p, r = 0.03, col = [0.86, 1, 0.9, 0.9];
+      add([p[0] - r, p[1], p[2]], [p[0] + r, p[1], p[2]], col); add([p[0], p[1] - r, p[2]], [p[0], p[1] + r, p[2]], col); add(p, [p[0], p[1], tz], [0.86, 1, 0.9, 0.35]);
+    }
+    return new Float32Array(v);
   }
-  function drawCloud(t) {
-    const h = S.header, dpr = fit(scanc), g = sgl;
-    g.viewport(0, 0, scanc.width, scanc.height); g.clearColor(0.008, 0.02, 0.012, 1); g.clear(g.COLOR_BUFFER_BIT);
+  function buildBeams(eye) {   // a light column over every object: 16 facets, brightest where they face you
+    const v = [], H = 0.28, n = 16;
+    for (const ob of S.objects) {
+      const r = Math.max(ob.ext[0], ob.ext[1]) * 0.6, b = [ob.c[0], ob.c[1], ob.c[2]];
+      const vx = eye[0] - b[0], vy = eye[1] - b[1], vl = Math.hypot(vx, vy) || 1;
+      for (let i = 0; i < n; i++) {
+        const a0 = i / n * 6.2832, a1 = (i + 1) / n * 6.2832;
+        const face = (a) => Math.max(0, (Math.cos(a) * vx + Math.sin(a) * vy) / vl);
+        const p0 = [b[0] + r * Math.cos(a0), b[1] + r * Math.sin(a0)], p1 = [b[0] + r * Math.cos(a1), b[1] + r * Math.sin(a1)];
+        const f0 = 1 - face(a0), f1 = 1 - face(a1);   // the silhouette edges are the rim, the middle is the core
+        v.push(p0[0], p0[1], b[2], 0, f0, p1[0], p1[1], b[2], 0, f1, p1[0], p1[1], b[2] + H, 1, f1,
+               p0[0], p0[1], b[2], 0, f0, p1[0], p1[1], b[2] + H, 1, f1, p0[0], p0[1], b[2] + H, 1, f0);
+      }
+    }
+    return new Float32Array(v);
+  }
+  function drawScan(now) {
+    const g = sgl, dpr = fit(scanCv), W = scanCv.width, H = scanCv.height, t = now / 1000, h = S.header;
+    fit($('scanOv'));
+    // ease toward the goal; drift the yaw slowly once untouched for a while
+    const dt = Math.min(0.1, (now - (drawScan.last || now)) / 1000); drawScan.last = now;
+    keysPan(dt);
+    const idle = now - touchedAt > 15000 && !reduced;
+    if (idle) G.yaw += dt * 0.012;   // ≈ one turn in nine minutes
+    const e = 1 - Math.exp(-dt * 7);
+    for (let i = 0; i < 3; i++) V.t[i] += (G.t[i] - V.t[i]) * e;
+    V.yaw += (G.yaw - V.yaw) * e; V.pitch += (G.pitch - V.pitch) * e; V.dist += (G.dist - V.dist) * e;
+    const { vp, eye } = viewMatrices(W, H);
+    g.viewport(0, 0, W, H); g.clearColor(0.004, 0.012, 0.007, 1); g.clear(g.COLOR_BUFFER_BIT);
     g.enable(g.BLEND); g.blendFunc(g.SRC_ALPHA, g.ONE);
-    const [cx, cy, cz] = S.cloudCentre, dist = cz * 1.05 + 0.25;
-    const yaw = reduced ? 0.5 : Math.sin(t * 0.23) * 0.75, pitch = 0.38 + (reduced ? 0 : Math.sin(t * 0.13) * 0.08);
-    const view = M.mul(M.tr(0, 0, -dist), M.mul(M.rotX(pitch), M.mul(M.rotY(yaw), M.camToGl)));
-    const mvp = M.mul(M.persp(0.8, scanc.width / scanc.height, 0.02, 10), view);
-    // the floor grid: the plane through the median point, square to the camera ray
-    g.useProgram(C.lines.p); g.bindVertexArray(C.lvao); g.uniformMatrix4fv(C.lines.u.uMVP, false, mvp); g.uniform1f(C.lines.u.uA, 0.28);
-    g.drawArrays(g.LINES, 0, C.gridN);
-    g.useProgram(C.pts.p); g.bindVertexArray(C.empty);
-    g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, C.depth); g.uniform1i(C.pts.u.uDepth, 0);
-    g.activeTexture(g.TEXTURE1); g.bindTexture(g.TEXTURE_2D, C.mask); g.uniform1i(C.pts.u.uMask, 1);
-    const K = h.intrinsics, step = 3, cols = Math.floor(h.depth_width / step), rows = Math.floor(h.depth_height / step);
-    g.uniform4f(C.pts.u.uK, K.fx, K.fy, K.ppx, K.ppy); g.uniform2i(C.pts.u.uSize, h.depth_width, h.depth_height);
-    g.uniform1i(C.pts.u.uStep, step); g.uniform1i(C.pts.u.uCols, cols); g.uniform1f(C.pts.u.uScale, h.depth_scale_m);
-    g.uniform1f(C.pts.u.uDpr, dpr); g.uniform1f(C.pts.u.uHasMask, C.hasMask); g.uniformMatrix4fv(C.pts.u.uMVP, false, mvp);
-    g.uniform3f(C.pts.u.uC, cx, cy, cz); g.uniform1f(C.pts.u.uTime, reduced ? 0 : t); g.uniform1f(C.pts.u.uZc, cz);
-    g.drawArrays(g.POINTS, 0, cols * rows);
-  }
-  function setGrid(cz) {
-    if (!C) return;
-    const v = [], span = Math.max(0.3, cz * 0.8), n = 8, st = span / n;
-    for (let i = -n; i <= n; i++) {   // camera frame, relative to the cloud centre: a floor 0.12 m below it (+y is down)
-      v.push(i * st, 0.12, -span, i * st, 0.12, span, -span, 0.12, i * st, span, 0.12, i * st);
+    // lines
+    const L = buildLines(now); g.useProgram(C.lines.p); g.bindVertexArray(C.L.vao); g.bindBuffer(g.ARRAY_BUFFER, C.L.buf);
+    g.bufferData(g.ARRAY_BUFFER, L, g.DYNAMIC_DRAW); g.uniformMatrix4fv(C.lines.u.uVP, false, vp); g.drawArrays(g.LINES, 0, L.length / 7);
+    // the cloud
+    if (h) {
+      g.useProgram(C.cloud.p); g.bindVertexArray(C.empty);
+      g.activeTexture(g.TEXTURE0); g.bindTexture(g.TEXTURE_2D, C.depth); g.uniform1i(C.cloud.u.uDepth, 0);
+      g.activeTexture(g.TEXTURE1); g.bindTexture(g.TEXTURE_2D, C.mask); g.uniform1i(C.cloud.u.uMask, 1);
+      const K = h.intrinsics, step = 2, cols = Math.floor(h.depth_width / step), rows = Math.floor(h.depth_height / step);
+      g.uniform4f(C.cloud.u.uK, K.fx, K.fy, K.ppx, K.ppy); g.uniform2i(C.cloud.u.uSize, h.depth_width, h.depth_height);
+      g.uniform1i(C.cloud.u.uStep, step); g.uniform1i(C.cloud.u.uCols, cols); g.uniform1f(C.cloud.u.uScale, h.depth_scale_m);
+      g.uniform1f(C.cloud.u.uDpr, dpr); g.uniform1f(C.cloud.u.uHasMask, C.hasMask); g.uniform1f(C.cloud.u.uTableZ, S.tableZ ?? -10);
+      g.uniformMatrix4fv(C.cloud.u.uModel, false, camToWorld()); g.uniformMatrix4fv(C.cloud.u.uVP, false, vp);
+      g.uniform1f(C.cloud.u.uDensity, Math.max(0.06, Math.min(1, (0.9 / V.dist) ** 2))); g.uniform1f(C.cloud.u.uTime, reduced ? 0 : t); g.uniform1f(C.cloud.u.uSweep, S.Tbc && !reduced ? 1 : 0);
+      g.drawArrays(g.POINTS, 0, cols * rows);
     }
-    sgl.bindBuffer(sgl.ARRAY_BUFFER, C.lbuf); sgl.bufferData(sgl.ARRAY_BUFFER, new Float32Array(v), sgl.STATIC_DRAW);
-    C.gridN = v.length / 3;
+    // the light columns
+    const B = buildBeams(eye);
+    if (B.length) { g.useProgram(C.beam.p); g.bindVertexArray(C.B.vao); g.bindBuffer(g.ARRAY_BUFFER, C.B.buf); g.bufferData(g.ARRAY_BUFFER, B, g.DYNAMIC_DRAW);
+      g.uniformMatrix4fv(C.beam.u.uVP, false, vp); g.uniform1f(C.beam.u.uTime, reduced ? 0 : t); g.drawArrays(g.TRIANGLES, 0, B.length / 5); }
+    drawScanLabels(vp, W, H, now);
+    drawScan.vp = vp;
   }
-  setGrid(0.4);
+  function label(ctx, s, x, y, colour, size, align = 'left') {
+    ctx.font = `${size}px "Share Tech Mono", ui-monospace, monospace`; ctx.textAlign = align; ctx.fillStyle = colour;
+    ctx.shadowColor = colour; ctx.shadowBlur = size * 0.7; ctx.fillText(s, x, y); ctx.shadowBlur = 0;
+  }
+  function drawScanLabels(vp, W, H, now) {
+    const cv = $('scanOv'), ctx = cv.getContext('2d'), d = DPR(); ctx.clearRect(0, 0, W, H);
+    const AM = '#FFC247', PH = '#7CF7A2', PHD = 'rgba(124,247,162,.5)';
+    for (const ob of S.objects) {
+      const top = toScreen(vp, [ob.c[0], ob.c[1], ob.c[2] + 0.30], W, H); if (!top) continue;
+      const base = toScreen(vp, ob.c, W, H);
+      ctx.strokeStyle = 'rgba(255,194,71,.55)'; ctx.lineWidth = d; ctx.beginPath(); ctx.moveTo(top[0], top[1]); ctx.lineTo(top[0] + 18 * d, top[1] - 12 * d); ctx.lineTo(top[0] + 90 * d, top[1] - 12 * d); ctx.stroke();
+      label(ctx, `${ob.target ? 'TGT' : 'OBJ'} ${String(ob.id).padStart(2, '0')}`, top[0] + 22 * d, top[1] - 17 * d, AM, 13 * d);
+      label(ctx, `${vec(ob.c)}`, top[0] + 22 * d, top[1] + 2 * d, 'rgba(255,194,71,.8)', 11 * d);
+      label(ctx, `${(ob.ext[0] * 1000).toFixed(0)}×${(ob.ext[1] * 1000).toFixed(0)} MM · R ${Math.hypot(ob.c[0], ob.c[1]).toFixed(2)} M`, top[0] + 22 * d, top[1] + 16 * d, 'rgba(255,194,71,.6)', 11 * d);
+      if (base && !ob.seenNow && !ob.target) label(ctx, 'LAST SEEN', base[0], base[1] + 18 * d, 'rgba(255,194,71,.5)', 10 * d, 'center');
+    }
+    if (S.Tbc) { const b = toScreen(vp, [0, 0, 0], W, H); if (b) label(ctx, 'BASE', b[0] + 10 * d, b[1] - 8 * d, PHD, 11 * d); }
+    if (S.poi && now - S.poi.at < 6000) { const p = toScreen(vp, S.poi.p, W, H); if (p) { label(ctx, `POI ${vec(S.poi.p)}`, p[0] + 12 * d, p[1] - 10 * d, PH, 12 * d); } }
+    $('scanTag').textContent = `${S.objects.length} OBJ · TABLE ${S.tableZ !== null ? f3(S.tableZ) + ' M' : '—'} · ${(V.dist).toFixed(2)} M`;
+  }
 
-  // ---- the vector overlay: reticle, target brackets, readouts -----------------------------
+  // ---- scan controls -----------------------------------------------------------------------------
+  const keys = new Set();
+  function keysPan(dt) {
+    if (!keys.size) return;
+    const f = [-Math.cos(V.yaw), -Math.sin(V.yaw)], r = [-Math.sin(V.yaw), Math.cos(V.yaw)], sp = G.dist * 0.7 * dt;
+    let dx = 0, dy = 0, dz = 0;
+    if (keys.has('w')) { dx += f[0]; dy += f[1]; } if (keys.has('s')) { dx -= f[0]; dy -= f[1]; }
+    if (keys.has('d')) { dx += r[0]; dy += r[1]; } if (keys.has('a')) { dx -= r[0]; dy -= r[1]; }
+    if (keys.has('e')) dz += 1; if (keys.has('q')) dz -= 1;
+    G.t[0] += dx * sp; G.t[1] += dy * sp; G.t[2] += dz * sp; autoTarget = false; touch();
+  }
+  const snapYaw = (y) => Math.round((y - Math.PI / 4) / (Math.PI / 2)) * (Math.PI / 2) + Math.PI / 4;
+  function snap() { G.yaw = snapYaw(G.yaw); G.pitch = ISO; touch(); say(`view snapped · isometric ${(((G.yaw * 180 / Math.PI) % 360) + 360) % 360 | 0}°`, 'dim'); }
+  let sdrag = null;
+  scanCv.addEventListener('contextmenu', (e) => e.preventDefault());
+  scanCv.addEventListener('mousedown', (ev) => { scanCv.focus(); sdrag = { x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, pan: ev.button === 2 || ev.shiftKey, moved: false }; scanCv.classList.add('dragging'); ev.preventDefault(); });
+  window.addEventListener('mousemove', (ev) => {
+    if (!sdrag) return;
+    const dx = ev.clientX - sdrag.x, dy = ev.clientY - sdrag.y; sdrag.x = ev.clientX; sdrag.y = ev.clientY;
+    if (Math.abs(ev.clientX - sdrag.x0) + Math.abs(ev.clientY - sdrag.y0) > 4) sdrag.moved = true;
+    if (sdrag.pan) {
+      const k = G.dist * 0.0016, r = [-Math.sin(V.yaw), Math.cos(V.yaw)], f = [-Math.cos(V.yaw), -Math.sin(V.yaw)];
+      G.t[0] -= (r[0] * dx - f[0] * dy) * k; G.t[1] -= (r[1] * dx - f[1] * dy) * k; V.t = G.t.slice(); autoTarget = false;
+    } else {
+      G.yaw -= dx * 0.006; G.pitch = Math.max(0.06, Math.min(1.53, G.pitch + dy * 0.005)); V.yaw = G.yaw; V.pitch = G.pitch;
+    }
+    touch();
+  });
+  window.addEventListener('mouseup', (ev) => {
+    if (!sdrag) return; const d = sdrag; sdrag = null; scanCv.classList.remove('dragging');
+    if (!d.moved && !d.pan) pickPoint(ev);
+  });
+  scanCv.addEventListener('wheel', (ev) => { ev.preventDefault(); G.dist = Math.max(0.12, Math.min(6, G.dist * Math.exp(ev.deltaY * 0.0012))); touch(); }, { passive: false });
+  scanCv.addEventListener('focus', () => $('scanStage').classList.add('focus'));
+  scanCv.addEventListener('blur', () => { $('scanStage').classList.remove('focus'); keys.clear(); });
+  scanCv.addEventListener('keydown', (ev) => {
+    const k = ev.key.toLowerCase();
+    if ('wasdqe'.includes(k) && k.length === 1) { keys.add(k); ev.preventDefault(); return; }
+    if (ev.key === ' ') { ev.preventDefault(); snap(); return; }
+    if (ev.key === 'Escape' || ev.key === 'Enter') { $('cmd').focus(); return; }
+    if (ev.key.length === 1 && !ev.metaKey && !ev.ctrlKey) { $('cmd').focus(); }   // any other letter: to the prompt
+  });
+  scanCv.addEventListener('keyup', (ev) => keys.delete(ev.key.toLowerCase()));
+  // click a 3-D point: glide there, keep the zoom, look from an isometric angle above the table
+  function pickPoint(ev) {
+    const h = S.header; if (!h || !S.depth || !drawScan.vp) return;
+    const r = scanCv.getBoundingClientRect(), d = DPR(), mx = (ev.clientX - r.left) * d, my = (ev.clientY - r.top) * d;
+    const W = scanCv.width, H = scanCv.height, K = h.intrinsics, T = camToWorld(), vp = drawScan.vp;
+    let best = null, bestD = (16 * d) ** 2;
+    for (let v = 0; v < h.depth_height; v += 3) for (let u = 0; u < h.depth_width; u += 3) {
+      const raw = S.depth[v * h.depth_width + u]; if (!raw) continue; const z = raw * h.depth_scale_m; if (z > 3) continue;
+      const p = M.apply(T, [(u - K.ppx) / K.fx * z, (v - K.ppy) / K.fy * z, z]), s = toScreen(vp, p, W, H); if (!s) continue;
+      const dd = (s[0] - mx) ** 2 + (s[1] - my) ** 2; if (dd < bestD) { bestD = dd; best = p; }
+    }
+    if (!best) return;
+    S.poi = { p: best, at: performance.now() }; G.t = best.slice(); G.pitch = ISO; G.yaw = snapYaw(G.yaw); autoTarget = false; touch();
+    say(`point of interest ${vec(best)} m${S.Tbc ? ' base' : ' (camera frame)'}${S.tableZ !== null ? ` · ${((best[2] - S.tableZ) * 1000).toFixed(0)} mm above the table` : ''}`, 'dim');
+  }
+
+  // ---- objects: world-fixed rectangles (the table is flat and parallel to base XY) -----------------
+  function rectFromPoints(pts) {   // PCA in XY → centre, axes, extents; z = the top
+    const n = pts.length; let cx = 0, cy = 0, cz = 0; for (const p of pts) { cx += p[0]; cy += p[1]; cz += p[2]; } cx /= n; cy /= n; cz /= n;
+    let sxx = 0, syy = 0, sxy = 0; for (const p of pts) { const dx = p[0] - cx, dy = p[1] - cy; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+    const th = 0.5 * Math.atan2(2 * sxy, sxx - syy), root = Math.hypot(sxx - syy, 2 * sxy);
+    const l1 = 0.5 * (sxx + syy) + 0.5 * root, l2 = Math.max(0, 0.5 * (sxx + syy) - 0.5 * root);
+    return { c: [cx, cy, cz], ax: [[Math.cos(th), Math.sin(th)], [-Math.sin(th), Math.cos(th)]], ext: [2 * Math.sqrt(3 * l1 / n), 2 * Math.sqrt(3 * l2 / n)] };
+  }
+  function rectCorners(ob) {
+    const [a, b] = ob.ext, [u, w] = ob.ax, z = ob.c[2], o = [];
+    for (const [su, sw] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) o.push([ob.c[0] + su * a / 2 * u[0] + sw * b / 2 * w[0], ob.c[1] + su * a / 2 * u[1] + sw * b / 2 * w[1], z]);
+    return o;
+  }
+  function frameTbc(h) { return h && h.flange_pose && h.flange_to_color_pose ? M.mul(M.fromPose(h.flange_pose), M.fromPose(h.flange_to_color_pose)) : null; }
+  function merge(rect, { target = false } = {}) {
+    const near = S.objects.find((o) => Math.hypot(o.c[0] - rect.c[0], o.c[1] - rect.c[1]) < 0.035);
+    if (target) S.objects.forEach((o) => { o.target = false; });
+    if (near) { Object.assign(near, rect, { missed: 0, seenNow: true }); if (target) near.target = true; return near; }
+    const ob = { id: S.nextId++, ...rect, missed: 0, seenNow: true, target }; S.objects.push(ob); return ob;
+  }
+  function inView(p) {   // would the current camera frame see this world point?
+    const h = S.header; if (!h || !S.Tbc) return false;
+    const q = M.apply(M.invRigid(S.Tbc), p), K = h.intrinsics; if (q[2] < 0.15) return false;
+    const u = K.fx * q[0] / q[2] + K.ppx, v = K.fy * q[1] / q[2] + K.ppy; return u > 20 && v > 20 && u < h.width - 20 && v < h.height - 20;
+  }
+  async function scanObjects(announce) {
+    const j = await post('/api/objects', {}).catch(() => null);
+    if (!j || j.ok === false) { if (announce) say(`scan: ${j ? why(j) : 'no answer'}`, 'warn'); return; }
+    const T = frameTbc(j) || (S.Tbc ? null : CAM_DOWN);
+    if (!T) return;   // a pose-less answer while the scan is in base frame: skip, the next one will carry it
+    S.objects.forEach((o) => { o.seenNow = false; });
+    let n = 0;
+    for (const o of j.objects || []) {
+      if (!o.points_cam || o.points_cam.length < 25) continue;
+      const r = rectFromPoints(o.points_cam.map((p) => M.apply(T, p)));
+      if (r.ext[0] > 0.075 || r.ext[1] > 0.065 || r.ext[1] < 0.010) continue;   // pick-cycle's block filter: not a strap, a rail, a speck
+      if (S.tableZ !== null && S.Tbc && r.c[2] - S.tableZ < 0.006) continue;   // flat on the table: a label, not a part
+      merge(r); n++;
+    }
+    for (const o of S.objects) if (!o.seenNow && !o.target && inView(o.c)) o.missed++;
+    S.objects = S.objects.filter((o) => o.missed < 3);
+    if (announce) say(`scan: ${n} object${n === 1 ? '' : 's'} · ${S.objects.length} tracked`, n ? '' : 'warn');
+  }
+  function trackTarget(f) {   // the clicked segment as a world rectangle: its top face, square to the table
+    const h = S.header; if (!f || !f.point_m || !h) return;
+    const T = camToWorld(), c = M.apply(T, f.point_m), ext = f.extent_m || [0.03, 0.02];
+    // the in-image orientation → a direction in the table plane through the same world transform
+    const th = f.orientation_deg * Math.PI / 180, z = f.point_m[2], p2 = M.apply(T, [f.point_m[0] + Math.cos(th) * 0.02, f.point_m[1] + Math.sin(th) * 0.02, z]);
+    let ux = p2[0] - c[0], uy = p2[1] - c[1]; const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
+    return merge({ c, ax: [[ux, uy], [-uy, ux]], ext: [Math.max(ext[0], ext[1]), Math.min(ext[0], ext[1])] }, { target: true });
+  }
+
+  // ---- the feed overlay: the target box re-projected from the live pose each frame ------------------
   const ov = $('ov'), octx = ov.getContext('2d');
-  const PH = '#7CF7A2', PHD = 'rgba(124,247,162,.45)', AM = '#FFB547', RD = '#FF4A3D';
-  function toScreen(u, v) { const h = S.header; const [x, y] = unbarrel(u / h.width, v / h.height); return [x * ov.width, y * ov.height]; }
+  function feedToScreen(u, v) { const h = S.header; const [x, y] = unbarrel(u / h.width, v / h.height); return [x * ov.width, y * ov.height]; }
+  function worldToPixel(p) { const h = S.header; if (!S.Tbc) return null; const q = M.apply(M.invRigid(S.Tbc), p), K = h.intrinsics; if (q[2] < 0.03) return null; return [K.fx * q[0] / q[2] + K.ppx, K.fy * q[1] / q[2] + K.ppy]; }
   function fromEvent(ev) {
     const r = ov.getBoundingClientRect(), h = S.header; if (!h) return null;
     const [fx, fy] = barrel((ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height);
     const u = Math.floor(fx * h.width), v = Math.floor(fy * h.height);
     return (u >= 0 && v >= 0 && u < h.width && v < h.height) ? { u, v } : null;
   }
-  function measure(u, v) {
-    const h = S.header; if (!h || !S.depth) return null;
-    const raw = S.depth[v * h.depth_width + u]; if (!raw) return { u, v, z: null };
-    const z = raw * h.depth_scale_m, K = h.intrinsics;
-    return { u, v, z, x: (u - K.ppx) / K.fx * z, y: (v - K.ppy) / K.fy * z };
-  }
-  function text(ctx, s, x, y, colour, size, align = 'left') {
-    ctx.font = `${size}px "Share Tech Mono", ui-monospace, monospace`; ctx.textAlign = align; ctx.fillStyle = colour;
-    ctx.shadowColor = colour; ctx.shadowBlur = size * 0.6; ctx.fillText(s, x, y); ctx.shadowBlur = 0;
-  }
-  function drawOverlay(now) {
-    const ctx = octx, W = ov.width, H = ov.height, h = S.header, dpr = Math.min(window.devicePixelRatio || 1, 2);
-    ctx.clearRect(0, 0, W, H);
-    // corner registration marks + edge ticks: the frame of the instrument
-    ctx.strokeStyle = PHD; ctx.lineWidth = dpr; const m = 10 * dpr, L = 22 * dpr;
-    for (const [x, y, sx, sy] of [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]]) {
-      ctx.beginPath(); ctx.moveTo(x, y + sy * L); ctx.lineTo(x, y); ctx.lineTo(x + sx * L, y); ctx.stroke();
-    }
-    ctx.globalAlpha = 0.35;
-    for (let i = 1; i < 20; i++) { const x = W * i / 20, k = i % 5 ? 4 : 9; ctx.beginPath(); ctx.moveTo(x, H - m); ctx.lineTo(x, H - m - k * dpr); ctx.stroke(); }
-    for (let i = 1; i < 12; i++) { const y = H * i / 12, k = i % 3 ? 4 : 9; ctx.beginPath(); ctx.moveTo(m, y); ctx.lineTo(m + k * dpr, y); ctx.stroke(); }
-    ctx.globalAlpha = 1;
+  function measure(u, v) { const h = S.header; if (!h || !S.depth) return null; const raw = S.depth[v * h.depth_width + u]; if (!raw) return { u, v, z: null }; const z = raw * h.depth_scale_m, K = h.intrinsics; return { u, v, z, x: (u - K.ppx) / K.fx * z, y: (v - K.ppy) / K.fy * z }; }
+  function drawFeedOverlay(now) {
+    const ctx = octx, W = ov.width, H = ov.height, h = S.header, d = DPR(); fit(ov); ctx.clearRect(0, 0, W, H);
     if (!h) return;
-    const f = S.feat;
-    if (f) {
-      // brackets close in on the target over 450 ms, then breathe
-      const [x0, y0] = toScreen(f.bbox[0], f.bbox[1]), [x1, y1] = toScreen(f.bbox[2], f.bbox[3]);
-      const a = Math.min(1, (now - S.acquiredAt) / 450), ease = 1 - Math.pow(1 - a, 3), pad = (1 - ease) * 60 * dpr + 6 * dpr;
-      const breathe = reduced ? 0 : Math.sin(now / 380) * 1.5 * dpr, bl = Math.min(18 * dpr, (x1 - x0) / 3 + 6);
-      ctx.strokeStyle = AM; ctx.lineWidth = 1.5 * dpr; ctx.shadowColor = AM; ctx.shadowBlur = 8 * dpr;
-      const X0 = x0 - pad - breathe, Y0 = y0 - pad - breathe, X1 = x1 + pad + breathe, Y1 = y1 + pad + breathe;
-      for (const [x, y, sx, sy] of [[X0, Y0, 1, 1], [X1, Y0, -1, 1], [X0, Y1, 1, -1], [X1, Y1, -1, -1]]) {
-        ctx.beginPath(); ctx.moveTo(x, y + sy * bl); ctx.lineTo(x, y); ctx.lineTo(x + sx * bl, y); ctx.stroke();
-      }
-      const [cx, cy] = toScreen(f.centroid_px[0], f.centroid_px[1]), th = f.orientation_deg * Math.PI / 180, r = 7 * dpr;
-      ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy); ctx.closePath(); ctx.stroke();
-      ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(cx - Math.cos(th) * 3 * r, cy - Math.sin(th) * 3 * r); ctx.lineTo(cx + Math.cos(th) * 3 * r, cy + Math.sin(th) * 3 * r); ctx.stroke(); ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
-      if (a >= 1) {
-        const d = f.depth || {}, ext = f.extent_m;
-        const l1 = `TGT ${ext ? `${(ext[0] * 1000).toFixed(0)}×${(ext[1] * 1000).toFixed(0)} MM` : ''}  RNG ${d.median_m ? d.median_m.toFixed(3) + ' M' : 'NO DEPTH'}`;
-        const loc = S.located, l2 = loc ? `BASE ${vec(loc.point_base_m)}` : (f.point_m ? 'LOCATE: READY' : 'NO RANGE ON TARGET');
-        const l3 = loc ? (loc.reachable === false ? 'OUT OF REACH' : (loc.reachable ? `IN REACH · ${loc.reach_check === 'controller_ik' ? 'CONTROLLER IK' : 'SPHERE'}` : 'REACH UNKNOWN')) : '';
-        const tx = X1 + 10 * dpr, left = tx + 250 * dpr > W, ax = left ? X0 - 10 * dpr : tx, al = left ? 'right' : 'left';
-        text(ctx, l1, ax, Y0 + 12 * dpr, AM, 13 * dpr, al);
-        text(ctx, l2, ax, Y0 + 29 * dpr, loc ? PH : PHD, 12 * dpr, al);
-        if (l3) text(ctx, l3, ax, Y0 + 45 * dpr, loc.reachable === false ? RD : PH, 12 * dpr, al);
-      }
+    const AM = '#FFC247', PH = '#7CF7A2', PHD = 'rgba(124,247,162,.5)';
+    // every tracked object, drawn where the robot's motion says it now is (a rectangle on the table)
+    for (const ob of S.objects) {
+      const px = rectCorners(ob).map(worldToPixel); if (px.some((p) => !p)) continue;
+      const sc = px.map(([u, v]) => feedToScreen(u, v));
+      const a = ob.target ? Math.min(1, (now - S.acquiredAt) / 450) : 1, grow = (1 - a) * 18 * d;
+      const cx = sc.reduce((s, p) => s + p[0], 0) / 4, cy = sc.reduce((s, p) => s + p[1], 0) / 4;
+      ctx.strokeStyle = AM; ctx.globalAlpha = ob.target ? 1 : 0.7; ctx.lineWidth = (ob.target ? 1.6 : 1.1) * d; ctx.shadowColor = AM; ctx.shadowBlur = 8 * d;
+      ctx.beginPath(); sc.forEach(([x, y], i) => { const ex = x + (x - cx) / (Math.hypot(x - cx, y - cy) || 1) * grow, ey = y + (y - cy) / (Math.hypot(x - cx, y - cy) || 1) * grow; i ? ctx.lineTo(ex, ey) : ctx.moveTo(ex, ey); }); ctx.closePath(); ctx.stroke();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      const topY = Math.min(...sc.map((p) => p[1])), rightX = Math.max(...sc.map((p) => p[0]));
+      label(ctx, `${ob.target ? 'TGT' : 'OBJ'} ${String(ob.id).padStart(2, '0')}`, rightX + 6 * d, topY + 10 * d, AM, 11 * d);
+      if (ob.target && S.located) label(ctx, S.located.reachable === false ? 'OUT OF REACH' : 'IN REACH', rightX + 6 * d, topY + 24 * d, S.located.reachable === false ? '#FF4A3D' : PH, 10 * d);
     }
-    const box = S.drag && S.drag.moved ? S.drag : null;
-    if (box) {
-      const [ax, ay] = toScreen(box.u0, box.v0), [bx, by] = toScreen(box.u1, box.v1);
-      ctx.setLineDash([6 * dpr, 5 * dpr]); ctx.strokeStyle = PH; ctx.lineWidth = dpr; ctx.strokeRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)); ctx.setLineDash([]);
+    if (!S.Tbc && S.feat) {   // no live pose: the segment's own box, fixed in the image
+      const f = S.feat, [x0, y0] = feedToScreen(f.bbox[0], f.bbox[1]), [x1, y1] = feedToScreen(f.bbox[2], f.bbox[3]);
+      ctx.strokeStyle = AM; ctx.lineWidth = 1.5 * d; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
     }
-    if (S.hover) {   // the reticle: a broken cross, range beside it
-      const [x, y] = toScreen(S.hover.u + .5, S.hover.v + .5), g = 6 * dpr, l = 16 * dpr;
-      ctx.strokeStyle = PH; ctx.lineWidth = dpr; ctx.shadowColor = PH; ctx.shadowBlur = 6 * dpr;
-      ctx.beginPath(); ctx.moveTo(x - g - l, y); ctx.lineTo(x - g, y); ctx.moveTo(x + g, y); ctx.lineTo(x + g + l, y);
-      ctx.moveTo(x, y - g - l); ctx.lineTo(x, y - g); ctx.moveTo(x, y + g); ctx.lineTo(x, y + g + l); ctx.stroke();
-      ctx.strokeRect(x - 1.5 * dpr, y - 1.5 * dpr, 3 * dpr, 3 * dpr); ctx.shadowBlur = 0;
+    if (S.drag && S.drag.moved) { const [ax, ay] = feedToScreen(S.drag.u0, S.drag.v0), [bx, by] = feedToScreen(S.drag.u1, S.drag.v1);
+      ctx.setLineDash([5 * d, 4 * d]); ctx.strokeStyle = PH; ctx.lineWidth = d; ctx.strokeRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay)); ctx.setLineDash([]); }
+    if (S.hover) {
+      const [x, y] = feedToScreen(S.hover.u + .5, S.hover.v + .5), g = 5 * d, l = 12 * d;
+      ctx.strokeStyle = PH; ctx.lineWidth = d; ctx.shadowColor = PH; ctx.shadowBlur = 6 * d;
+      ctx.beginPath(); ctx.moveTo(x - g - l, y); ctx.lineTo(x - g, y); ctx.moveTo(x + g, y); ctx.lineTo(x + g + l, y); ctx.moveTo(x, y - g - l); ctx.lineTo(x, y - g); ctx.moveTo(x, y + g); ctx.lineTo(x, y + g + l); ctx.stroke(); ctx.shadowBlur = 0;
       const mm = measure(S.hover.u, S.hover.v);
-      if (mm) {
-        const right = x + 230 * dpr < W, tx = right ? x + 14 * dpr : x - 14 * dpr, al = right ? 'left' : 'right';
-        text(ctx, mm.z === null ? 'RNG ——' : `RNG ${mm.z.toFixed(3)} M`, tx, y - 10 * dpr, PH, 13 * dpr, al);
-        if (mm.z !== null) text(ctx, `X ${f3(mm.x)}  Y ${f3(mm.y)}`, tx, y + 22 * dpr, PHD, 11 * dpr, al);
-      }
+      if (mm) { const right = x + 150 * d < W, tx = right ? x + 12 * d : x - 12 * d; label(ctx, mm.z === null ? 'RNG ——' : `RNG ${mm.z.toFixed(3)} M`, tx, y - 8 * d, PH, 11 * d, right ? 'left' : 'right');
+        if (mm.z !== null && S.Tbc) { const w = M.apply(S.Tbc, [mm.x, mm.y, mm.z]); label(ctx, `BASE ${vec(w)}`, tx, y + 16 * d, PHD, 10 * d, right ? 'left' : 'right'); } }
     }
   }
+  ov.addEventListener('mousemove', (ev) => { const p = fromEvent(ev); S.hover = p; if (S.drag && p) { S.drag.u1 = p.u; S.drag.v1 = p.v; if (Math.abs(p.u - S.drag.u0) > 4 || Math.abs(p.v - S.drag.v0) > 4) S.drag.moved = true; } });
+  ov.addEventListener('mouseleave', () => { S.hover = null; });
+  ov.addEventListener('mousedown', (ev) => { if (ev.button !== 0) return; const p = fromEvent(ev); if (p) { S.drag = { u0: p.u, v0: p.v, u1: p.u, v1: p.v, moved: false }; ev.preventDefault(); } });
+  window.addEventListener('mouseup', (ev) => {
+    const d = S.drag; S.drag = null; if (!d) return; const p = fromEvent(ev); if (p) { d.u1 = p.u; d.v1 = p.v; }
+    if (d.moved) segment({ box: [Math.min(d.u0, d.u1), Math.min(d.v0, d.v1), Math.max(d.u0, d.u1) + 1, Math.max(d.v0, d.v1) + 1] }, 'segment');
+    else if (ev.target === ov) segment({ x: d.u0, y: d.v0 }, 'segment');
+    $('cmd').focus();
+  });
 
-  // ---- frames -----------------------------------------------------------------------
+  // ---- frames + views ------------------------------------------------------------------------------
   function parseContainer(buf) {
     const dv = new DataView(buf), dec = new TextDecoder();
     if (dec.decode(new Uint8Array(buf, 0, 4)) !== 'RGBD') throw new Error('bad frame container');
     const hl = dv.getUint32(4); const header = JSON.parse(dec.decode(new Uint8Array(buf, 8, hl)));
     let i = 8 + hl; const pl = dv.getUint32(i); const png = new Uint8Array(buf, i + 4, pl); i += 4 + pl;
-    const dl = dv.getUint32(i); const depth = new Uint8Array(buf, i + 4, dl);
-    return { header, png, depth };
+    const dl = dv.getUint32(i); return { header, png, depth: new Uint8Array(buf, i + 4, dl) };
   }
-  async function inflate(bytes) {
-    const buf = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
-    return new Uint16Array(buf);
-  }
-  function upload(g, tex, integer, w, h, data) {
-    g.bindTexture(g.TEXTURE_2D, tex); g.pixelStorei(g.UNPACK_ALIGNMENT, 1);
-    if (integer) g.texImage2D(g.TEXTURE_2D, 0, g.R16UI, w, h, 0, g.RED_INTEGER, g.UNSIGNED_SHORT, data);
-    else g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, g.RGBA, g.UNSIGNED_BYTE, data);
-  }
-  let lastCentreAt = 0;
+  async function inflate(bytes) { return new Uint16Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer()); }
+  let lastTableAt = 0;
   async function frames() {
     let misses = 0;
     while (true) {
@@ -529,273 +717,222 @@
         const r = await fetch(`/api/rgbd?after=${S.seq}&timeout_ms=1500`);
         if (r.status === 503) { if (misses++ % 10 === 0) { const j = await r.json(); say(j.last_error || 'camera: waiting for the first frame', 'warn'); } await sleep(500); continue; }
         if (!r.ok) throw new Error(`frame ${r.status}`);
-        const fr = parseContainer(await r.arrayBuffer());
-        if (fr.header.seq === S.seq) continue;
+        const fr = parseContainer(await r.arrayBuffer()); if (fr.header.seq === S.seq) continue;
         misses = 0; S.seq = fr.header.seq;
         const [bmp, depth] = await Promise.all([createImageBitmap(new Blob([fr.png], { type: 'image/png' })), inflate(fr.depth)]);
-        const h = fr.header;
-        if (!S.header || S.header.width !== h.width || S.header.height !== h.height) document.documentElement.style.setProperty('--arn', (h.width / h.height).toFixed(4));
-        S.header = h; S.depth = depth; S.frameAt = performance.now();
-        if (R) { upload(gl, R.feed, false, h.width, h.height, bmp); gl.generateMipmap(gl.TEXTURE_2D); R.hasFeed = 1;
-                 upload(gl, R.depth, true, h.depth_width, h.depth_height, depth); R.hasDepth = 1; }
+        const h = fr.header, hadPose = !!S.Tbc;
+        if (!S.header || S.header.width !== h.width) document.documentElement.style.setProperty('--arn', (h.width / h.height).toFixed(4));
+        S.header = h; S.depth = depth; S.frameAt = performance.now(); S.Tbc = frameTbc(h);
+        if (!!S.Tbc !== hadPose) { S.tableZ = null; S.objects = []; autoTarget = true; $('scanFrame').textContent = S.Tbc ? 'BASE FRAME · LIVE POSE' : 'CAMERA FRAME · NO POSE'; say(S.Tbc ? 'live pose: the scan is in the base frame' : 'no live pose: the scan is in the camera frame', S.Tbc ? '' : 'warn'); }
+        if (feedTube) { const g = feedTube.g; upload(g, feedTube.feed, false, h.width, h.height, bmp, true); upload(g, feedTube.depth, true, h.depth_width, h.depth_height, depth); feedTube.hasFeed = 1; feedTube.hasDepth = 1; feedTube.w = h.width; feedTube.h = h.height; }
         if (C) upload(sgl, C.depth, true, h.depth_width, h.depth_height, depth);
         bmp.close && bmp.close();
-        if (performance.now() - lastCentreAt > 1000) { lastCentreAt = performance.now(); centre(h, depth); }
-        $('feedTag').textContent = `${h.width}×${h.height} · ${(h.fps || 0).toFixed(0)} HZ · #${h.seq}`;
+        if (performance.now() - lastTableAt > 800) { lastTableAt = performance.now(); surface(h, depth); }
+        $('feedTag').textContent = `${h.width}×${h.height} · ${(h.fps || 0).toFixed(0)} HZ${h.pose_age_s !== undefined ? ` · POSE ${(h.pose_age_s * 1000).toFixed(0)} MS` : ''}`;
       } catch (e) { say(`stream: ${e.message}`, 'warn'); await sleep(800); }
     }
   }
-  function centre(h, depth) {   // the cloud orbits the median point of the scene
-    const K = h.intrinsics, zs = [], xs = [], ys = [];
-    for (let v = 0; v < h.depth_height; v += 12) for (let u = 0; u < h.depth_width; u += 12) {
+  function surface(h, depth) {   // the table: the most common height among the scene's points (it is flat)
+    const K = h.intrinsics, T = camToWorld(), zs = [];
+    for (let v = 0; v < h.depth_height; v += 8) for (let u = 0; u < h.depth_width; u += 8) {
       const d = depth[v * h.depth_width + u]; if (!d) continue; const z = d * h.depth_scale_m; if (z > 3) continue;
-      zs.push(z); xs.push((u - K.ppx) / K.fx * z); ys.push((v - K.ppy) / K.fy * z);
+      zs.push(M.apply(T, [(u - K.ppx) / K.fx * z, (v - K.ppy) / K.fy * z, z]));
     }
-    if (zs.length < 20) return;
-    const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1];
-    const target = [med(xs), med(ys), med(zs)], c = S.cloudCentre;
-    S.cloudCentre = c.map((v, i) => v + (target[i] - v) * 0.5);
-    $('scanTag').textContent = `${S.cloudCentre[2].toFixed(2)} M`;
+    if (zs.length < 50) return;
+    const bins = new Map(); for (const p of zs) { const b = Math.round(p[2] / 0.005); bins.set(b, (bins.get(b) || 0) + 1); }
+    let best = null, bn = 0; for (const [b, n] of bins) { const s = n + (bins.get(b - 1) || 0) * 0.5 + (bins.get(b + 1) || 0) * 0.5; if (s > bn) { bn = s; best = b; } }
+    const tz = best * 0.005; S.tableZ = S.tableZ === null ? tz : S.tableZ + (tz - S.tableZ) * 0.3;
+    if (autoTarget) {   // until touched, keep the view on the middle of what the camera sees, on the table
+      const mid = zs[zs.length >> 1] || [0, 0, tz], xs = zs.map((p) => p[0]).sort((a, b) => a - b), ys = zs.map((p) => p[1]).sort((a, b) => a - b);
+      G.t = [xs[xs.length >> 1], ys[ys.length >> 1], S.tableZ]; if (!drawScan.primed) { V.t = G.t.slice(); drawScan.primed = true; }
+      void mid;
+    }
   }
-
-  // ---- views --------------------------------------------------------------------------
   const viewLoops = new Set();
   function viewLoop(i) {
     if (viewLoops.has(i) || i > 1) return; viewLoops.add(i);
-    const tile = $(`view${i}`), img = $(`view${i}Img`); let vseq = 0, url = null;
+    const T = viewTubes[i], wait = $(`view${i}Wait`); let vseq = 0;
     (async () => {
       while (true) {
         if (!S.running) { await sleep(150); continue; }
         try {
           const r = await fetch(`/api/view/${i}?after=${vseq}&timeout_ms=1500`);
-          if (r.status === 503 || r.status === 404) { tile.classList.add('wait'); await sleep(1000); continue; }
+          if (r.status === 503 || r.status === 404) { wait.hidden = false; await sleep(1000); continue; }
           if (!r.ok) throw new Error(`view ${r.status}`);
           const s = parseInt(r.headers.get('X-Seq') || '0', 10); if (s === vseq) continue; vseq = s;
-          const next = URL.createObjectURL(await r.blob()); img.src = next; if (url) URL.revokeObjectURL(url); url = next;
-          tile.classList.remove('wait');
-        } catch (e) { tile.classList.add('wait'); await sleep(800); }
+          const bmp = await createImageBitmap(await r.blob());
+          if (T) { upload(T.g, T.feed, false, bmp.width, bmp.height, bmp, true); T.hasFeed = 1; T.w = bmp.width; T.h = bmp.height; }
+          bmp.close && bmp.close(); wait.hidden = true;
+        } catch (e) { wait.hidden = false; await sleep(800); }
       }
     })();
   }
 
-  // ---- segmentation --------------------------------------------------------------------
+  // ---- segmentation --------------------------------------------------------------------------------
   function maskTexture(b64) {
     return new Promise((resolve) => {
       if (!b64) { resolve(false); return; }
       const im = new Image();
-      im.onload = () => {
-        if (R) { upload(gl, R.mask, false, im.width, im.height, im); R.hasMask = 1; }
-        if (C) { upload(sgl, C.mask, false, im.width, im.height, im); C.hasMask = 1; }
-        resolve(true);
-      };
+      im.onload = () => { if (feedTube) { upload(feedTube.g, feedTube.mask, false, im.width, im.height, im); feedTube.hasMask = 1; } if (C) { upload(sgl, C.mask, false, im.width, im.height, im); C.hasMask = 1; } resolve(true); };
       im.onerror = () => resolve(false); im.src = 'data:image/png;base64,' + b64;
     });
   }
-  async function adopt(j, how) {
-    if (j.ok === false) { say(`${how}: ${why(j)}`, 'warn'); return; }
-    S.feat = j.features; S.located = null; S.acquiredAt = performance.now();
-    await maskTexture(j.mask_png_b64);
-    if (!S.feat) { dropTarget(); say(`${how}: nothing there`, 'warn'); return; }
-    const f = S.feat, d = f.depth || {};
-    say(`target acquired · ${f.extent_m ? `${(f.extent_m[0] * 1000).toFixed(0)} × ${(f.extent_m[1] * 1000).toFixed(0)} mm` : `${f.area_px} px`} · range ${d.median_m ? d.median_m.toFixed(3) + ' m' : 'none'}`);
-    keys();
-    if (f.point_m && S.robot) locate(true);
+  async function segment(body, how) {
+    if (S.busy) return; S.busy = true;
+    try {
+      const j = await post(body.nearest ? '/api/nearest' : '/api/segment', body.nearest ? { near_ratio: 1.2 } : body);
+      if (j.ok === false) { say(`${how}: ${why(j)}`, 'warn'); return; }
+      S.feat = j.features; S.located = null; S.acquiredAt = performance.now();
+      await maskTexture(j.mask_png_b64);
+      if (!S.feat) { dropTarget(); say(`${how}: nothing there`, 'warn'); return; }
+      const f = S.feat, d = f.depth || {}, ob = trackTarget(f);
+      say(`target ${ob ? String(ob.id).padStart(2, '0') : ''} acquired · ${f.extent_m ? `${(f.extent_m[0] * 1000).toFixed(0)} × ${(f.extent_m[1] * 1000).toFixed(0)} mm` : `${f.area_px} px`} · range ${d.median_m ? d.median_m.toFixed(3) + ' m' : 'none'}${ob && S.Tbc ? ` · base ${vec(ob.c)}` : ''}`);
+      armKeys();
+      if (f.point_m && S.robot) locate(true);
+    } finally { S.busy = false; }
   }
-  function dropTarget() { S.feat = null; S.located = null; if (R) R.hasMask = 0; if (C) C.hasMask = 0; keys(); }
-  async function segmentAt(u, v) { if (S.busy) return; S.busy = true; try { await adopt(await post('/api/segment', { x: u, y: v }), 'segment'); } finally { S.busy = false; } }
-  async function segmentBox(b) { if (S.busy) return; S.busy = true; try { await adopt(await post('/api/segment', { box: b }), 'segment'); } finally { S.busy = false; } }
-  async function nearest() { if (S.busy) return; S.busy = true; say('scanning for the nearest object', 'dim'); try { await adopt(await post('/api/nearest', { near_ratio: 1.2 }), 'find'); } finally { S.busy = false; } }
-  async function clearTarget() { dropTarget(); await post('/api/clear'); say('target cleared', 'dim'); }
+  function dropTarget() { S.feat = null; S.located = null; S.objects.forEach((o) => { o.target = false; }); if (feedTube) feedTube.hasMask = 0; if (C) C.hasMask = 0; armKeys(); }
+  async function clearTarget() { dropTarget(); S.objects = []; await post('/api/clear'); say('targets cleared', 'dim'); }
 
-  ov.addEventListener('mousemove', (ev) => {
-    const p = fromEvent(ev); S.hover = p;
-    if (S.drag && p) { S.drag.u1 = p.u; S.drag.v1 = p.v; if (Math.abs(p.u - S.drag.u0) > 4 || Math.abs(p.v - S.drag.v0) > 4) S.drag.moved = true; }
-  });
-  ov.addEventListener('mouseleave', () => { S.hover = null; });
-  ov.addEventListener('mousedown', (ev) => { if (ev.button !== 0) return; const p = fromEvent(ev); if (p) { S.drag = { u0: p.u, v0: p.v, u1: p.u, v1: p.v, moved: false }; ev.preventDefault(); } });
-  window.addEventListener('mouseup', (ev) => {
-    const d = S.drag; S.drag = null; if (!d) return;
-    const p = fromEvent(ev); if (p) { d.u1 = p.u; d.v1 = p.v; }
-    if (d.moved) segmentBox([Math.min(d.u0, d.u1), Math.min(d.v0, d.v1), Math.max(d.u0, d.u1) + 1, Math.max(d.v0, d.v1) + 1]);
-    else if (ev.target === ov) segmentAt(d.u0, d.v0);
-    $('cmd').focus();
-  });
-
-  // ---- robot ----------------------------------------------------------------------------
+  // ---- robot ------------------------------------------------------------------------------------------
   const approach = () => (S.robot && S.robot.approach) || { standoff_m: 0.075, reference: 'fingertip' };
   async function locate(quiet) {
     if (!S.feat || !S.feat.point_m) { say('locate: no target with range', 'warn'); return null; }
     const a = approach(), j = await post('/api/robot/locate', { standoff_m: a.standoff_m, reference: a.reference });
     if (j.ok === false || !j.point_base_m) { say(`locate: ${why(j)}`, 'warn'); return null; }
-    S.located = j; keys();
+    S.located = j; armKeys();
     if (!quiet || j.reachable === false) say(`base ${vec(j.point_base_m)} m · ${j.reachable === false ? 'out of reach' : (j.reachable ? 'in reach' : 'reach unknown')}`, j.reachable === false ? 'warn' : '');
     return j;
   }
-  async function act(url, body, label) {
+  async function act(url, body, label_) {
     const j = await post(url, body || {});
-    if (j.ok === false) say(`${label}: ${why(j)}`, 'crit'); else say(`${label}: ${j.dry_run ? 'dry run — validated, nothing sent' : 'done'}`);
+    if (j.ok === false) say(`${label_}: ${why(j)}`, 'crit'); else say(`${label_}: ${j.dry_run ? 'dry run — validated, nothing sent' : 'done'}`);
     events(); state(); return j;
   }
   async function approachCycle() {
-    if (!S.feat || !S.feat.point_m) { say('approach: acquire a target first', 'warn'); return; }
-    const a = approach();
-    say(`approach · over, down to ${(a.standoff_m * 1000).toFixed(0)} mm from the ${a.reference === 'fingertip' ? 'fingertips' : a.reference}, back`);
+    if (!S.feat || !S.feat.point_m) { say('approach: acquire a target first (click the feed)', 'warn'); return; }
+    const a = approach(); say(`approach · over, down to ${(a.standoff_m * 1000).toFixed(0)} mm from the ${a.reference === 'fingertip' ? 'fingertips' : a.reference}, back`);
     $('kGo').disabled = true;
     try {
       const j = await post('/api/robot/approach_cycle', { standoff_m: a.standoff_m, reference: a.reference });
       if (j.locate) S.located = j.locate;
       if (j.ok) say(j.dry_run ? 'approach: dry run — validated, nothing sent' : `approach complete · ${(j.legs || []).map((l, i) => `${['over', 'down', 'up', 'back'][i] || i} ${l.ok ? 'ok' : 'missed'}`).join(' · ')}`);
       else say(`approach refused: ${why(j)}${j.completed_legs ? ` after ${j.completed_legs} legs` : ''}`, 'crit');
-    } finally { keys(); events(); state(); }
+    } finally { armKeys(); events(); state(); }
   }
   function moveTo() {
-    const loc = S.located;
-    if (!loc || !loc.approach_pose) { say('move: locate a target first', 'warn'); return; }
+    const loc = S.located; if (!loc || !loc.approach_pose) { say('move: locate a target first', 'warn'); return; }
     if (loc.reachable === false) { say('move: target is out of reach', 'crit'); return; }
     ask(`move tcp to ${vec(loc.approach_pose)} on ${S.robot.host}${S.robot.dry_run ? ' (dry run)' : ''}?`, async () => {
       const j = await post('/api/robot/move', { pose: loc.approach_pose });
-      if (j.ok) say(j.dry_run ? 'move: dry run — validated' : `move: landed ${vec(j.landed)}`); else say(`move refused: ${why(j)}`, 'crit');
-      state();
+      if (j.ok) say(j.dry_run ? 'move: dry run — validated' : `move: landed ${vec(j.landed)}`); else say(`move refused: ${why(j)}`, 'crit'); state();
     });
   }
-  function ask(question, fn) { S.confirm = fn; say(`${question}  Y / N`, 'warn'); }
+  function ask(q, fn) { S.confirm = fn; say(`${q}  Y / N`, 'warn'); }
   async function stop() { say('ALL STOP', 'crit'); await act('/api/robot/stop', {}, 'stop'); }
-
   const lamp = (id, cls) => { $(id).className = 'lamp ' + (cls || ''); };
   async function state() {
     if (!S.robot) return;
-    const j = await post('/api/robot/state').catch((e) => ({ ok: false, error: e.message }));
-    const was = S.state; S.state = j;
-    if (j.ok === false && !j.robot_mode) {
-      lamp('lLink', 'crit'); lamp('lPwr'); lamp('lSafe'); lamp('lRmt');
-      if (!was || was.ok !== false) say(`controller not answering: ${why(j)}`, 'crit');
-      return;
-    }
-    const rm = (j.robot_mode || '').replace('Robotmode: ', ''), sm = (j.safety_mode || '').replace('Safetymode: ', ''), cm = j.control_mode || '';
-    const safe = /NORMAL|REDUCED/.test(sm);
+    const j = await post('/api/robot/state').catch((e) => ({ ok: false, error: e.message })), was = S.state; S.state = j;
+    if (j.ok === false && !j.robot_mode) { lamp('lLink', 'crit'); lamp('lPwr'); lamp('lSafe'); lamp('lRmt'); if (!was || was.ok !== false) say(`controller not answering: ${why(j)}`, 'crit'); return; }
+    const rm = (j.robot_mode || '').replace('Robotmode: ', ''), sm = (j.safety_mode || '').replace('Safetymode: ', ''), cm = j.control_mode || '', safe = /NORMAL|REDUCED/.test(sm);
     lamp('lLink', 'on'); lamp('lPwr', rm === 'RUNNING' ? 'on' : 'alert'); lamp('lSafe', safe ? 'on' : 'crit'); lamp('lRmt', cm === 'REMOTE' ? 'on' : 'alert');
     if (was && was.ok !== false) {
       const wrm = (was.robot_mode || '').replace('Robotmode: ', ''), wsm = (was.safety_mode || '').replace('Safetymode: ', '');
       if (wrm !== rm) say(`robot ${wrm || '?'} → ${rm}`, rm === 'RUNNING' ? '' : 'warn');
       if (wsm !== sm) say(`safety ${wsm || '?'} → ${sm}`, safe ? '' : 'crit');
       if ((was.control_mode || '') !== cm) say(`control ${was.control_mode || '?'} → ${cm}${cm === 'REMOTE' ? '' : ' · motion needs remote'}`, cm === 'REMOTE' ? '' : 'warn');
-    } else if (!was) {
-      say(`robot ${rm} · safety ${sm} · control ${cm}`, (rm === 'RUNNING' && safe && cm === 'REMOTE') ? '' : 'warn');
-      if (cm && cm !== 'REMOTE') say('switch the pendant to REMOTE to move', 'warn');
-    }
+    } else if (!was) { say(`robot ${rm} · safety ${sm} · control ${cm}`, (rm === 'RUNNING' && safe && cm === 'REMOTE') ? '' : 'warn'); if (cm && cm !== 'REMOTE') say('switch the pendant to REMOTE to move', 'warn'); }
   }
   async function events() {
-    try {
-      const j = await (await fetch(`/api/events?after=${S.lastEvent}`)).json();
-      for (const e of j.events || []) {
-        if (S.lastEvent) say(`${e.kind} · ${e.message}`, e.ok === false ? 'warn' : 'dim');
-        S.lastEvent = e.seq;
-      }
-    } catch (e) {}
+    try { const j = await (await fetch(`/api/events?after=${S.lastEvent}`)).json();
+      for (const e of j.events || []) { if (S.lastEvent && e.kind !== 'segment') say(`${e.kind} · ${e.message}`, e.ok === false ? 'warn' : 'dim'); S.lastEvent = e.seq; } } catch (e) {}
   }
-  function keys() {
-    const armed = !!(S.robot && S.feat && S.feat.point_m && !(S.located && S.located.reachable === false));
-    $('kGo').disabled = !armed;
+  function armKeys() {
+    $('kGo').disabled = !(S.robot && S.feat && S.feat.point_m && !(S.located && S.located.reachable === false));
     for (const id of ['kStart', 'stopKey']) $(id).disabled = !S.robot;
   }
 
-  // ---- the prompt -------------------------------------------------------------------------
+  // ---- the prompt -------------------------------------------------------------------------------------
   const HELP = [
     'START          power on + brake release',
     'STOP           stop all motion (esc esc)',
-    'FIND           the nearest object · or click / drag on the picture',
-    'CLEAR          drop the target',
+    'SCAN           find every block · FIND the nearest · or click / drag the feed',
+    'CLEAR          drop the targets',
     'LOCATE         the target in the base frame + reach',
     'APPROACH       over the target, down to the standoff, back',
     'MOVE           the tcp to the approach pose (asks)',
-    'OPEN · CLOSE   the gripper',
-    'FREE [ON|OFF]  freedrive (hand-guide)',
+    'OPEN · CLOSE   the gripper · FREE [ON|OFF] freedrive',
     'JOG X+ 10      a base-frame nudge, mm (≤ 50)',
-    'VIS · TRUE · RANGE   the picture: phosphor, colour, depth contours',
+    'ISO · HOME     snap the scan isometric · back to the camera\'s view',
+    'VIS · TRUE · RANGE   the feed: phosphor, colour, depth contours',
     'SNAP           write a snapshot · STATUS · DOCTOR · PAUSE · CLASSIC',
   ];
   const COMMANDS = {
     HELP: () => say(HELP.join('\n'), 'dim'),
-    START: () => act('/api/robot/bring_up', {}, 'start'),
-    STOP: stop, HALT: stop,
-    FIND: nearest, NEAREST: nearest,
-    CLEAR: clearTarget,
-    LOCATE: () => locate(false),
-    APPROACH: approachCycle, GO: approachCycle,
-    MOVE: moveTo,
+    START: () => act('/api/robot/bring_up', {}, 'start'), STOP: stop, HALT: stop,
+    SCAN: () => scanObjects(true), FIND: () => segment({ nearest: true }, 'find'), NEAREST: () => segment({ nearest: true }, 'find'),
+    CLEAR: clearTarget, LOCATE: () => locate(false), APPROACH: approachCycle, GO: approachCycle, MOVE: moveTo,
     OPEN: () => act('/api/robot/gripper', { action: 'open' }, 'gripper open'),
     CLOSE: async () => { const j = await act('/api/robot/gripper', { action: 'close' }, 'gripper close'); if (j.ok) say(j.object_detected ? 'gripper: holding' : 'gripper: closed on nothing', j.object_detected ? '' : 'warn'); },
-    FREE: async (arg) => {
-      const on = arg ? arg === 'ON' : !S.freedrive;
-      const j = await act('/api/robot/freedrive', { enable: on }, `freedrive ${on ? 'on' : 'off'}`); if (j.ok !== false) S.freedrive = on;
-    },
+    FREE: async (arg) => { const on = arg ? arg === 'ON' : !S.freedrive; const j = await act('/api/robot/freedrive', { enable: on }, `freedrive ${on ? 'on' : 'off'}`); if (j.ok !== false) S.freedrive = on; },
     JOG: (axis, mm) => {
       const m = /^([XYZ])([+-])$/.exec(axis || ''), step = Math.min(50, Math.abs(parseFloat(mm) || 10));
       if (!m) { say('jog: axis like X+ Y- Z+', 'warn'); return; }
-      const d = [0, 0, 0, 0, 0, 0]; d['XYZ'.indexOf(m[1])] = (m[2] === '+' ? 1 : -1) * step / 1000;
-      return act('/api/robot/jog', { delta: d }, `jog ${axis} ${step} mm`);
+      const d = [0, 0, 0, 0, 0, 0]; d['XYZ'.indexOf(m[1])] = (m[2] === '+' ? 1 : -1) * step / 1000; return act('/api/robot/jog', { delta: d }, `jog ${axis} ${step} mm`);
     },
+    ISO: () => snap(), HOME: () => { autoTarget = true; G.pitch = ISO; G.dist = 1.1; touchedAt = -1e9; say('scan: following the camera', 'dim'); },
     VIS: () => mode('VIS'), TRUE: () => mode('TRUE'), COLOR: () => mode('TRUE'), COLOUR: () => mode('TRUE'), RANGE: () => mode('RANGE'), DEPTH: () => mode('RANGE'),
     SNAP: async () => { const j = await post('/api/snapshot', {}); say(j.ok ? `snapshot → ${j.color_png}` : `snap: ${why(j)}`, j.ok ? 'dim' : 'warn'); },
     STATUS: () => { S.state = null; state(); },
-    DOCTOR: async () => {
-      say('pre-flight…', 'dim');
-      try {
-        const j = await (await fetch('/api/doctor')).json();
+    DOCTOR: async () => { say('pre-flight…', 'dim');
+      try { const j = await (await fetch('/api/doctor')).json();
         for (const c of j.checks) say(`${c.ok === true ? 'ok  ' : (c.ok === false ? 'FAIL' : '--  ')} ${c.name} · ${c.detail}${c.ok === false && c.fix ? ` · fix: ${c.fix}` : ''}`, c.ok === false ? 'crit' : (c.ok ? 'dim' : 'warn'));
-        say(j.motion_ok ? 'ready for motion' : (j.ok ? 'state only' : 'not ready'), j.motion_ok ? '' : 'warn');
-      } catch (e) { say(`doctor: ${e.message}`, 'crit'); }
-    },
+        say(j.motion_ok ? 'ready for motion' : (j.ok ? 'state only' : 'not ready'), j.motion_ok ? '' : 'warn'); } catch (e) { say(`doctor: ${e.message}`, 'crit'); } },
     PAUSE: () => { S.running = !S.running; say(S.running ? 'feed resumed' : 'feed paused', 'dim'); },
     CLASSIC: () => { location.href = '/classic'; },
   };
+  const NO_ROBOT_OK = ['HELP', 'SCAN', 'FIND', 'NEAREST', 'CLEAR', 'ISO', 'HOME', 'VIS', 'TRUE', 'COLOR', 'COLOUR', 'RANGE', 'DEPTH', 'SNAP', 'DOCTOR', 'PAUSE', 'CLASSIC'];
   function mode(m) { S.mode = m; document.querySelectorAll('#modes span').forEach((s) => s.classList.toggle('sel', s.dataset.m === m)); }
   document.querySelectorAll('#modes span').forEach((s) => s.onclick = () => mode(s.dataset.m));
-
   async function run(line) {
-    const words = line.trim().toUpperCase().split(/\s+/).filter(Boolean);
-    if (!words.length) return;
+    const words = line.trim().toUpperCase().split(/\s+/).filter(Boolean); if (!words.length) return;
     say(`> ${words.join(' ')}`, 'you');
-    if (S.confirm) {
-      const fn = S.confirm; S.confirm = null;
-      if (words[0] === 'Y' || words[0] === 'YES') { await fn(); } else say('cancelled', 'dim');
-      return;
-    }
-    const cmd = COMMANDS[words[0]];
-    if (!cmd) { say(`unknown command ${words[0]} · HELP`, 'warn'); return; }
-    const needsRobot = !['HELP', 'FIND', 'NEAREST', 'CLEAR', 'VIS', 'TRUE', 'COLOR', 'COLOUR', 'RANGE', 'DEPTH', 'SNAP', 'DOCTOR', 'PAUSE', 'CLASSIC'].includes(words[0]);
-    if (needsRobot && !S.robot) { say('no robot linked to this cockpit (--no-robot)', 'warn'); return; }
+    if (S.confirm) { const fn = S.confirm; S.confirm = null; if (words[0] === 'Y' || words[0] === 'YES') await fn(); else say('cancelled', 'dim'); return; }
+    const cmd = COMMANDS[words[0]]; if (!cmd) { say(`unknown command ${words[0]} · HELP`, 'warn'); return; }
+    if (!NO_ROBOT_OK.includes(words[0]) && !S.robot) { say('no robot linked to this cockpit (--no-robot)', 'warn'); return; }
     try { await cmd(...words.slice(1)); } catch (e) { say(`${words[0]}: ${e.message}`, 'crit'); }
   }
-  const input = $('cmd');
-  let escAt = 0;
+  const input = $('cmd'); let escAt = 0;
   input.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { const v = input.value; input.value = ''; if (v.trim()) { S.history.push(v); S.hist = S.history.length; } run(v); }
     else if (ev.key === 'ArrowUp') { if (S.hist > 0) { S.hist--; input.value = S.history[S.hist]; ev.preventDefault(); } }
     else if (ev.key === 'ArrowDown') { if (S.hist < S.history.length) { S.hist++; input.value = S.history[S.hist] || ''; } }
-    else if (ev.key === 'Tab') {
-      ev.preventDefault(); const v = input.value.trim().toUpperCase();
-      const hits = Object.keys(COMMANDS).filter((k) => k.startsWith(v)); if (hits.length === 1) input.value = hits[0] + ' '; else if (hits.length) say(hits.join('  '), 'dim');
-    } else if (ev.key === 'Escape') {
-      const now = performance.now();
-      if (now - escAt < 600 && S.robot) { stop(); escAt = 0; } else { escAt = now; input.value = ''; if (S.confirm) { S.confirm = null; say('cancelled', 'dim'); } }
-    }
+    else if (ev.key === 'Tab') { ev.preventDefault(); const v = input.value.trim().toUpperCase(); const hits = Object.keys(COMMANDS).filter((k) => k.startsWith(v)); if (hits.length === 1) input.value = hits[0] + ' '; else if (hits.length) say(hits.join('  '), 'dim'); }
+    else if (ev.key === 'Escape') { const now = performance.now(); if (now - escAt < 600 && S.robot) { stop(); escAt = 0; } else { escAt = now; input.value = ''; if (S.confirm) { S.confirm = null; say('cancelled', 'dim'); } } }
   });
-  document.addEventListener('keydown', (ev) => { if (document.activeElement !== input && ev.key.length === 1 && !ev.metaKey && !ev.ctrlKey) input.focus(); });
-  $('kStart').onclick = () => run('START'); $('kFind').onclick = () => run('FIND'); $('kGo').onclick = () => run('APPROACH'); $('stopKey').onclick = stop;
+  document.addEventListener('keydown', (ev) => { if (document.activeElement !== input && document.activeElement !== scanCv && ev.key.length === 1 && !ev.metaKey && !ev.ctrlKey) input.focus(); });
+  $('kStart').onclick = () => run('START'); $('kFind').onclick = () => run('SCAN'); $('kGo').onclick = () => run('APPROACH'); $('stopKey').onclick = stop;
 
-  // ---- info + boot --------------------------------------------------------------------------
+  // ---- the loop, info, boot ----------------------------------------------------------------------------
+  function frame(now) {
+    if (feedTube) drawTube(feedTube, S.mode === 'TRUE' ? 1 : (S.mode === 'RANGE' ? 2 : 0), now);
+    viewTubes.forEach((T, i) => { if (T && !$(`view${i}`).hidden) drawTube(T, 3, now); });
+    if (C) drawScan(now);
+    drawFeedOverlay(now);
+    $('nosignal').hidden = !!(S.frameAt && now - S.frameAt < 6000) || now < 1400;
+    lamp('lPose', S.Tbc ? 'on' : (S.robot && !S.robot.dry_run ? 'alert' : ''));
+    requestAnimationFrame(frame);
+  }
   let booted = false;
   async function info() {
     try {
       const j = await (await fetch('/api/info')).json(), c = j.camera || {}, d = c.device || {}, cell = j.cell || {};
-      S.robot = j.robot;
-      lamp('lCam', c.open ? (c.kind === 'synthetic' ? 'alert' : 'on') : 'crit');
-      $('ident').textContent = [cell.UR_CELL ? `CELL ${cell.UR_CELL}` : null, S.robot ? `${S.robot.platform || ''} ${S.robot.host}${S.robot.dry_run ? ' · DRY RUN' : ''}` : 'NO ROBOT',
-        d.name ? `${d.name}${d.serial ? ' ' + d.serial : ''}` : c.kind].filter(Boolean).join('  /  ');
+      S.robot = j.robot; lamp('lCam', c.open ? (c.kind === 'synthetic' ? 'alert' : 'on') : 'crit');
+      $('ident').textContent = [cell.UR_CELL ? `CELL ${cell.UR_CELL}` : null, S.robot ? `${S.robot.platform || ''} ${S.robot.host}${S.robot.dry_run ? ' · DRY RUN' : ''}` : 'NO ROBOT', d.name ? `${d.name}${d.serial ? ' ' + d.serial : ''}` : c.kind].filter(Boolean).join('  /  ');
       (j.views || []).slice(0, 2).forEach((v, i) => { $(`view${i}`).hidden = false; $(`view${i}Name`).textContent = v.name || `VIEW ${i + 1}`; viewLoop(i); });
       if (!S.robot) { lamp('lLink'); lamp('lPwr'); lamp('lSafe'); lamp('lRmt'); }
-      keys();
+      armKeys();
       if (!booted) {
         booted = true;
         say(`${d.name || c.kind || 'camera'} ${c.open ? 'online' : 'offline'}${c.lean ? ' · lean open' : ''} · segmenter ${j.segmenter || '?'}`, c.open ? 'dim' : 'warn');
@@ -805,12 +942,11 @@
     } catch (e) { lamp('lCam', 'crit'); }
   }
   say('interface online', 'dim');
-  say('click the picture to acquire a target · HELP for commands', 'dim');
+  say('drag the scan to orbit · click the feed to acquire · HELP for commands', 'dim');
   setInterval(() => { $('clock').textContent = clock(); }, 1000);
-  info(); setInterval(info, 3000);
-  setInterval(state, 2500); events(); setInterval(events, 1500);
-  frames(); requestAnimationFrame(frame);
-  input.focus();
+  info(); setInterval(info, 3000); setInterval(state, 2500); events(); setInterval(events, 1500);
+  setInterval(() => { if (S.running && S.header) scanObjects(false); }, 2500);
+  frames(); requestAnimationFrame(frame); input.focus();
 })();
 </script>
 </body>
