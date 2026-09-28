@@ -497,25 +497,49 @@ def _running_robot(*, ready_pose: bool = True):
     return robot
 
 
-def test_flange_pose_matches_the_controllers_own_arithmetic(ursim_ready):
-    """``get_flange_pose`` (host-side pose_trans/pose_inv) agrees with what the
-    controller computes, and undoing the active TCP offset is consistent with
-    the live TCP pose."""
+def test_flange_pose_from_the_state_broadcast(ursim_ready):
+    """``get_flange_pose`` reads the Secondary state broadcast first (no script, works
+    in Local): the flange by FK of the actual joints, and flange · offset lands on the
+    TCP pose the same message reports."""
     from urctl.pose import pose_trans
+    from urctl.stateframe import CONSISTENCY_TOLERANCE_M
 
     robot = _running_robot()
     fp = robot.get_flange_pose()
-    assert fp["ok"], fp
+    assert fp["ok"] and fp["source"] == "state_broadcast", fp
     assert len(fp["flange"]) == 6 and len(fp["tcp"]) == 6 and len(fp["tcp_offset"]) == 6
-    assert "flange_reported" in fp and fp["host_controller_mismatch_m"] < 1e-4, fp
-    # flange · offset == tcp (to the controller's textmsg precision)
+    assert fp["tcp_offset_consistent"] is True, fp
     back = pose_trans(fp["flange"], fp["tcp_offset"])
-    assert max(abs(a - b) for a, b in zip(back[:3], fp["tcp"][:3], strict=True)) < 1e-4
+    assert math.dist(back[:3], fp["tcp"][:3]) <= CONSISTENCY_TOLERANCE_M, fp
     # and the tool registry exposes it
     from urctl.tools import call_tool
 
     via_tool = call_tool(robot, "ur_flange_pose")
     assert via_tool["ok"] and via_tool["action"] == "get_flange_pose"
+
+
+def test_flange_pose_fallback_matches_the_controllers_own_arithmetic(ursim_ready):
+    """With the broadcast unreachable, the textmsg fallback's host-side
+    pose_trans/pose_inv agrees with the controller's own, and with the broadcast."""
+    import dataclasses
+
+    from urctl import Robot
+    from urctl.pose import pose_trans
+    from urctl.stateframe import CONSISTENCY_TOLERANCE_M
+
+    robot = _running_robot()
+    broadcast = robot.get_flange_pose()
+    with socket.socket() as s:  # a port nothing listens on: the broadcast read is refused
+        s.bind(("127.0.0.1", 0))
+        closed = s.getsockname()[1]
+    fp = Robot(dataclasses.replace(robot.config, secondary_port=closed)).get_flange_pose()
+    assert fp["ok"] and fp["source"] == "textmsg", fp
+    assert "flange_reported" in fp and fp["host_controller_mismatch_m"] < 1e-4, fp
+    # flange · offset == tcp (to the controller's textmsg precision)
+    back = pose_trans(fp["flange"], fp["tcp_offset"])
+    assert max(abs(a - b) for a, b in zip(back[:3], fp["tcp"][:3], strict=True)) < 1e-4
+    # both paths name the same flange (the arm is parked)
+    assert broadcast["ok"] and math.dist(broadcast["flange"][:3], fp["flange"][:3]) <= CONSISTENCY_TOLERANCE_M
 
 
 def _read_tcp(robot, *, collect_for: float = 3.0):
