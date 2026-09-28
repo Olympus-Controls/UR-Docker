@@ -32,3 +32,4 @@ captures/
 
 # Local build output (the downloadable URCap is committed under urcap/dist/)
 target/
+*.wic
