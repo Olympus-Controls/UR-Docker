@@ -137,6 +137,18 @@ objects, the feed's target box re-projected through the live pose; `/classic` is
 old page (calibration lives there). Needs a cockpit restart to pick up server changes;
 the page itself is read from disk per request.
 
+**Pick from the cockpit (`POST /api/robot/pick`, `perception/pickplan.py`, 2026-09-27).**
+Nick's spec: the gripper comes in straight down the base Z axis, wrist 3 across the
+object's short side, fingers pre-opened to 1.2x its width, fingertips 25 mm over its top.
+Two programs: a blended sweep from the picture pose (`PERCEPTION_HOME_POSE`; FANCY adds a
+swing and a wrist flourish) to a **close look** — the object on the colour camera's axis at
+0.24 m, just outside the D435's blind zone — then the object is re-found there and the
+final program (over → approach [→ grasp → lift with PICK]) is built from that measurement.
+Every pose goes to the controller's IK first. The page's LEVEL lamp is the fitted floor's
+tilt in the base frame: the table is flat, so any tilt is calibration error. The arm's
+linkage comes from RTDE `actual_q` through `perception/armfk.py` (UR3e DH verified 0.84 mm
+against the controller's flange; other models guarded by the same check).
+
 **Hand-eye drift, 2026-09-27 evening:** the 09-25 solve placed blocks 2–5 cm off,
 view-dependently (the tilted survey and a vertical look disagreed by 26–28 mm; both
 grasps missed). Re-run `perception calibrate` before trusting a pick again.
