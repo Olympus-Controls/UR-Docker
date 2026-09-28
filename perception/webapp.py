@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import sys
@@ -80,6 +81,8 @@ from collections.abc import Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+from urctl.pose import Transform
 
 from .cell import describe_cell
 from .config import PerceptionConfig
@@ -295,6 +298,7 @@ class ViewerApp:
         # The live flange pose (RTDE), so each frame carries the pose it was taken at.
         self.pose_stream = pose_stream
         self._latest_t = 0.0  # host time the newest frame arrived
+        self.mask_t = 0.0  # ... and the one the current mask was cut from
         # Origins allowed to call the API from another page (a PolyScope X URCap on
         # the pendant, `urcap/realsense-pilot`). Empty = same-origin only (the default).
         self.cors_origins = [o.strip() for o in (cors or []) if o and o.strip()]
@@ -455,6 +459,128 @@ class ViewerApp:
         if self.robot is not None:
             out["flange_to_color_pose"] = self.robot.handeye.as_dict().get("flange_to_color_pose")
         return out
+
+    def _flange_at(self, t: float | None) -> list[float] | None:
+        """The flange pose at host time ``t`` (the pose stream), else the live one."""
+        if self.pose_stream is not None and t:
+            pose, _ = self.pose_stream.at(t, max_age_s=0.5)
+            if pose is not None:
+                return pose
+        fp = self.robot.flange_pose() if self.robot is not None else {}
+        return list(fp["flange"]) if fp.get("ok") and fp.get("flange") else None
+
+    def pick(self, *, pick: bool = False, fancy: bool = False, plan_only: bool = False) -> dict:
+        """Sweep to the clicked object and hover (``pickplan``): straight down the base
+        Z axis, fingers across its short side opened to 1.2x its width, fingertips
+        25 mm over its top; with ``pick`` down, close and lift. One blended program."""
+        from . import pickplan
+        from .handeye import tip_m_from_env
+
+        if self.robot is None:
+            raise ValueError("no robot link (started with --no-robot)")
+        with self._seg_lock:
+            mask, frame, mask_t = self.mask, self.mask_frame, self.mask_t
+        if mask is None or frame is None or not mask.area:
+            raise ValueError("no target: click an object first")
+        f_then = self._flange_at(mask_t)
+        if f_then is None:
+            return {"ok": False, "error": "no flange pose for the target's frame"}
+        T = Transform.from_pose(f_then).compose(
+            Transform.from_pose(self.robot.handeye.as_dict()["flange_to_color_pose"])
+        )
+        k, w = frame.intrinsics, mask.width
+        pts = []
+        for n, i in enumerate(mask.pixels()):
+            if n % 2:
+                continue
+            u, v = i % w, i // w
+            d = frame.depth.distance_m(u, v)
+            if d:
+                pts.append(T.apply(((u - k.ppx) * d / k.fx, (v - k.ppy) * d / k.fy, d)))
+        rect = pickplan.rectangle(pickplan.top_face(pts))
+        if rect is None:
+            return {"ok": False, "error": "not enough depth on the target's top face"}
+        f_now = self._flange_at(time.time())
+        if f_now is None:
+            return {"ok": False, "error": "no live flange pose"}
+        tip = tip_m_from_env()
+        p = pickplan.plan(rect, f_now, tip_m=tip, pick=pick, fancy=fancy)
+        if pick and not p["fits"]:
+            return {
+                "ok": False,
+                "error": f"{rect['minor_m'] * 1000:.0f} mm is too wide for the fingers",
+                "rect": rect,
+            }
+        # the controller's IK on every pose; a fancy via it can't solve is dropped
+        iks = self.robot.robot.inverse_kin([leg["pose"] for leg in p["legs"]], tcp=[0.0] * 6)
+        bad = [leg["name"] for leg, a in zip(p["legs"], iks, strict=True) if a.get("reachable") is False]
+        fancy_bad = [b for b in bad if b in ("swing", "flourish")]
+        if fancy_bad:
+            p = pickplan.plan(rect, f_now, tip_m=tip, pick=pick, fancy=fancy, skip=fancy_bad)
+            iks = self.robot.robot.inverse_kin([leg["pose"] for leg in p["legs"]], tcp=[0.0] * 6)
+            bad = [leg["name"] for leg, a in zip(p["legs"], iks, strict=True) if a.get("reachable") is False]
+        summary = {
+            "rect": {**rect, "theta_deg": round(math.degrees(rect["theta"]), 1)},
+            "yaw_deg": round(p["yaw_deg"], 1),
+            "opening_mm": round(p["opening_m"] * 1000, 1),
+            "gripper_position": p["gripper_position"],
+            "vias": p["vias"],
+            "dropped": fancy_bad,
+            "legs": [{"name": leg["name"], "pose": [round(v, 4) for v in leg["pose"]]} for leg in p["legs"]],
+        }
+        if bad:
+            return {"ok": False, "error": f"out of reach: {', '.join(bad)}", **summary}
+        if plan_only:
+            return {"ok": True, "plan_only": True, **summary}
+        g = self.robot.gripper("move", position=p["gripper_position"])
+        if not g.get("ok"):
+            return {"ok": False, "error": f"gripper: {g.get('error') or 'no answer'}", **summary}
+        legs = [{k2: v2 for k2, v2 in leg.items() if k2 != "name"} for leg in p["legs"]]
+        run = self.robot._tool("move_tcp_path", {"legs": legs, "tcp": [0.0] * 6})
+        done = run.get("completed_legs")
+        held = None
+        for leg in run.get("legs") or []:
+            gr = leg.get("gripper") if isinstance(leg, dict) else None
+            if isinstance(gr, dict) and gr.get("action") == "close":
+                held = bool(gr.get("object_detected"))
+        self.events.add(
+            "robot",
+            f"{'pick' if pick else 'approach'}{' (fancy)' if fancy else ''} → "
+            f"{[round(v, 3) for v in rect['centre']]}" + (f", held {held}" if pick else ""),
+            ok=bool(run.get("ok")),
+        )
+        return {
+            "ok": bool(run.get("ok")),
+            "error": run.get("error"),
+            "completed_legs": done,
+            "held": held,
+            "dry_run": run.get("dry_run"),
+            "protective_stop": run.get("protective_stop"),
+            **summary,
+        }
+
+    def home(self) -> dict:
+        """One clean movel back to the cell's picture pose (``PERCEPTION_HOME_POSE``,
+        a flange pose looking down at the work surface)."""
+        if self.robot is None:
+            raise ValueError("no robot link (started with --no-robot)")
+        raw = os.environ.get("PERCEPTION_HOME_POSE", "").strip()
+        if not raw:
+            raise ValueError("no PERCEPTION_HOME_POSE in the cell")
+        pose = [float(v) for v in raw.strip("[]").split(",")]
+        if len(pose) != 6:
+            raise ValueError("PERCEPTION_HOME_POSE must be six numbers")
+        run = self.robot._tool(
+            "move_tcp_path",
+            {"legs": [{"pose": pose, "velocity": 0.25, "acceleration": 0.8}], "tcp": [0.0] * 6},
+        )
+        self.events.add("robot", "home", ok=bool(run.get("ok")))
+        return {
+            "ok": bool(run.get("ok")),
+            "error": run.get("error"),
+            "pose": pose,
+            "dry_run": run.get("dry_run"),
+        }
 
     def objects(self) -> dict:
         """Every white block in the newest frame (pick-cycle's detector): per object
@@ -889,6 +1015,8 @@ class ViewerApp:
     def _adopt_mask(self, mask: Mask, frame: RgbdFrame, seq: int, t0: float, prompt: dict) -> dict:
         feats = extract_features(mask, frame)
         self.mask, self.mask_frame, self.mask_seq = mask, frame, seq
+        with self._cond:  # the pose the mask's frame was taken at (the newest frame's arrival)
+            self.mask_t = self._latest_t if seq == self._seq else time.time()
         self.features = feats.as_dict() if feats else None
         pt = self.features.get("point_m") if self.features else None
         self.events.add(
@@ -1104,6 +1232,16 @@ class ViewerHandler(BaseHTTPRequestHandler):
                     _box(payload),
                 )
             )
+        elif route == "/api/robot/pick":
+            self._guarded(
+                lambda: self.app.pick(
+                    pick=bool(payload.get("pick")),
+                    fancy=bool(payload.get("fancy")),
+                    plan_only=bool(payload.get("plan_only")),
+                )
+            )
+        elif route == "/api/robot/home":
+            self._guarded(self.app.home)
         elif route == "/api/objects":
             self._guarded(self.app.objects)
         elif route == "/api/nearest":
