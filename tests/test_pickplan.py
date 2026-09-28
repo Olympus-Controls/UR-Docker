@@ -69,7 +69,8 @@ def test_the_approach_nick_asked_for(theta, fancy, pick):
     assert abs(fingers[0] * minor_dir[0] + fingers[1] * minor_dir[1]) == pytest.approx(
         1.0, abs=1e-6
     )  # across the short side
-    assert p["opening_m"] == pytest.approx(1.2 * rect["minor_m"])
+    # 20 % wider, but never under 8 mm a side (a 24 mm block: 40 mm, not 28.8)
+    assert p["opening_m"] == pytest.approx(max(1.2 * rect["minor_m"], rect["minor_m"] + 0.016))
     assert p["gripper_position"] == pickplan.robotiq_position(p["opening_m"])
     names = [leg["name"] for leg in p["legs"]]
     assert names[-1 if not pick else -3] == "approach"
@@ -253,3 +254,12 @@ def test_white_level_keeps_a_shadowed_block_and_drops_the_carpet():
     blobs = white_blobs(w, h, 3, bytes(px), white_min=lv, min_px=100)
     assert any(75 <= b["cx"] <= 105 and 45 <= b["cy"] <= 75 for b in blobs)  # the block is found
     assert not white_blobs(w, h, 3, bytes(px), min_px=100)[1:]  # the fixed 180 only sees the slats
+
+
+def test_the_fingers_clear_a_28mm_block_by_8mm_a_side():
+    """UR3e, 2026-09-27: at 1.2 x 28 mm = 34 mm (3.4 mm a side) a fingertip caught the
+    block's edge and the Hand-E closed on nothing; fully open at the same spot it held."""
+    rect = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.047, 0.028, 0.0)))
+    p = pickplan.plan(rect, HOME, tip_m=TIP, pick=True)
+    assert p["opening_m"] == pytest.approx(rect["minor_m"] + 0.016)
+    assert (p["opening_m"] - rect["minor_m"]) / 2 >= 0.008 - 1e-9 and p["fits"]

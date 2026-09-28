@@ -26,7 +26,10 @@ from urctl.pose import Transform
 from .pickcycle import grasp_rotation, grasp_yaw_deg, tip_pose
 
 HOVER_M = 0.025  # fingertips over the top face at the approach (Nick, 2026-09-27)
-OPENING_FACTOR = 1.2  # fingers 20 % wider than the object
+OPENING_FACTOR = 1.2  # fingers 20 % wider than the object ...
+CLEARANCE_M = 0.008  # ... but never less than 8 mm a side: at 1.2 x 28 mm (3.4 mm a side) a fingertip
+# caught the block's top edge and the Hand-E closed on nothing; fully open at the same spot, it held
+# (UR3e, 2026-09-27 23:1x)
 GRASP_BELOW_M = 0.015
 LIFT_M = 0.05
 DROP_M = 0.06  # the last stretch of the sweep runs straight down the Z axis
@@ -202,7 +205,7 @@ def plan(
     else:
         sweep = _legs(start_flange, stops + [("over", over, fast)] + tail, cap)
         final = []
-    opening = min(stroke_m, rect["minor_m"] * opening_factor)
+    opening = min(stroke_m, max(rect["minor_m"] * opening_factor, rect["minor_m"] + 2 * CLEARANCE_M))
     return {
         "sweep": sweep,
         "final": final,
@@ -214,7 +217,7 @@ def plan(
         "yaw_deg": yaw,
         "opening_m": opening,
         "gripper_position": robotiq_position(opening, stroke_m),
-        "fits": rect["minor_m"] * opening_factor <= stroke_m,
+        "fits": rect["minor_m"] + 2 * CLEARANCE_M <= stroke_m or rect["minor_m"] * opening_factor <= stroke_m,
         "vias": [leg["name"] for leg in sweep + final if leg["name"] not in ("approach", "grasp", "lift")],
     }
 
