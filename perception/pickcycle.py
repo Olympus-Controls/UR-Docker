@@ -290,7 +290,7 @@ class PickCycle:
     drop_mm: float = 120.0
     velocity: float = 0.25  # transit (m/s); approach 0.10, grasp 0.05
     accel: float = 0.8
-    min_radius_m: float = 0.0  # skip blocks closer than this to the base column (UR3e: ~0.25)
+    min_radius_m: float = 0.2  # skip blocks closer than this to the base column (UR3e: 0.19 m stopped)
     max_radius_m: float = 0.0  # skip blocks farther than this (default: the arm's reach less 50 mm)
     force: int = 80
     stroke_m: float = 0.05  # Hand-E
@@ -858,7 +858,10 @@ def add_pick_cycle_args(ap) -> None:
         "--robot-host", default=None, help="controller address (default: the cockpit's robot, else UR_HOST)"
     )
     ap.add_argument(
-        "--min-radius-m", type=float, default=0.0, help="skip blocks closer than this to the base column"
+        "--min-radius-m",
+        type=float,
+        default=0.2,
+        help="skip blocks closer than this to the base column (default 0.2; 0 = off)",
     )
     ap.add_argument(
         "--max-radius-m",

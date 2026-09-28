@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from perception.pickcycle import Block, CockpitError, PickCycle
+from perception.pickcycle import Block, CockpitError, PickCycle, add_pick_cycle_args
 from tests.test_pickcycle import H, K, W, scene
 from tests.test_urctl import FakeController
 from urctl.config import RobotConfig
@@ -246,3 +246,17 @@ def test_a_program_the_controller_refuses_is_reported_and_leaves_the_gripper_ope
     assert [r["stage"] for r in out["results"]] == ["refused"]
     assert any("never ran a leg" in e for e in events)
     assert "SET POS 0" in [b for b in fake.primary_sends if "urctl/rq" in b][-1]
+
+
+def test_blocks_hugging_the_base_column_are_skipped_by_default(rig):
+    """Regression: the minimum radius was opt-in (0); on the UR3e a block 0.19 m from the
+    column protective-stopped twice. Default 0.2 m (Nick, 2026-09-27), CLI and class."""
+    fake, cycle, events = rig
+    assert PickCycle().min_radius_m == 0.2
+    ap = __import__("argparse").ArgumentParser()
+    add_pick_cycle_args(ap)
+    assert ap.parse_args([]).min_radius_m == 0.2
+    near = Block(0, [0.13, 0.13, -0.25], 0.0, 0.045, 0.028, (0, 0), 500)  # 0.18 m out
+    assert "too close" in (cycle._out_of_band(near) or "")
+    ok = Block(0, [0.16, 0.16, -0.25], 0.0, 0.045, 0.028, (0, 0), 500)  # 0.23 m out
+    assert cycle._out_of_band(ok) is None
