@@ -40,6 +40,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .partspec import PartSpec, from_payload, from_query
 from .pickcycle import DEFAULT_COCKPIT, Cockpit, CockpitError
 from .picknode import (
     DEFAULT_PICK_PORT,
@@ -196,17 +197,24 @@ class Sidecar:
             log=lambda text, ok: _say(text),
         )
 
-    def detect(self) -> dict:
+    def detect(self, part: PartSpec | None = None) -> dict:
         frame = self.frames.frame(None, 0.0)
         if frame is None:
             return {"ok": False, "error": f"no frame from the cockpit at {self.frames.base}"}
         return detect_report(
-            frame, pick_port=self.pick_port, handeye=self.frames.handeye() is not None, tip_m=self.tip_m
+            frame,
+            pick_port=self.pick_port,
+            handeye=self.frames.handeye() is not None,
+            tip_m=self.tip_m,
+            part=part,
         )
 
     def preview(self, payload: dict) -> dict:
         pixel, grip, hover = parse_preview_request(payload)
-        return preview(self.planner, self.flange_reader(), pixel, grip_below_mm=grip, hover_mm=hover)
+        part = from_payload(payload)
+        return preview(
+            self.planner, self.flange_reader(), pixel, grip_below_mm=grip, hover_mm=hover, part=part
+        )
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -254,7 +262,8 @@ class _Handler(BaseHTTPRequestHandler):
         if body is None:
             self._json({"ok": False, "error": f"body missing a length or over {MAX_BODY} bytes"}, 413)
             return
-        route = urllib.parse.urlsplit(self.path).path
+        url = urllib.parse.urlsplit(self.path)
+        route = url.path
         try:
             if method == "GET" and route == "/api/pick/log":
                 data = LOG.text().encode()
@@ -265,7 +274,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(data)
                 return
             if method == "GET" and route == "/api/pick/detect":
-                self._json(self.side.detect())
+                try:
+                    part = from_query(urllib.parse.parse_qs(url.query))
+                except ValueError as exc:
+                    self._json({"ok": False, "error": f"bad request: {exc}"}, 400)
+                    return
+                self._json(self.side.detect(part))
                 return
             if method == "POST" and route == "/api/pick/preview":
                 try:

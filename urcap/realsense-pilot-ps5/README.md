@@ -5,11 +5,11 @@ robot on PolyScope 5: the wrist RealSense feed inside PolyScope, tap a point, an
 the arm there. It is an **Installation node** (Installation tab → URCaps → RealSense
 Pilot), the PolyScope 5 counterpart of PolyScope X's Application node.
 
-Download: [`../dist/realsense-pilot-ps5-0.3.0.urcap`](../dist/realsense-pilot-ps5-0.3.0.urcap)
+Download: [`../dist/realsense-pilot-ps5-0.4.0.urcap`](../dist/realsense-pilot-ps5-0.4.0.urcap)
 
 ## Install on the robot
 
-1. Copy `realsense-pilot-ps5-0.3.0.urcap` to a USB stick and plug it into the pendant.
+1. Copy `realsense-pilot-ps5-0.4.0.urcap` to a USB stick and plug it into the pendant.
 2. Settings (☰ top right) → System → URCaps → **+** → pick the file → Open, then
    **Restart** when PolyScope asks.
 3. Installation tab → URCaps → **RealSense Pilot**.
@@ -50,6 +50,31 @@ jar — the URCap API jars are UR's and live only in the URSim image — it runs
 committed jar of that version exists, carries the current sources' digest, and passes
 PolyScope 5's install checks; then the URCap tests. So: bump `Bundle-Version`, `make
 urcap5-package`, commit `dist/`, then tag. The Python package's `v*` tags are a separate line.
+## RealSense Pick: tell it the part's size
+
+The **RealSense Pick** program node (Program tab → URCaps) finds white blocks by colour and
+depth. Without a part size it takes anything block-sized (the foam blocks' fixed gate:
+at most 70 × 60 mm). Give it the part's rough size **as it lies on the table** — **Length**
+and **Width** (the footprint, either way round), optionally **Height** (how far its top
+stands above the table), and a **Tolerance** (default ±25 %, never tighter than ±5 mm) —
+and it considers only candidates that size, both on the teach screen and when the program
+runs:
+
+- the feed rings the matching parts green and the rest grey and dashed, labelled with what
+  they measured and why they are out (`43×43 mm too short`, `2 parts touching?`, `too flat`);
+- tapping a ruled-out one says so; the program picks the matching part nearest the tap;
+- the height tells a block from a flat look-alike of the same footprint (a sticker, a
+  label, a sheet) and is measured from the surface around the part — when no surface is
+  visible there the height is simply not checked;
+- with a height set, a grip depth that would put the fingertips on the table is refused
+  before the program can run;
+- a run that sees white things but none the part's size stops with its own reason
+  (status −7, "nothing the size of the part"), not "no block in view".
+
+On the wire the node adds `part=60x40x30 tol=25` to its `FIND` / `REFINE` lines
+(`perception/partspec.py`; the cockpit's `/api/pick/detect?part=…&tol=…` and
+`/api/pick/preview` `{"part", "tol"}` take the same). Larger parts than a foam block are
+fine — the size replaces the fixed gate — but the part must still be white to the camera.
 
 ## Build it
 

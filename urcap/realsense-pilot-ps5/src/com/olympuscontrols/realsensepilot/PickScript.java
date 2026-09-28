@@ -26,6 +26,10 @@ import java.util.Locale;
  *       operator's gripper Close), lift along the tool axis.</li>
  * </ol>
  *
+ * With the part's rough size set (length × width as it lies, optionally its height, and a
+ * tolerance), FIND and REFINE carry {@code part=LxWxH tol=T}: the pick server considers
+ * only candidates that size, and the grip depth is refused if it would reach the table.
+ *
  * Every stage is reported twice: {@code textmsg} (PolyScope's Log tab) and a {@code LOG}
  * line to the pick server, which writes it with its own answers into one timestamped
  * log on the cockpit's machine. The result variable is True only after a completed
@@ -33,7 +37,7 @@ import java.util.Locale;
  * and leaves it False — an If on it decides what happens next.
  */
 final class PickScript {
-    static final String VERSION = "0.3.0";
+    static final String VERSION = "0.4.0";
     static final int DEFAULT_PICK_PORT = 7622;
     static final String SOCKET = "rs_pick";
     /** The pick server's status codes, as the operator should read them. */
@@ -44,6 +48,7 @@ final class PickScript {
         {"-3", "the cockpit has no hand-eye calibration (or cannot be reached)"},
         {"-4", "no fresh camera frame - is the cockpit's camera streaming?"},
         {"-5", "the closer look did not find the block again"},
+        {"-7", "something is in view, but nothing the size of the part"},
         {"-8", "no answer from the pick server within 10 s"},
         {"-9", "the pick server did not understand the request"},
     };
@@ -57,6 +62,11 @@ final class PickScript {
     double liftMm = 60.0;
     double hoverMm = 40.0;
     double lookMm = 90.0;
+    /** The part's rough size as it lies, mm; 0 x 0: any block-sized thing. Height 0: not checked. */
+    double partLengthMm = 0.0;
+    double partWidthMm = 0.0;
+    double partHeightMm = 0.0;
+    double partTolPct = 25.0;
     boolean popupOnFail = true;
     String foundVariable = "rs_pick_found";
 
@@ -83,8 +93,52 @@ final class PickScript {
         if (port < 1 || port > 65535) return "the pick port must be 1..65535";
         if (!(gripBelowTopMm >= 0 && gripBelowTopMm <= 60)) return "the grip depth must be 0..60 mm below the top";
         if (!(liftMm >= 5 && liftMm <= 300)) return "the lift must be 5..300 mm";
+        String part = partProblem();
+        if (part != null) return part;
         if (!foundVariable.matches("[A-Za-z_][A-Za-z0-9_]*")) return "the result variable name is not valid";
         return null;
+    }
+
+    boolean hasPart() {
+        return partLengthMm > 0 || partWidthMm > 0 || partHeightMm > 0;
+    }
+
+    private String partProblem() {
+        if (!hasPart()) return null;
+        if (!(partLengthMm > 0 && partWidthMm > 0)) return "give the part's length and width (or clear the part size)";
+        if (!dim(partLengthMm) || !dim(partWidthMm) || !(partHeightMm == 0 || dim(partHeightMm))) {
+            return "part dimensions must be 5..500 mm";
+        }
+        if (!(partTolPct >= 5 && partTolPct <= 100)) return "the part tolerance must be 5..100 %";
+        if (partHeightMm > 0 && gripBelowTopMm > partHeightMm - 2) {
+            return "the grip depth (" + num(gripBelowTopMm) + " mm) would put the fingertips on the table: the part is "
+                    + num(partHeightMm) + " mm tall";
+        }
+        return null;
+    }
+
+    private static boolean dim(double mm) {
+        return mm >= 5 && mm <= 500;
+    }
+
+    /** {@code " part=60x40x30 tol=25"} for the pick server, or "" when no part size is set. */
+    String partToken() {
+        if (!hasPart()) return "";
+        return " part=" + num(Math.max(partLengthMm, partWidthMm)) + "x" + num(Math.min(partLengthMm, partWidthMm))
+                + (partHeightMm > 0 ? "x" + num(partHeightMm) : "") + " tol=" + num(partTolPct);
+    }
+
+    /** "60 x 40 x 30 mm +-25 %" — ASCII, for the header comment and the Log tab. */
+    String partText() {
+        if (!hasPart()) return "any block";
+        return num(Math.max(partLengthMm, partWidthMm)) + " x " + num(Math.min(partLengthMm, partWidthMm))
+                + (partHeightMm > 0 ? " x " + num(partHeightMm) : "") + " mm +-" + num(partTolPct) + " %";
+    }
+
+    /** One decimal at most, no trailing zeros, never a locale's comma. */
+    static String num(double v) {
+        String t = String.format(Locale.ROOT, "%.1f", v);
+        return t.endsWith(".0") ? t.substring(0, t.length() - 2) : t;
     }
 
     /** The lines before the child nodes (they run at the grip, with the active TCP). */
@@ -92,7 +146,7 @@ final class PickScript {
         String why = problem();
         if (why != null) throw new IllegalStateException(why);
         List<String> s = new ArrayList<String>();
-        s.add("# RealSense Pick " + VERSION + " - pick server " + host + ":" + port);
+        s.add("# RealSense Pick " + VERSION + " - pick server " + host + ":" + port + " - part " + partText());
         s.add(foundVariable + " = False");
         s.add("rs_tcp0 = get_tcp_offset()");
         s.add("set_tcp(p[0, 0, 0, 0, 0, 0])");
@@ -103,13 +157,15 @@ final class PickScript {
         } else {
             say(s, "", "first look from where the arm is", null, false);
         }
+        String part = partToken();
         s.add("rs_go = False");
         s.add("rs_st = -8");
         s.add("rs_why = \"no answer from the pick server within 10 s\"");
         s.add("if socket_open(\"" + host + "\", " + port + ", \"" + SOCKET + "\"):");
         say(s, "  ", "start, flange ", "get_actual_tcp_pose()", true);
+        say(s, "  ", "looking for " + partText(), null, true);
         s.add("  socket_send_line(str_cat(\"FIND \", str_cat(to_str(get_actual_tcp_pose()), \" u="
-                + tapU + " v=" + tapV + "\")), \"" + SOCKET + "\")");
+                + tapU + " v=" + tapV + part + "\")), \"" + SOCKET + "\")");
         s.add("  rs_r = socket_read_ascii_float(10, \"" + SOCKET + "\", 10)");
         s.add("  if rs_r[0] == 10:");
         s.add("    rs_st = rs_r[1]");
@@ -144,7 +200,8 @@ final class PickScript {
         s.add("    rs_try = 0");
         s.add("    while (rs_try < 3) and (rs_go == False):");
         s.add("      socket_send_line(str_cat(\"REFINE \", str_cat(to_str(get_actual_tcp_pose()), str_cat(\" \","
-                + " str_cat(to_str(rs_c), str_cat(\" lean=\", to_str(rs_leans[rs_try])))))), \"" + SOCKET + "\")");
+                + " str_cat(to_str(rs_c), str_cat(\"" + part + " lean=\", to_str(rs_leans[rs_try])))))), \"" + SOCKET
+                + "\")");
         s.add("      rs_r = socket_read_ascii_float(10, \"" + SOCKET + "\", 10)");
         s.add("      rs_rs = -8");
         s.add("      if rs_r[0] == 10:");

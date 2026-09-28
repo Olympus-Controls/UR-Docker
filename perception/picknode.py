@@ -28,6 +28,11 @@ Requests (one line each, ASCII, ≤ 1 kB; the pose is URScript's ``to_str(pose)`
     fingertips clear the top by :data:`LOOK_TIP_CLEAR_M`. Status -6 when no such pose
     exists (the node then looks from straight over the block, as before).
 
+``part=<L>x<W>[x<H>] [tol=<pct>]`` (FIND and REFINE, optional): the part's rough size in
+mm as it lies — footprint and height above the table — and how far off it may measure
+(default 25 %). Only candidates that size are considered
+(:class:`perception.partspec.PartSpec`); without it, anything foam-block-sized.
+
 ``LOG <text>``
     The robot program saying where it is (``start``, ``FIND status 1``, ``hover`` …):
     written to the server's log, printable ASCII only, capped; **no reply**.
@@ -60,6 +65,8 @@ from collections.abc import Callable, Sequence
 
 from urctl.pose import Transform
 
+from . import partspec
+from .partspec import PartSpec
 from .pickcycle import Block, detect_blocks, grasp_rotation, grasp_yaw_deg, tip_pose
 
 DEFAULT_PICK_PORT = 7622
@@ -81,6 +88,7 @@ STATUS = {
     -4: "no fresh camera frame",
     -5: "the second look did not find the block again",
     -6: "no look pose keeps the camera in range and the fingertips clear",
+    -7: "something is in view, but nothing the size of the part",
     -9: "malformed request",
 }
 
@@ -98,8 +106,8 @@ class RequestError(ValueError):
 
 
 def parse_request(line: str) -> dict:
-    """``{"verb", "flange", "near" (REFINE, LOOK), "pixel" (FIND, optional)}``,
-    ``{"verb": "LOG", "text"}``, or RequestError."""
+    """``{"verb", "flange", "near" (REFINE, LOOK), "pixel" (FIND, optional), "part"
+    (FIND, REFINE: a PartSpec or None)}``, ``{"verb": "LOG", "text"}``, or RequestError."""
     text = line.strip()
     if text[:4].upper() in ("LOG", "LOG "):  # the program never reads a reply to LOG: never refuse one
         said = text[3:].strip()[: MAX_LOG_TEXT * 2]
@@ -119,6 +127,10 @@ def parse_request(line: str) -> dict:
         out["lean"] = float(lean.group(1))
         if not (0.0 <= out["lean"] <= MAX_LEAN_DEG):
             raise RequestError(f"lean must be within 0..{MAX_LEAN_DEG:.0f} deg")
+    try:
+        out["part"] = partspec.parse(text) if verb != "LOOK" else None
+    except ValueError as exc:
+        raise RequestError(str(exc)) from None
     if verb in ("REFINE", "LOOK"):
         if len(poses) < 2:
             raise RequestError(f"{verb} needs the flange pose and the block centre")
@@ -242,10 +254,16 @@ class PickPlanner:
         self.log(f"pick {req['verb']}: {what}{where}", status == 1)
         return format_reply(status, centre, pose)
 
-    def plan(self, flange: Sequence[float], pixel: tuple[int, int] | None = None, lean: float = 0.0) -> dict:
+    def plan(
+        self,
+        flange: Sequence[float],
+        pixel: tuple[int, int] | None = None,
+        lean: float = 0.0,
+        part: PartSpec | None = None,
+    ) -> dict:
         """A FIND for a caller that already has the flange pose (the node's teach-time
         check through the cockpit): ``{status, reason, centre, top_pose}``."""
-        req = {"verb": "FIND", "flange": [float(v) for v in flange], "lean": float(lean)}
+        req = {"verb": "FIND", "flange": [float(v) for v in flange], "lean": float(lean), "part": part}
         if pixel is not None:
             req["pixel"] = pixel
         status, centre, pose = self._plan(req)
@@ -268,9 +286,24 @@ class PickPlanner:
             return -4, None, None
         _, w, h, ch, rgb, depth, scale, K = frame
         flange = req["flange"]
+        part = req.get("part")
+        rejects: list[dict] = []
         blocks = detect_blocks(
-            w, h, ch, rgb, depth, scale, K, Transform.from_pose(he), Transform.from_pose(flange)
+            w,
+            h,
+            ch,
+            rgb,
+            depth,
+            scale,
+            K,
+            Transform.from_pose(he),
+            Transform.from_pose(flange),
+            part=part,
+            rejects=rejects,
         )
+        if part is not None and rejects:
+            seen = ", ".join(f"{r['size_mm'][0]}x{r['size_mm'][1]} mm {r['why']}" for r in rejects[:4])
+            self.log(f"pick {req['verb']}: not the part ({part.token()}): {seen}", False)
         if req["verb"] == "REFINE":
             near = req["near"]
             close = [b for b in blocks if math.dist(b.centre_base[:2], near[:2]) < REFINE_RADIUS_M]
@@ -280,7 +313,7 @@ class PickPlanner:
         else:
             blk = choose(blocks, req.get("pixel"), w, h)
             if blk is None:
-                return 0, None, None
+                return (-7 if part is not None and rejects else 0), None, None
         if blk.minor_m > self.stroke_m - 0.006:
             return -1, blk.centre_base, None
         if self.min_radius_m and math.hypot(blk.centre_base[0], blk.centre_base[1]) < self.min_radius_m:
@@ -295,7 +328,8 @@ class PickPlanner:
 
 def parse_preview_request(payload: dict) -> tuple[tuple[int, int] | None, float, float]:
     """``POST /api/pick/preview``'s body -> ``(pixel, grip_below_mm, hover_mm)``;
-    ValueError when a field isn't a number or is out of range."""
+    ValueError when a field isn't a number or is out of range. The body's ``part`` /
+    ``tol`` are :func:`perception.partspec.from_payload`'s."""
     try:
         u, v = int(payload.get("u", -1)), int(payload.get("v", -1))
         grip = float(payload.get("grip_below_mm", 15.0))
@@ -314,6 +348,7 @@ def preview(
     *,
     grip_below_mm: float = 15.0,
     hover_mm: float = 40.0,
+    part: PartSpec | None = None,
 ) -> dict:
     """The node's teach-time check: what the program would do from where the arm is
     now. ``flange_pose`` is a ``get_flange_pose`` result (``flange``, ``tcp_offset``,
@@ -325,7 +360,7 @@ def preview(
     fp = flange_pose
     if not fp.get("ok") or not fp.get("flange"):
         return {"ok": False, "error": fp.get("error") or "could not read the flange pose", "robot": fp}
-    planned = planner.plan(fp["flange"], pixel)
+    planned = planner.plan(fp["flange"], pixel, part=part)
     out: dict = {"ok": planned["status"] == 1, **planned, "flange_pose": fp["flange"]}
     if planned["status"] != 1:
         out["error"] = planned["reason"]
@@ -342,12 +377,24 @@ def preview(
     return out
 
 
-def detect_report(frame: tuple, *, pick_port: int | None, handeye: bool, tip_m: float | None) -> dict:
+def detect_report(
+    frame: tuple,
+    *,
+    pick_port: int | None,
+    handeye: bool,
+    tip_m: float | None,
+    part: PartSpec | None = None,
+) -> dict:
     """What the node's teach screen draws: the blocks the pick server would choose
     among, in image pixels, from one ``(seq, w, h, ch, rgb, depth, scale, K)`` frame
-    (camera frame — no robot needed)."""
+    (camera frame — no robot needed) — and, as ``rejected``, the candidates that were
+    the wrong size (for ``part`` when given) with why, so the operator can see what
+    the filter is doing."""
     seq, w, h, ch, rgb, depth, scale, K = frame
-    blocks = detect_blocks(w, h, ch, rgb, depth, scale, K, Transform(), Transform())
+    rejects: list[dict] = []
+    blocks = detect_blocks(
+        w, h, ch, rgb, depth, scale, K, Transform(), Transform(), part=part, rejects=rejects
+    )
     return {
         "ok": True,
         "seq": seq,
@@ -356,14 +403,17 @@ def detect_report(frame: tuple, *, pick_port: int | None, handeye: bool, tip_m: 
         "pick_port": pick_port,
         "handeye": handeye,
         "tip_m": tip_m,
+        "part": None if part is None else part.as_dict(),
         "blocks": [
             {
                 "pixel": list(b.pixel),
                 "size_mm": [round(b.major_m * 1000), round(b.minor_m * 1000)],
+                "height_mm": None if b.height_m is None else round(b.height_m * 1000),
                 "distance_m": round(b.centre_base[2], 3),
             }
             for b in blocks
         ],
+        "rejected": rejects,
     }
 
 

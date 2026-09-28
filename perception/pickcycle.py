@@ -49,6 +49,7 @@ from urctl.pose import Transform
 from urctl.robot import Robot
 
 from .handeye import DEFAULT_TIP_M, tip_m_from_env
+from .partspec import PartSpec
 from .pngio import load_png
 
 DEFAULT_COCKPIT = "http://127.0.0.1:7621"
@@ -198,6 +199,51 @@ def plane_axes_xy(points: Sequence[Sequence[float]]) -> dict:
     }
 
 
+def surface_height(
+    width: int,
+    height: int,
+    channels: int,
+    rgb: bytes,
+    depth: bytes,
+    scale: float,
+    K: dict,
+    bbox,
+    top: dict,
+    *,
+    white_min: int = WHITE_MIN,
+    max_range_m: float = 2.0,
+    step: int = 2,
+) -> float | None:
+    """How far the top face ``top`` (:func:`top_face`'s result) stands above the surface
+    around it: the median distance, along the face's normal, from the face to the
+    non-white depth points in a ring just outside ``bbox`` (a quarter of its size, at
+    least 6 px). Non-white only, so a neighbouring block's top is not the table.
+    Frame-independent (camera metres in, metres out); None when too little of the
+    surface is visible (frame edge, depth holes)."""
+    x0, y0, x1, y1 = bbox
+    margin = max(6, (max(x1 - x0, y1 - y0) + 3) // 4)
+    c, n = top["centre"], top["normal"]
+    dists = []
+    for y in range(max(0, y0 - margin), min(height, y1 + margin), step):
+        for x in range(max(0, x0 - margin), min(width, x1 + margin), step):
+            if x0 <= x < x1 and y0 <= y < y1:
+                continue
+            i = (y * width + x) * channels
+            r, g, b = rgb[i], rgb[i + 1], rgb[i + 2]
+            if min(r, g, b) > white_min and max(r, g, b) - min(r, g, b) < WHITE_CHROMA:
+                continue
+            d = depth[2 * (y * width + x)] | (depth[2 * (y * width + x) + 1] << 8)
+            if not d or d * scale > max_range_m:
+                continue
+            z = d * scale
+            p = ((x - K["ppx"]) * z / K["fx"], (y - K["ppy"]) * z / K["fy"], z)
+            dists.append(sum((c[k] - p[k]) * n[k] for k in range(3)))
+    if len(dists) < 20:
+        return None
+    dists.sort()
+    return abs(dists[len(dists) // 2])
+
+
 def grasp_yaw_deg(flange_pose: Sequence[float], minor_heading: float, finger_axis: str = "y") -> float:
     """The smallest rotation about the flange's own Z (degrees) that lines the
     finger travel axis (flange ``finger_axis``, ``"y"`` on the Hand-E as mounted
@@ -280,13 +326,20 @@ def detect_blocks(
     K: dict,
     T_fc: Transform,
     T_bf: Transform,
+    *,
+    part: PartSpec | None = None,
+    rejects: list[dict] | None = None,
 ) -> list[Block]:
     """White blocks in one aligned RGB-D frame, each top face placed in the base frame
     through the hand-eye ``T_fc`` (flange → colour camera) and the flange pose ``T_bf``
     at the frame's instant. Identity transforms give the camera frame (a preview with
-    no robot). Candidates clipped by the frame edge, the wrong size for a block, or off
-    the common surface are dropped. Shared by :meth:`PickCycle.survey` and the robot
-    program's pick server (:mod:`perception.picknode`)."""
+    no robot). Candidates clipped by the frame edge, the wrong size, or off the common
+    surface are dropped. The right size is ``part`` when given (its footprint and, if
+    set, height above the surface — :class:`perception.partspec.PartSpec`), else the
+    foam blocks'. ``rejects``, when a list, collects the size-rejected candidates
+    (``pixel``, ``size_mm``, ``height_mm``, ``why``) for the teach screen. Shared by
+    :meth:`PickCycle.survey` and the robot program's pick server
+    (:mod:`perception.picknode`)."""
     blocks: list[Block] = []
     for b in white_blobs(w, h, ch, rgb):
         x0, y0, x1, y1 = b["bbox"]
@@ -315,8 +368,24 @@ def detect_blocks(
         if tf["n"] >= 150:
             ax_depth = plane_axes_xy([T_bf.apply(T_fc.apply(p)) for p in tf["points"]])
             ax["theta"] = ax_depth["theta"]
-        if ax["major_m"] > 0.07 or ax["minor_m"] > 0.06 or ax["minor_m"] < 0.010:
-            continue  # not a block: a velcro strap (100 x 15 mm), the rail, a speck
+        tall = surface_height(w, h, ch, rgb, depth, depth_scale_m, K, b["bbox"], tf)
+        if part is not None:
+            why = part.why_not(ax["major_m"], ax["minor_m"], tall)
+        elif ax["major_m"] > 0.07 or ax["minor_m"] > 0.06 or ax["minor_m"] < 0.010:
+            why = "not a block"  # a velcro strap (100 x 15 mm), the rail, a speck
+        else:
+            why = None
+        if why is not None:
+            if rejects is not None:
+                rejects.append(
+                    {
+                        "pixel": [b["cx"], b["cy"]],
+                        "size_mm": [round(ax["major_m"] * 1000), round(ax["minor_m"] * 1000)],
+                        "height_mm": None if tall is None else round(tall * 1000),
+                        "why": why,
+                    }
+                )
+            continue
         blocks.append(
             Block(
                 len(blocks),
@@ -326,6 +395,7 @@ def detect_blocks(
                 ax["minor_m"],
                 (b["cx"], b["cy"]),
                 len(pts_cam),
+                tall,
             )
         )
     return reject_off_surface(blocks)
@@ -408,6 +478,7 @@ class Block:
     minor_m: float
     pixel: tuple[int, int]
     n: int
+    height_m: float | None = None  # top above the surrounding surface (m); None: not seen
 
 
 @dataclass

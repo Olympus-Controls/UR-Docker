@@ -227,7 +227,7 @@ bundle dir and skips those checks, so a VM load does not prove the pendant will 
 (missed once, 2026-09-27). Check with PolyScope's own `URCapFileValidationHelper` from the
 image's `/ursim/GUI/bundle`. Installed and rendered on the UR3e pendant 2026-09-27 (0.2.0).
 
-**RealSense Pick program node (same bundle, 0.3.0; `PickScript.java`, `perception/picknode.py`):**
+**RealSense Pick program node (same bundle, 0.4.0; `PickScript.java`, `perception/picknode.py`):**
 Program tab → URCaps → RealSense Pick. Its URScript runs in the operator's program (Local mode,
 no Primary) and talks to a pick server over a plain socket (`:7622`; `FIND`/`LOOK`/`REFINE`, and
 `LOG` lines that are never answered — a stray reply would be read as the next answer). No survey
@@ -240,6 +240,12 @@ every other route, and writes the whole trace to `captures/pick-server.log` or, 
 root-owned, `~/Library/Logs/perception/` (also `GET /api/pick/log`). **Kill the sidecar before
 relaunching the cockpit** (`pkill -f "pick-server --bind"`): both bind `:7622`, and the cockpit
 just warns and runs without its pick server. The 0.3.0 script has not yet run on a controller.
+**Part size (0.4.0, `perception/partspec.py`):** the node's Length × Width [× Height] ± tolerance
+(as the part lies; default ±25 %, never under ±5 mm) rides on FIND/REFINE as `part=60x40x30 tol=25`
+and replaces `detect_blocks`' fixed foam-block gate (≤ 70 × 60 mm); height is measured against the
+non-white depth in a ring around the blob (unseen → not checked). Status −7 = white things in view,
+none that size; the teach screen draws the rejects grey with why. Still colour-segmented: the part
+must read white. Verified on synthetic scenes only.
 
 **Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before

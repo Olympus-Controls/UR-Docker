@@ -36,8 +36,9 @@ import javax.swing.SwingUtilities;
 
 /**
  * The RealSense Pick node's screen: the feed with the blocks the cockpit's detector
- * sees (tap one to choose it), the survey position, grip depth and lift, the two
- * checks, and what the node still needs. One view serves every Pick node in the
+ * sees (tap one to choose it) and, dimmed, what the part size ruled out and why, the
+ * part's rough size, the survey position, grip depth and lift, the two checks, and
+ * what the node still needs. One view serves every Pick node in the
  * program, so actions go to {@code provider.get()} — the node that is open.
  */
 public class PickView implements SwingProgramNodeView<PickContribution> {
@@ -54,6 +55,20 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
     private static final Color STAGE = new Color(0x0f1620);
     private static final Color MARK = new Color(0xffd23f);
     private static final Color BLOCK = new Color(0x4fd18b);
+    private static final Color REJECT = new Color(0x9aa6b2);
+
+    /** A candidate the part size ruled out: where it is and what it measured ("43×43 mm too short"). */
+    static final class Reject {
+        final int u;
+        final int v;
+        final String label;
+
+        Reject(int u, int v, String label) {
+            this.u = u;
+            this.v = v;
+            this.label = label;
+        }
+    }
 
     private final ViewAPIProvider api;
     private final JLabel dot = new JLabel("●");
@@ -65,6 +80,11 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
     private final JTextArea status = new JTextArea();
     private final JButton grip = button("Grip depth", null, null);
     private final JButton lift = button("Lift", null, null);
+    private final JButton partL = button("Length", null, null);
+    private final JButton partW = button("Width", null, null);
+    private final JButton partH = button("Height", null, null);
+    private final JButton partTol = button("Tolerance", null, null);
+    private final JLabel part = new JLabel("");
     private ContributionProvider<PickContribution> provider;
 
     PickView(ViewAPIProvider api) {
@@ -118,6 +138,65 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         which.add(any);
         panel.add(which);
 
+        JPanel size = row();
+        part.setForeground(INK);
+        JLabel sizeLabel = new JLabel("Part size (as it lies):");
+        sizeLabel.setForeground(INK);
+        partL.setToolTipText("the part's longer side on the table, mm");
+        partW.setToolTipText("the part's shorter side on the table, mm");
+        partH.setToolTipText("how far its top stands above the table, mm — tells a block from a flat look-alike");
+        partTol.setToolTipText("how far off a measurement may be and still count as the part");
+        JButton noHeight = button("No height", null, null);
+        noHeight.setToolTipText("don't check the height, only the footprint");
+        JButton anySize = button("Any size", null, null);
+        anySize.setToolTipText("forget the part size: take any block-sized white object");
+        on(partL, new Runnable() {
+            @Override
+            public void run() {
+                keypad(partL, node().partLengthMm(), PickContribution.KEY_PART_L);
+            }
+        });
+        on(partW, new Runnable() {
+            @Override
+            public void run() {
+                keypad(partW, node().partWidthMm(), PickContribution.KEY_PART_W);
+            }
+        });
+        on(partH, new Runnable() {
+            @Override
+            public void run() {
+                keypad(partH, node().partHeightMm(), PickContribution.KEY_PART_H);
+            }
+        });
+        on(partTol, new Runnable() {
+            @Override
+            public void run() {
+                keypad(partTol, node().partTolPct(), PickContribution.KEY_PART_TOL);
+            }
+        });
+        on(noHeight, new Runnable() {
+            @Override
+            public void run() {
+                node().setPart(PickContribution.KEY_PART_H, 0.0);
+            }
+        });
+        on(anySize, new Runnable() {
+            @Override
+            public void run() {
+                node().anySize();
+            }
+        });
+        size.add(sizeLabel);
+        size.add(partL);
+        size.add(partW);
+        size.add(partH);
+        size.add(noHeight);
+        size.add(partTol);
+        size.add(anySize);
+        panel.add(size);
+        part.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.add(part);
+
         JPanel where = row();
         survey.setForeground(INK);
         JButton set = button("Set survey position", PRIMARY, Color.WHITE);
@@ -154,13 +233,13 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         on(grip, new Runnable() {
             @Override
             public void run() {
-                keypad(grip, node().gripMm(), true);
+                keypad(grip, node().gripMm(), PickContribution.KEY_GRIP_MM);
             }
         });
         on(lift, new Runnable() {
             @Override
             public void run() {
-                keypad(lift, node().liftMm(), false);
+                keypad(lift, node().liftMm(), PickContribution.KEY_LIFT_MM);
             }
         });
         params.add(grip);
@@ -214,7 +293,8 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         return provider.get();
     }
 
-    private void keypad(final JButton target, double initial, final boolean isGrip) {
+    /** A number for one of the node's fields ({@code key}), clamped to what the script accepts. */
+    private void keypad(final JButton target, double initial, final String key) {
         KeyboardNumberInput<Double> kb = api.getUserInterfaceAPI().getUserInteraction().getKeyboardInputFactory()
                 .createPositiveDoubleKeypadInput();
         kb.setInitialValue(initial);
@@ -222,8 +302,10 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
             @Override
             public void onOk(Double value) {
                 if (value == null) return;
-                if (isGrip) node().setGripMm(Math.max(0.0, Math.min(60.0, value)));
-                else node().setLiftMm(Math.max(5.0, Math.min(300.0, value)));
+                if (key.equals(PickContribution.KEY_GRIP_MM)) node().setGripMm(Math.max(0.0, Math.min(60.0, value)));
+                else if (key.equals(PickContribution.KEY_LIFT_MM)) node().setLiftMm(Math.max(5.0, Math.min(300.0, value)));
+                else if (key.equals(PickContribution.KEY_PART_TOL)) node().setPart(key, Math.max(5.0, Math.min(100.0, value)));
+                else node().setPart(key, value <= 0 ? 0.0 : Math.max(5.0, Math.min(500.0, value)));
             }
         });
     }
@@ -243,6 +325,14 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
                         + n.tapV() + ")" : "Picks the block nearest the middle — or tap one in the picture");
                 grip.setText(String.format(Locale.ROOT, "Grip depth: %.0f mm below the top", n.gripMm()));
                 lift.setText(String.format(Locale.ROOT, "Lift: %.0f mm", n.liftMm()));
+                partL.setText(n.partLengthMm() > 0 ? "Length " + PickScript.num(n.partLengthMm()) + " mm" : "Length");
+                partW.setText(n.partWidthMm() > 0 ? "Width " + PickScript.num(n.partWidthMm()) + " mm" : "Width");
+                partH.setText(n.partHeightMm() > 0 ? "Height " + PickScript.num(n.partHeightMm()) + " mm" : "Height");
+                partTol.setText("± " + PickScript.num(n.partTolPct()) + " %");
+                PickScript s = n.script();
+                part.setText(!s.hasPart() ? "Any block-sized white object — set the part's size to take only that part"
+                        : "Only a part " + s.partText().replace(" x ", " × ").replace("+-", "±")
+                                + (n.partHeightMm() > 0 ? "" : " (height not checked)"));
                 feed.tapU = n.tapU();
                 feed.tapV = n.tapV();
                 feed.repaint();
@@ -289,11 +379,14 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         });
     }
 
-    void setBlocks(final List<int[]> blocks, final int tapU, final int tapV) {
+    void setBlocks(final List<int[]> blocks, final List<Reject> rejects, final int tapU, final int tapV,
+            final String partText) {
         onEdt(new Runnable() {
             @Override
             public void run() {
                 feed.blocks = new ArrayList<int[]>(blocks);
+                feed.rejects = new ArrayList<Reject>(rejects);
+                feed.partText = partText;
                 feed.tapU = tapU;
                 feed.tapV = tapV;
                 feed.repaint();
@@ -341,6 +434,8 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         private static final int H = 362; // 848×480 scaled to 640 wide
         transient volatile BufferedImage image;
         transient volatile List<int[]> blocks = new ArrayList<int[]>();
+        transient volatile List<Reject> rejects = new ArrayList<Reject>();
+        transient volatile String partText; // null: no part size set
         int tapU = -1;
         int tapV = -1;
 
@@ -387,6 +482,16 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
                 g.drawImage(img, r.x, r.y, r.width, r.height, null);
                 int[] chosen = chosen();
                 int n = 0;
+                g.setFont(getFont().deriveFont(11f));
+                for (Reject off : rejects) {
+                    int x = (int) Math.round(off.u * s);
+                    int y = (int) Math.round(off.v * s);
+                    g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10f,
+                            new float[] {4f, 4f}, 0f));
+                    g.setColor(REJECT);
+                    g.drawOval(x - 14, y - 14, 28, 28);
+                    g.drawString(off.label, x + 16, y + 16);
+                }
                 g.setFont(getFont().deriveFont(Font.BOLD, 13f));
                 for (int[] b : blocks) {
                     n++;
@@ -407,8 +512,17 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
                     g.drawLine(x, y - 8, x, y + 8);
                 }
             }
-            String hint = blocks.isEmpty() ? "no block detected — the detector finds white blocks"
-                    : blocks.size() + " block" + (blocks.size() == 1 ? "" : "s") + " seen · tap one to choose it";
+            String hint;
+            if (partText == null) {
+                hint = blocks.isEmpty() ? "no block detected — the detector finds white blocks"
+                        : blocks.size() + " block" + (blocks.size() == 1 ? "" : "s") + " seen · tap one to choose it";
+            } else {
+                String what = partText.replace(" x ", "×").replace("+-", "±");
+                hint = (blocks.isEmpty() ? "nothing " + what + " in view"
+                        : blocks.size() + " × " + what + " seen · tap one to choose it")
+                        + (rejects.isEmpty() ? "" : " · " + rejects.size() + " other" + (rejects.size() == 1 ? "" : "s")
+                                + " ruled out (grey)");
+            }
             g.setFont(getFont().deriveFont(12f));
             int tw = g.getFontMetrics().stringWidth(hint);
             g.setColor(new Color(15, 22, 32, 204));

@@ -36,7 +36,8 @@ import javax.swing.SwingUtilities;
  * optional survey position taught through PolyScope's own screen (without one the first
  * look is from wherever the arm is), and two checks that open
  * PolyScope's hold-to-move screen over and into the grasp the program would make —
- * all in Local mode. Run time: {@link PickScript}.
+ * all in Local mode. The part's rough size (optional) filters what the detector offers,
+ * on this screen and when the program runs. Run time: {@link PickScript}.
  */
 public class PickContribution implements ProgramNodeContribution {
     static final String KEY_SURVEY = "surveyJoints";
@@ -45,6 +46,10 @@ public class PickContribution implements ProgramNodeContribution {
     static final String KEY_GRIP_MM = "gripBelowTopMm";
     static final String KEY_LIFT_MM = "liftMm";
     static final String KEY_PORT = "pickPort";
+    static final String KEY_PART_L = "partLengthMm";
+    static final String KEY_PART_W = "partWidthMm";
+    static final String KEY_PART_H = "partHeightMm";
+    static final String KEY_PART_TOL = "partTolPct";
     static final String KEY_VARIABLE = "foundVariable";
     static final String KEY_TEMPLATED = "templated";
     static final String VARIABLE_NAME = "rs_pick_found";
@@ -62,6 +67,7 @@ public class PickContribution implements ProgramNodeContribution {
     private volatile long seq;
     private volatile long detectedAt;
     private volatile List<int[]> blocks = new ArrayList<int[]>();
+    private volatile List<PickView.Reject> rejected = new ArrayList<PickView.Reject>();
 
     PickContribution(ProgramAPIProvider api, PickView view, DataModel model, CreationContext context) {
         this.api = api;
@@ -102,6 +108,22 @@ public class PickContribution implements ProgramNodeContribution {
         return model.get(KEY_LIFT_MM, 60.0);
     }
 
+    double partLengthMm() {
+        return model.get(KEY_PART_L, 0.0);
+    }
+
+    double partWidthMm() {
+        return model.get(KEY_PART_W, 0.0);
+    }
+
+    double partHeightMm() {
+        return model.get(KEY_PART_H, 0.0);
+    }
+
+    double partTolPct() {
+        return model.get(KEY_PART_TOL, 25.0);
+    }
+
     PickScript script() {
         PickScript s = new PickScript();
         s.host = PickScript.hostOf(cockpit().base);
@@ -111,6 +133,10 @@ public class PickContribution implements ProgramNodeContribution {
         s.tapV = tapV();
         s.gripBelowTopMm = gripMm();
         s.liftMm = liftMm();
+        s.partLengthMm = partLengthMm();
+        s.partWidthMm = partWidthMm();
+        s.partHeightMm = partHeightMm();
+        s.partTolPct = partTolPct();
         return s;
     }
 
@@ -150,7 +176,10 @@ public class PickContribution implements ProgramNodeContribution {
 
     @Override
     public String getTitle() {
-        return tapU() >= 0 ? "RealSense Pick (tapped block)" : "RealSense Pick (nearest block)";
+        PickScript s = script();
+        String which = tapU() >= 0 ? "tapped" : "nearest";
+        return s.hasPart() ? "RealSense Pick (" + s.partText() + ", " + which + ")"
+                : "RealSense Pick (" + which + " block)";
     }
 
     @Override
@@ -262,7 +291,11 @@ public class PickContribution implements ProgramNodeContribution {
         });
         int[] near = nearestBlock(x, y);
         view.show(this);
-        if (near == null) {
+        PickView.Reject off = near == null ? nearestReject(x, y) : null;
+        if (off != null) {
+            view.setStatus("tapped (" + x + ", " + y + ") — that one measures " + off.label + ", not the part size "
+                    + script().partText() + "; the program picks the part nearest this spot", PilotView.Kind.WARN);
+        } else if (near == null) {
             view.setStatus("tapped (" + x + ", " + y + ") — no block detected there yet; the program picks the block "
                     + "nearest this spot", PilotView.Kind.WARN);
         } else {
@@ -303,6 +336,52 @@ public class PickContribution implements ProgramNodeContribution {
         view.show(this);
     }
 
+    // -- teach: the part's rough size ------------------------------------------------------------
+
+    /** {@code key}: one of the KEY_PART_* keys; the value is clamped to what the script accepts. */
+    void setPart(final String key, final double value) {
+        change(new UndoableChanges() {
+            @Override
+            public void executeChanges() {
+                model.set(key, value);
+            }
+        });
+        detectedAt = 0; // redraw the feed's candidates under the new size now, not in a second
+        view.show(this);
+        String p = script().problem();
+        view.setStatus(p == null ? "the program looks only for a part " + script().partText()
+                : "part size: " + p, p == null ? PilotView.Kind.OK : PilotView.Kind.WARN);
+    }
+
+    void anySize() {
+        change(new UndoableChanges() {
+            @Override
+            public void executeChanges() {
+                model.remove(KEY_PART_L);
+                model.remove(KEY_PART_W);
+                model.remove(KEY_PART_H);
+            }
+        });
+        detectedAt = 0;
+        view.show(this);
+        view.setStatus("no part size: the program takes any block-sized white object", PilotView.Kind.OK);
+    }
+
+    /** {@code ?part=60x40x30&tol=25} for the cockpit's routes, or "" when no size is set. */
+    private String partQuery() {
+        PickScript s = script();
+        if (!s.hasPart()) return "";
+        String t = s.partToken().trim(); // "part=60x40x30 tol=25"
+        return "?" + t.replace(' ', '&');
+    }
+
+    private PickView.Reject nearestReject(int x, int y) {
+        for (PickView.Reject r : rejected) {
+            if ((long) (r.u - x) * (r.u - x) + (long) (r.v - y) * (r.v - y) <= 80L * 80L) return r;
+        }
+        return null;
+    }
+
     private int[] nearestBlock(int x, int y) {
         int[] best = null;
         long bestD = Long.MAX_VALUE;
@@ -330,6 +409,12 @@ public class PickContribution implements ProgramNodeContribution {
                     body.put("u", tapU());
                     body.put("v", tapV());
                     body.put("grip_below_mm", gripMm());
+                    PickScript s = script();
+                    if (s.hasPart()) {
+                        String t = s.partToken().trim(); // "part=60x40x30 tol=25"
+                        body.put("part", t.substring("part=".length(), t.indexOf(' ')));
+                        body.put("tol", s.partTolPct);
+                    }
                     Map<String, Object> res = c.post("/api/pick/preview", body, 15000);
                     if (!Boolean.TRUE.equals(res.get("ok"))) {
                         Object e = res.get("error");
@@ -439,7 +524,7 @@ public class PickContribution implements ProgramNodeContribution {
     }
 
     private void detect(Cockpit c) throws IOException {
-        Map<String, Object> res = c.get("/api/pick/detect", 3000);
+        Map<String, Object> res = c.get("/api/pick/detect" + partQuery(), 3000);
         List<int[]> found = new ArrayList<int[]>();
         Object list = res.get("blocks");
         if (list instanceof List) {
@@ -452,6 +537,21 @@ public class PickContribution implements ProgramNodeContribution {
             }
         }
         blocks = found;
+        List<PickView.Reject> off = new ArrayList<PickView.Reject>();
+        Object rej = res.get("rejected");
+        if (rej instanceof List) {
+            for (Object o : (List<?>) rej) {
+                if (!(o instanceof Map)) continue;
+                Map<?, ?> r = (Map<?, ?>) o;
+                int[] px = ints(r.get("pixel"), 2);
+                int[] mm = ints(r.get("size_mm"), 2);
+                Object why = r.get("why");
+                if (px == null) continue;
+                String label = (mm == null ? "" : mm[0] + "×" + mm[1] + " mm ") + (why instanceof String ? why : "");
+                off.add(new PickView.Reject(px[0], px[1], label.trim()));
+            }
+        }
+        rejected = off;
         if (res.get("pick_port") instanceof Number) {
             final int port = ((Number) res.get("pick_port")).intValue();
             if (port != model.get(KEY_PORT, PickScript.DEFAULT_PICK_PORT) && port > 0) {
@@ -468,7 +568,7 @@ public class PickContribution implements ProgramNodeContribution {
                 });
             }
         }
-        view.setBlocks(found, tapU(), tapV());
+        view.setBlocks(found, off, tapU(), tapV(), script().hasPart() ? script().partText() : null);
     }
 
     private static int[] ints(Object xs, int n) {

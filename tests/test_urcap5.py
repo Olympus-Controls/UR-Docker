@@ -32,7 +32,7 @@ import urcap5  # noqa: E402
 
 SRC = ROOT / "urcap" / "realsense-pilot-ps5"
 JAVA = SRC / "src" / "com" / "olympuscontrols" / "realsensepilot"
-DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.3.0.urcap"
+DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.4.0.urcap"
 JAVAC = shutil.which("javac")
 HAS_SDK = all(any(urcap5.SDK_DIR.glob(p + "*.jar")) for p in urcap5.SDK_JARS)
 
@@ -188,6 +188,10 @@ public class Harness {
                 if (o.containsKey("grip")) s.gripBelowTopMm = ((Number) o.get("grip")).doubleValue();
                 if (o.containsKey("lift")) s.liftMm = ((Number) o.get("lift")).doubleValue();
                 if (o.containsKey("var")) s.foundVariable = (String) o.get("var");
+                if (o.containsKey("partL")) s.partLengthMm = ((Number) o.get("partL")).doubleValue();
+                if (o.containsKey("partW")) s.partWidthMm = ((Number) o.get("partW")).doubleValue();
+                if (o.containsKey("partH")) s.partHeightMm = ((Number) o.get("partH")).doubleValue();
+                if (o.containsKey("partTol")) s.partTolPct = ((Number) o.get("partTol")).doubleValue();
                 Map<String, Object> m = new LinkedHashMap<String, Object>();
                 m.put("problem", s.problem());
                 m.put("script", s.problem() == null ? s.render((String) o.get("children")) : null);
@@ -579,3 +583,68 @@ def test_release_check_cli_prints_json_or_fails_with_the_reason(capsys):
     assert json.loads(capsys.readouterr().out)["version"] == version
     assert urcap5.main(["release-check", "urcap5-v9.9.9", "--src", str(SRC), "--dist", str(DIST.parent)]) == 1
     assert "Bundle-Version=" in capsys.readouterr().err
+
+
+# -- the part's rough size -------------------------------------------------------------------
+
+
+def _sent(text: str, verb: str) -> str:
+    """The request line a script sends for ``verb``, with its URScript expressions filled in
+    the way the controller would: poses by to_str, the lean by its first rung."""
+    line = next(line for line in text.splitlines() if f'"{verb} "' in line and "socket_send_line" in line)
+    consts = re.findall(r'"((?:[^"\\]|\\.)*)"', line)[:-1]  # drop the socket name
+    pose = "p[0.4, 0, 0.5, 0, 3.1416, 0]"
+    fill = {"FIND": [pose], "REFINE": [pose, " ", "p[0.4, 0, 0.14, 0, 0, 0]", "0"]}[verb]
+    out = consts[0] + fill[0] + "".join(consts[1:]) if verb == "FIND" else None
+    if verb == "REFINE":  # "REFINE ", pose, " ", centre, "<part> lean=", 0
+        out = consts[0] + pose + consts[1] + fill[2] + consts[2] + "0"
+    return out
+
+
+@pytest.mark.parametrize(
+    ("kw", "spec"),
+    [
+        ({"partL": 40, "partW": 60, "partH": 30}, (60, 40, 30, 25)),
+        ({"partL": 54.5, "partW": 43, "partTol": 12.5}, (54.5, 43, None, 12.5)),
+    ],
+)
+def test_the_part_size_reaches_the_pick_server_as_the_same_spec(java_client, kw, spec):
+    from perception.partspec import PartSpec
+    from perception.picknode import parse_request
+
+    text = _pick(java_client, children="  CHILD()", grip=10, **kw)["script"]
+    assert text.isascii()
+    want = PartSpec.from_mm(*spec[:3], tol_pct=spec[3])
+    for verb in ("FIND", "REFINE"):
+        req = parse_request(_sent(text, verb))
+        assert req["verb"] == verb and req["part"] == want, (verb, _sent(text, verb))
+    assert parse_request(_sent(text, "REFINE"))["lean"] == 0.0
+    assert '"LOG looking for ' in text and "# RealSense Pick 0.4.0" in text
+
+
+def test_without_a_part_size_the_requests_carry_none_under_a_jdk(java_client):
+    from perception.picknode import parse_request
+
+    text = _pick(java_client, children="  CHILD()")["script"]
+    assert "part=" not in text and "looking for any block" in text
+    assert parse_request(_sent(text, "FIND"))["part"] is None
+    assert parse_request(_sent(text, "REFINE"))["part"] is None
+
+
+@pytest.mark.parametrize(
+    ("kw", "problem"),
+    [
+        ({"partL": 60}, "length and width"),
+        ({"partH": 30}, "length and width"),
+        ({"partL": 60, "partW": 4}, "5..500 mm"),
+        ({"partL": 600, "partW": 40}, "5..500 mm"),
+        ({"partL": 60, "partW": 40, "partH": 3}, "5..500 mm"),
+        ({"partL": 60, "partW": 40, "partTol": 0}, "tolerance"),
+        ({"partL": 60, "partW": 40, "partTol": 150}, "tolerance"),
+        # the default 15 mm grip into a 12 mm part is 3 mm into the table
+        ({"partL": 60, "partW": 40, "partH": 12}, "fingertips on the table"),
+    ],
+)
+def test_a_part_size_the_script_cannot_honour_is_refused(java_client, kw, problem):
+    out = _pick(java_client, **kw)
+    assert out["script"] is None and problem in out["problem"], out["problem"]
