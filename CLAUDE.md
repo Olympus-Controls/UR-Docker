@@ -162,7 +162,13 @@ endpoint System Manager itself uses (`/universal-robots/urservice/api/v1/urcaps`
 against SDK 6.5.65 (the 10.13 pairing) — the worker speaks threads.js's
 protocol directly. Verified 2026-09-26 in the 10.13.0 sim (headless Chromium):
 node loads, feed + hover + click-to-segment work against the fake cockpit;
-locate/move still need a cockpit with a robot link. **Move (PolyScope)** re-expresses the
+locate/move still need a cockpit with a robot link. **Release tracking:** the URCap targets
+*one* PolyScope X release — the newest minor's newest patch — pinned in
+`urcap/target.json` (notes URL, sim image by digest, SDK tag + contribution-api /
+threads / manifest-spec versions); `urcap/track.py check|update|compat` and
+`urcap/e2e.py` (boot that sim, install, load + click the node headless; ~2 min) are
+what `.github/workflows/urcap-track.yml` runs weekly → PR or `urcap-attention` issue.
+10.14.0 verified 2026-09-27 (the 10.14 Services-toggle bug doesn't touch URCaps). **Move (PolyScope)** re-expresses the
 cockpit's flange target in *PolyScope's own* active TCP (`getKinematicInfo` DH +
 `convertJointPositionsToTcpPose` at zero joints) before `getInverseKinematics(pose,
 qNear)`, which takes no TCP — handing it the cockpit's `approach_pose` (a pose under the

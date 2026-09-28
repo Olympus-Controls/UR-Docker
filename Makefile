@@ -25,6 +25,7 @@ export UR_HOST
 
 .PHONY: help sim-up sim-down sim-logs sim-shell sim-poweron \
         simx-up simx-down simx-logs simx-shell urcap-package urcap-install urcap-cockpit \
+        urcap-track urcap-compat urcap-e2e \
         urcap5-sdk urcap5-package urcap5-install \
         rs-info rs-gui rs-gui-fake rs-test perception-build perception-up perception-down \
         doctor cockpit cockpit-dry mcp \
@@ -90,6 +91,15 @@ urcap-install: urcap-package  ## Install (or replace) it in the PolyScope X sim 
 
 urcap-cockpit:  ## A synthetic cockpit on :7621 (the normal port) the URCap page may call from the sim's origin.
 	$(PYTHON) -m perception gui --fake --no-browser --port 7621 --cors http://localhost:8000,http://127.0.0.1:8000
+
+urcap-track:  ## Is urcap/target.json still UR's newest PolyScope X release? (exit 1 + why when not)
+	$(PYTHON) urcap/track.py check
+
+urcap-compat:  ## The URCap against the pinned SDK: contribution-api members, manifest spec, worker protocol.
+	$(PYTHON) urcap/track.py compat
+
+urcap-e2e:  ## Boot target.json's simulator, install a fresh build, load + click the node headlessly.
+	$(UV) run --with playwright==1.63.0 python urcap/e2e.py
 
 # ---- PolyScope 5 (e-Series) URCap (urcap/realsense-pilot-ps5, urcap/urcap5.py) --------
 URCAP5_CONTAINER ?= ur-utils-ursim-e-ur3e

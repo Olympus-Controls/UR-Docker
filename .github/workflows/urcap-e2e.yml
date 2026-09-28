@@ -1,0 +1,56 @@
+# The PolyScope X URCap in the simulator it is built for, on every change to it:
+# `urcap/e2e.py` boots urcap/target.json's simulator (by digest), installs a fresh
+# build, loads the node headlessly and clicks through it (see the script's
+# docstring for the checks). The weekly urcap-track workflow moves the target;
+# this one keeps each change honest against it.
+
+name: URCap e2e
+
+on:
+  pull_request:
+    paths:
+      - "urcap/**"
+      - "perception/webapp.py"
+      - ".github/workflows/urcap-e2e.yml"
+  push:
+    branches: [main]
+    paths:
+      - "urcap/**"
+      - "perception/webapp.py"
+      - ".github/workflows/urcap-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: urcap-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Install (locked) + the headless browser
+        run: |
+          uv sync --locked
+          uv run --with playwright==1.63.0 playwright install --with-deps chromium
+
+      - name: The URCap in the pinned simulator
+        run: uv run --with playwright==1.63.0 python urcap/e2e.py --artifacts e2e-artifacts --report e2e-artifacts/e2e.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: urcap-e2e
+          path: e2e-artifacts/
+          if-no-files-found: ignore

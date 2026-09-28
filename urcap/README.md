@@ -53,9 +53,11 @@ it's the `--cors` value, prints the exact flag to restart the cockpit with. See
 
 ## What you need
 
+<!-- urcap-target -->Built and tested for **PolyScope X 10.14.0** (the newest minor, 10.14; simulator `universalrobots/ursim_polyscopex:10.14.0`, URCap SDK 6.6.66 / contribution-api 22.14.184) — pinned in [`target.json`](target.json) and kept current by `.github/workflows/urcap-track.yml`.<!-- /urcap-target -->
+
 | | |
 | --- | --- |
-| **Robot** | A PolyScope X controller (built and tested against 10.13; see [What has been verified](#what-has-been-verified)). The admin password (UR's factory default is `easybot`; the first use asks you to change it). |
+| **Robot** | A PolyScope X controller on the release above (see [What has been verified](#what-has-been-verified)). The admin password (UR's factory default is `easybot`; the first use asks you to change it). |
 | **Camera** | An Intel RealSense **D435** on the tool flange. A printable bracket is in [`hardware/d435-tool-bracket/`](../hardware/d435-tool-bracket/) (e-Series ISO-50 and UR20 prints). |
 | **Computer** | Windows, macOS or Linux (amd64/arm64) on the **same network as the robot**, with the D435 on a **USB 3** port, [`uv`](https://docs.astral.sh/uv/) and librealsense ([docs/realsense.md](../docs/realsense.md) covers each OS; macOS needs `sudo`). |
 
@@ -240,6 +242,7 @@ link behind the cockpit.
 | Installs through the System Manager endpoint in Local mode (201; 409 on duplicate; delete) | PolyScope X **10.13.0 simulator**, 2026-09-26 |
 | Node loads under Application; feed, hover depth, click → segment → locate call; cockpit URL persists across reloads | 10.13.0 simulator, headless Chromium, against a synthetic cockpit |
 | Node tells a CORS refusal from a dead port and prints the fix | 10.13.0 simulator |
+| All of the above plus PolyScope's IK / FK services answering the node, on **10.14.0** (the current target) | `urcap/e2e.py`, 2026-09-27; re-run on every change and every new UR release by CI |
 | Install from a USB stick on a physical pendant (§1A) | **not yet**: the steps follow PolyScope X's System Manager but haven't been walked on hardware |
 | Locate + Move (cockpit) against a real PolyScope X arm | **not yet** |
 | `perception calibrate` (orbit hand-eye) as a command on hardware | **not yet**: the same orbit, scripted, gave RMS 4.4 mm on a UR3e (2026-09-25); the cockpit's touch-and-click calibration is the proven path |

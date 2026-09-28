@@ -1,0 +1,29 @@
+{
+  "polyscope_x": {
+    "minor": "10.14",
+    "release": "10.14.0",
+    "released": "2026-08-27",
+    "notes": "https://www.universal-robots.com/articles/ur/release-notes/release-note-software-version-1014x/",
+    "notes_sdk": "0.20.49"
+  },
+  "simulator": {
+    "image": "universalrobots/ursim_polyscopex:10.14.0",
+    "digest": "sha256:f306cd98970aea97d8399cf1fb30c07ddd3713b620ca6c5af9a78a5869ac41ee",
+    "architectures": [
+      "amd64",
+      "arm64"
+    ],
+    "matches_sdk": true
+  },
+  "sdk": {
+    "tag": "SDK-v0.21",
+    "release": "PolyScope X 10.14 - SDK-v0.21",
+    "version": "6.6.66",
+    "polyscope": "0.21.64",
+    "ursim": "0.19.135",
+    "manifest_spec": "19.11.25",
+    "contribution_api": "22.14.184",
+    "urcap_utils": "2.2.5",
+    "threads": "1.7.0"
+  }
+}
