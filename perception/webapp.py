@@ -543,6 +543,43 @@ class ViewerApp:
         u, v = round(k.fx * q[0] / q[2] + k.ppx), round(k.fy * q[1] / q[2] + k.ppy)
         return (u, v) if 0 <= u < frame.color.width and 0 <= v < frame.color.height else None
 
+    def _refind(
+        self, near: Sequence[float], look: Sequence[float], gate_m: float = 0.08
+    ) -> tuple[dict | None, list[float], str]:
+        """From the look pose: a settled frame, every block in it (the white-block
+        detector), the one nearest ``near`` within ``gate_m`` — segmented at its own
+        pixel and measured (``_rect_from_mask``). ``(rect, flange, why-not)``."""
+        from . import pickplan
+
+        time.sleep(0.4)
+        seq, _ = self.latest()
+        self.wait_frame(seq, 2.0)
+        objs = self.objects()
+        f_look = objs.get("flange_pose") or self._flange_at(time.time()) or list(look)
+        T = Transform.from_pose(f_look).compose(Transform.from_pose(self._handeye_fc()))
+        best = None
+        for o in objs.get("objects") or []:
+            r = pickplan.rectangle(pickplan.top_face([T.apply(q) for q in o["points_cam"]]))
+            if r is None:
+                continue
+            d = math.dist(r["centre"][:2], near[:2])
+            if d <= gate_m and (best is None or d < best[0]):
+                best = (d, o, r)
+        if best is None:
+            n = len(objs.get("objects") or [])
+            return None, f_look, f"{n} block(s) in view, none within {gate_m * 1000:.0f} mm of the estimate"
+        _, o, r = best
+        try:
+            self.segment(x=o["pixel"][0], y=o["pixel"][1])
+        except (ValueError, RuntimeError):
+            return r, f_look, ""
+        with self._seg_lock:
+            m1, fr1 = self.mask, self.mask_frame
+        r1 = self._rect_from_mask(m1, fr1, f_look) if m1 is not None and m1.area else None
+        if r1 is None or math.dist(r1["centre"][:2], r["centre"][:2]) > 0.03:
+            return r, f_look, ""  # the segment wandered: the detector's own measurement
+        return r1, f_look, ""
+
     def _unreachable(self, legs: list[dict]) -> list[str]:
         iks = self.robot.robot.inverse_kin([leg["pose"] for leg in legs], tcp=[0.0] * 6)
         return [leg["name"] for leg, a in zip(legs, iks, strict=True) if a.get("reachable") is False]
@@ -569,6 +606,7 @@ class ViewerApp:
         No close look when ``look`` is off or its pose is out of reach (one program)."""
         from . import pickplan
         from .handeye import tip_m_from_env
+        from .pickcycle import grasp_rotation, grasp_yaw_deg
 
         if self.robot is None:
             raise ValueError("no robot link (started with --no-robot)")
@@ -643,36 +681,43 @@ class ViewerApp:
             }
         rect, final = rect0, p["final"]
         if p["look"] is not None:
-            # 2 — a settled frame from the look pose, the object found again in it
-            time.sleep(0.3)
-            seq, _ = self.latest()
-            seq, fr = self.wait_frame(seq, 2.0)
-            f_look = self._flange_at(self._latest_t) or p["look"]
-            px = self._pixel_of(rect0["centre"], f_look, fr) if fr is not None else None
-            rect1 = None
-            if px is not None:
-                try:
-                    self.segment(x=px[0], y=px[1])
-                    with self._seg_lock:
-                        m1, fr1 = self.mask, self.mask_frame
-                    if m1 is not None and m1.area:
-                        rect1 = self._rect_from_mask(m1, fr1, f_look)
-                except (ValueError, RuntimeError) as exc:
-                    notes.append(f"close look: {exc}")
-            shift = math.dist(rect1["centre"][:2], rect0["centre"][:2]) if rect1 else None
-            if rect1 is None or shift > 0.05:
-                notes.append(
-                    "close look found nothing"
-                    if rect1 is None
-                    else f"close look moved it {shift * 1000:.0f} mm — kept the first estimate"
-                )
-            else:
-                rect = rect1
-                notes.append(
-                    f"close look: moved {shift * 1000:.0f} mm, "
-                    f"{rect1['major_m'] * 1000:.0f} x {rect1['minor_m'] * 1000:.0f} mm"
-                )
+            # 2 — find the block again from up close, by identity (the real block nearest the
+            # estimate), re-centre once if it is off the camera's axis, then measure it there
+            rect1, f_look, why_not = self._refind(rect0["centre"], p["look"])
+            if rect1 is not None and math.dist(rect1["centre"][:2], rect0["centre"][:2]) > 0.01:
+                rot = grasp_rotation(f_look, rect1["centre"], 0.0)
+                yaw = grasp_yaw_deg(rot, rect1["theta"] + math.pi / 2, "y")
+                look2 = pickplan.look_pose(rect1, rot, yaw, hfc, pickplan.LOOK_M)
+                if not self._unreachable([{"name": "look", "pose": look2}]):
+                    self._run([{"name": "look", "pose": look2, **pickplan.SETTLE, "dwell_s": 0.4}])
+                    again, f2, _ = self._refind(rect1["centre"], look2)
+                    if again is not None:
+                        d1 = math.dist(rect1["centre"][:2], rect0["centre"][:2]) * 1000
+                        d2 = math.dist(again["centre"][:2], rect1["centre"][:2]) * 1000
+                        notes.append(
+                            f"close look: {d1:.0f} mm from the first estimate; re-centred, {d2:.0f} mm more"
+                        )
+                        rect1, f_look = again, f2
+            if rect1 is None:
+                self.events.add("robot", f"pick: lost the target at the close look ({why_not})", ok=False)
+                return {
+                    "ok": False,
+                    "error": f"lost the target at the close look: {why_not}",
+                    "stage": "look",
+                    **summary,
+                }
+            rect = rect1
+            notes.append(
+                f"close look: {rect1['major_m'] * 1000:.0f} x {rect1['minor_m'] * 1000:.0f} mm at "
+                f"{[round(v, 3) for v in rect1['centre']]}"
+            )
             p2 = pickplan.plan(rect, f_look, tip_m=tip, pick=pick, fancy=False)
+            if pick and not p2["fits"]:
+                return {
+                    "ok": False,
+                    "error": f"{rect['minor_m'] * 1000:.0f} mm is too wide for the fingers",
+                    **summary,
+                }
             final = p2["sweep"]  # no look: over → approach [→ grasp → lift], from the look pose
             bad = self._unreachable(final)
             if bad:
@@ -714,6 +759,8 @@ class ViewerApp:
     def home(self) -> dict:
         """One clean movel back to the cell's picture pose (``PERCEPTION_HOME_POSE``,
         a flange pose looking down at the work surface)."""
+        from . import pickplan
+
         if self.robot is None:
             raise ValueError("no robot link (started with --no-robot)")
         raw = os.environ.get("PERCEPTION_HOME_POSE", "").strip()
@@ -724,7 +771,7 @@ class ViewerApp:
             raise ValueError("PERCEPTION_HOME_POSE must be six numbers")
         run = self.robot._tool(
             "move_tcp_path",
-            {"legs": [{"pose": pose, "velocity": 0.25, "acceleration": 0.8}], "tcp": [0.0] * 6},
+            {"legs": [{"pose": pose, **pickplan.TRANSIT}], "tcp": [0.0] * 6},
         )
         self.events.add("robot", "home", ok=bool(run.get("ok")))
         return {
@@ -1390,6 +1437,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
                     pick=bool(payload.get("pick")),
                     fancy=bool(payload.get("fancy")),
                     plan_only=bool(payload.get("plan_only")),
+                    look=payload.get("look", True) is not False,
                 )
             )
         elif route == "/api/robot/home":

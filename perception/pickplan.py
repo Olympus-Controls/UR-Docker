@@ -32,6 +32,11 @@ LIFT_M = 0.05
 DROP_M = 0.06  # the last stretch of the sweep runs straight down the Z axis
 LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2 m blind zone
 STROKE_M = 0.05  # Hand-E
+# Motion (Nick, 2026-09-27: "all moves should be extremely fluid and smooth, not abrupt"):
+# gentle accelerations everywhere; the speed only where the arm is clear of the parts.
+TRANSIT = {"velocity": 0.15, "acceleration": 0.25}
+SETTLE = {"velocity": 0.08, "acceleration": 0.15}
+DESCEND = {"velocity": 0.03, "acceleration": 0.10}
 
 
 def top_face(
@@ -145,8 +150,8 @@ def plan(
     lift_m: float = LIFT_M,
     stroke_m: float = STROKE_M,
     finger_axis: str = "y",
-    velocity: float = 0.25,
-    acceleration: float = 0.8,
+    velocity: float = TRANSIT["velocity"],
+    acceleration: float = TRANSIT["acceleration"],
     skip: Sequence[str] = (),
 ) -> dict:
     """The programs for ``rect`` from ``start_flange`` (flange poses, TCP at the flange):
@@ -181,21 +186,19 @@ def plan(
         stops.append(("flourish", _raised(goal, 0.06, 35.0), fast))
     stops = [st for st in stops if st[0] not in skip]
     tail = [
-        ("approach", approach, {"velocity": 0.12, "acceleration": 0.6, "dwell_s": 0.3 if pick else 0.0}),
+        ("approach", approach, {**SETTLE, "dwell_s": 0.3 if pick else 0.0}),
     ]
     if pick:
-        tail.append(
-            ("grasp", at(-grasp_below_m), {"velocity": 0.05, "acceleration": 0.3, "gripper": "close"})
-        )
-        tail.append(("lift", at(hover_m + lift_m), {"velocity": 0.10, "acceleration": 0.5}))
+        tail.append(("grasp", at(-grasp_below_m), {**DESCEND, "gripper": "close"}))
+        tail.append(("lift", at(hover_m + lift_m), dict(SETTLE)))
     cap = 0.06 if fancy else 0.04
     if look is not None:
         sweep = _legs(
             start_flange,
-            stops + [("look", look, {"velocity": 0.18, "acceleration": 0.6, "dwell_s": 0.2})],
+            stops + [("look", look, {**SETTLE, "dwell_s": 0.4})],
             cap,
         )
-        final = _legs(look, [("over", over, {**fast, "velocity": 0.15})] + tail, 0.03)
+        final = _legs(look, [("over", over, dict(SETTLE))] + tail, 0.03)
     else:
         sweep = _legs(start_flange, stops + [("over", over, fast)] + tail, cap)
         final = []

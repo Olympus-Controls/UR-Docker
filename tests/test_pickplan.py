@@ -166,10 +166,13 @@ def test_the_cockpit_plans_and_dry_runs_a_pick(monkeypatch):
         assert plan["ok"] and plan["plan_only"], plan
         assert [leg["name"] for leg in plan["legs"]] == ["swing", "flourish", "look", "over", "approach"]
         assert plan["opening_mm"] == 50.0  # 1.2 x 80 mm, capped at the stroke
+        # the synthetic disks are not white blocks: the close look finds no block by identity
+        # and the pick stops at the look instead of grabbing whatever lies at the old pixel
+        # (on the UR3e, 2026-09-27, that was a patch of carpet)
         run = post("/api/robot/pick", {})
+        assert run["ok"] is False and run["stage"] == "look" and "lost the target" in run["error"], run
+        run = post("/api/robot/pick", {"look": False})
         assert run["ok"] and run["dry_run"], run
-        # the pose didn't move, so the close look re-finds the object where it was
-        assert any(n.startswith("close look: moved") for n in run["notes"]), run["notes"]
         home = post("/api/robot/home", {})
         assert home["ok"] and home["pose"] == pytest.approx(HOME)
     finally:
