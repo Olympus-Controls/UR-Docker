@@ -22,6 +22,9 @@
 - 2026-09-27 — `get_flange_pose` failed twice (12:49) with *no TCP pose/offset surfaced on the Primary broadcast*; reproduced 18:40 with the pendant in **Local** (doctor `robot.tcp`), passes in Remote. So on 5.25.1 the textmsg read is gated on Remote too, and `Robot.get_flange_pose`'s docstring ("works in Local") is wrong. After the demo: say so in the error (Dashboard snapshot incl. remote + the `captured` tail) and fix the docstring/CLAUDE.md.
 - 2026-09-27 — First PolyScope 5 install of `realsense-pilot-ps5-0.1.0.urcap`: the first try on the UR3e was refused (no `Bundle-Category: URCap`, fixed 1892a21). The fixed build is on the "URE MODELS" stick (sha256 6e0318817a1e…): Settings → System → URCaps → + → Restart. Past the file checks the installer still runs a compatibility check and a trial OSGi install, and the node has never rendered on a PolyScope 5 pendant.
 
+- 2026-09-27 — PS5 **RealSense Pick** node 0.3.0 (auto survey = first look from where the arm is, then halfway toward the block, centred; every stage logged; popup on failure) is on the "URE MODELS" stick. Its URScript has **not run on a controller yet**: did it install and pick? The first run's trace is in `~/Library/Logs/perception/pick-server.log` (or `GET http://192.168.3.10:7631/api/pick/log`).
+- 2026-09-27 — Delete the stale pre-rebase `feature/urcap5-pick-node` on the fork? Everything in it is in `refactor/prune-2026-09-25` (4df4259).
+
 ## After the demo (2026-09-28)
 
 - 2026-09-25 — (held until after the demo, Nick 09-27) Four pick-cycle faults could not be injected from the desk and are untested claims until someone does them once: pendant flipped to **Local** mid-run, a webcam or the D435 **unplugged** mid-run, the cockpit **restarted** while the routine is on a block, robot **power cut**. Note what the routine did in the field log.
@@ -29,6 +32,8 @@
 - 2026-09-27 — Reminder for Nick: `sudo chown -R nick captures` (sudo cockpit runs leave it root-owned).
 - 2026-09-27 — Repo automation baseline: no `dev` branch; PRs go straight to `main`. Add `dev` + auto-merge + protection per ~/.claude/templates/github/.
 - 2026-09-27 — `pick-cycle --dry-run` without `--via-cockpit` builds a dry-run `Robot` whose flange is a stand-in pose, so the survey's base-frame block positions are fiction. Use `--via-cockpit --dry-run` until fixed.
+- 2026-09-27 — Retire the `perception pick-server` sidecar (192.168.3.10:7631) once the cockpit runs the merged code: `pkill -f "pick-server --bind"` **before** relaunching the cockpit (both bind :7622), then point the pick node's URL back at `:7621`.
+- 2026-09-27 — `tests/test_handeye.py`: `test_robotlink_locate_then_move_goes_through_the_tool_registry` and `test_robotlink_approach_defaults_come_from_the_cell_env` have failed since b41d795 halved the accelerations: they expect `a=0.3`, the code sends 0.1.
 
 ## Decisions (so they don't get re-asked)
 
