@@ -112,3 +112,22 @@ def synthetic_urp_with_unknown_node(tmp_path: Path) -> Path:
     p = tmp_path / "synthetic.urp"
     p.write_bytes(gzip.compress(xml.encode("utf-8")))
     return p
+
+
+# ----- keep unit tests off the controller's state broadcast ------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_state_broadcast(request, monkeypatch):
+    """Robot.get_flange_pose() reads the state broadcast (Secondary port) first; a
+    unit test must not reach whatever happens to listen on localhost:30002. Tests
+    that exercise the reader against their own fake broadcast opt back in with
+    ``@pytest.mark.state_broadcast``; integration tests keep the real one."""
+    if request.node.get_closest_marker("state_broadcast") or request.node.get_closest_marker("integration"):
+        return
+    from urctl import stateframe
+
+    def refuse(host, port, **kwargs):
+        raise ConnectionRefusedError("state broadcast disabled in unit tests")
+
+    monkeypatch.setattr(stateframe, "read_flange_state", refuse)

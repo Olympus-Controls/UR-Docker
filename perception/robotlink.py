@@ -167,13 +167,48 @@ class RobotLink:
         )
         result["ok"] = True
         result["tcp"] = self.reference_tcp(result["reference"])
+        self._polyscope_target(result, fp)
         self._controller_reach(result)
         result["model"] = self.robot.safety.model or None
         result["robot"] = {
             k: fp.get(k)
-            for k in ("host", "dry_run", "tcp_offset", "flange_reported", "host_controller_mismatch_m", "ts")
+            for k in (
+                "host",
+                "dry_run",
+                "tcp_offset",
+                "flange_reported",
+                "host_controller_mismatch_m",
+                "source",
+                "flange_source",
+                "consistency_m",
+                "tcp_offset_consistent",
+                "ts",
+            )
         }
         return result
+
+    @staticmethod
+    def _polyscope_target(result: dict, fp: Mapping) -> None:
+        """``polyscope_pose``: the flange target expressed in the controller's
+        **active** TCP — what PolyScope's own move screen (``requestUserToMoveRobot``
+        with a pose, which solves IK through the active TCP) must be handed so the
+        flange, and so the fingertips, end up where the cockpit computed. It needs
+        no script (Local mode). ``None``, with the reason in
+        ``polyscope_pose_note``, when the active offset is unknown or the state
+        broadcast says the offset is not the one its TCP pose was computed with."""
+        flange_target = result.get("flange_target_pose")
+        offset = fp.get("tcp_offset")
+        result["polyscope_pose"] = None
+        if flange_target is None or offset is None:
+            result["polyscope_pose_note"] = "the controller's active TCP offset is unknown"
+        elif fp.get("tcp_offset_consistent") is False:
+            result["polyscope_pose_note"] = (
+                f"the controller's active TCP offset disagrees with its TCP pose by "
+                f"{(fp.get('consistency_m') or 0.0) * 1000:.0f} mm — PolyScope's move screen would miss; "
+                "re-select the TCP in the installation"
+            )
+        else:
+            result["polyscope_pose"] = pose_trans(flange_target, offset)
 
     def move(
         self,
@@ -305,6 +340,7 @@ class RobotLink:
             "point_flange_m": None,
             "view_ray_base": None,
         }
+        self._polyscope_target(result, fp)
         self._controller_reach(result)
         return result
 

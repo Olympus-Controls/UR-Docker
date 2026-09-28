@@ -251,6 +251,10 @@ final class Cockpit {
             if (loc.get("model") != null) b.append(", ").append(loc.get("model"));
             b.append(" — no IK answer)");
         }
+        if (six(loc.get("joint_target")) == null && six(loc.get("polyscope_pose")) == null
+                && loc.get("polyscope_pose_note") != null) {
+            b.append("\nMove (PolyScope) unavailable: ").append(loc.get("polyscope_pose_note"));
+        }
         return b.toString();
     }
 

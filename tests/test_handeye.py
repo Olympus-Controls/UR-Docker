@@ -520,3 +520,58 @@ def test_approach_cycle_runs_every_leg_on_the_fingertips(monkeypatch):
     assert legs[0][2] == pytest.approx(legs[1][2] + 0.1)  # over: clearance above it
     # back: where the fingertips were when the picture was taken
     assert _close(legs[3][:3], pose_trans(loc["flange_pose"], loc["tcp"])[:3], 1e-6)
+
+
+def _broadcast_flange(flange, offset, *, consistent=True):
+    """What stateframe.read_flange_state returns for a controller whose flange is
+    ``flange`` with ``offset`` active (``consistent=False``: it reports that offset
+    while its TCP pose was computed with another)."""
+    tcp = pose_trans(flange, offset if consistent else [0.0, 0.0, 0.05, 0.0, 0.0, 0.0])
+    at = pose_trans(flange, offset)
+    import math as _m
+
+    return {
+        "flange": list(flange),
+        "tcp": tcp,
+        "tcp_offset": list(offset),
+        "joints": [0.0] * 6,
+        "flange_source": "kinematics",
+        "consistency_m": _m.dist(at[:3], tcp[:3]),
+    }
+
+
+@pytest.mark.state_broadcast
+def test_locate_in_local_mode_needs_no_script_and_targets_polyscopes_tcp(monkeypatch):
+    # 2026-09-27, the UR3e in Local: every textmsg query is ignored, so Locate failed
+    # with "no TCP pose/offset surfaced". The flange now comes from the state broadcast,
+    # and PolyScope's move screen gets the target in its own active TCP.
+    from urctl import stateframe
+
+    fake = FakeController().install(monkeypatch)
+    flange = [0.3, -0.2, 0.35, 0.0, 3.14159265, 0.0]
+    offset = [0.0, -0.035, 0.22, 0.0, 0.0, 0.0]  # the UR3e's training TCP, not the Hand-E
+    monkeypatch.setattr(stateframe, "read_flange_state", lambda *a, **k: _broadcast_flange(flange, offset))
+    link = RobotLink(RobotConfig(host="fake"))
+    loc = link.locate((0.0, 0.0, 0.3))
+    assert loc["ok"] and loc["robot"]["source"] == "state_broadcast"
+    assert not any("urctl/flange" in s for s in fake.primary_sends)  # no pose script sent
+    # holding PolyScope's active TCP at polyscope_pose puts the flange on the target …
+    back = pose_trans(loc["polyscope_pose"], pose_inv(offset))
+    assert back == pytest.approx(loc["flange_target_pose"], abs=1e-9)
+    # … and so the fingertips where the cockpit computed them (the reference that matters)
+    tips = pose_trans(loc["flange_target_pose"], [0.0, 0.0, 0.163, 0.0, 0.0, 0.0])
+    assert tips[:3] == pytest.approx(loc["approach_pose"][:3], abs=1e-9)
+
+
+@pytest.mark.state_broadcast
+def test_locate_withholds_the_polyscope_target_when_the_offset_is_not_the_one_in_use(monkeypatch):
+    from urctl import stateframe
+
+    FakeController().install(monkeypatch)
+    flange, offset = [0.3, -0.2, 0.35, 0.0, 3.14159265, 0.0], [0.0, -0.035, 0.22, 0.0, 0.0, 0.0]
+    monkeypatch.setattr(
+        stateframe, "read_flange_state", lambda *a, **k: _broadcast_flange(flange, offset, consistent=False)
+    )
+    loc = RobotLink(RobotConfig(host="fake")).locate((0.0, 0.0, 0.3))
+    assert loc["ok"] and loc["polyscope_pose"] is None
+    assert "disagrees" in loc["polyscope_pose_note"] and loc["robot"]["tcp_offset_consistent"] is False

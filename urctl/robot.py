@@ -289,15 +289,24 @@ class Robot:
         and TCP offset it was derived from — what a camera on the flange needs
         to put its measurements into base coordinates (``perception.handeye``).
 
-        One Primary ``textmsg`` round-trip: the controller reports
+        First the controller's **state broadcast** (Secondary port, read only —
+        :mod:`urctl.stateframe`): the flange by forward kinematics of the actual
+        joints through the robot's calibrated DH, plus the TCP pose and active
+        offset from the same message. It sends no script, so it works in Local
+        mode on a real e-Series (which ignores URScript there, textmsg included —
+        UR3e, 2026-09-27) and never replaces a running program.
+        (``source: "state_broadcast"``.)
+
+        Fallback, when the broadcast is not reachable (a sim that doesn't publish
+        the port): one Primary ``textmsg`` round-trip — the controller reports
         ``get_actual_tcp_pose()`` and ``get_tcp_offset()``; the flange is
         ``pose_trans(tcp, pose_inv(offset))`` (also computed host-side by
         :mod:`urctl.pose` and cross-checked against the controller's own
-        arithmetic). Works in Local control mode on a real e-Series — only
-        *motion* is gated on Remote. In ``dry_run`` a stand-in pose is returned
-        (tool pointing down, 0.5 m out and up) so cockpits can be exercised
-        without a controller.
+        arithmetic). (``source: "textmsg"``.) In ``dry_run`` a stand-in pose is
+        returned (tool pointing down, 0.5 m out and up) so cockpits can be
+        exercised without a controller.
         """
+        from . import stateframe
         from .pose import Transform
 
         if self.dry_run:
@@ -308,6 +317,30 @@ class Robot:
                 ok=True,
                 result={"flange": flange, "tcp": flange, "tcp_offset": [0.0] * 6, "dry_run": True},
             )
+        try:
+            st = stateframe.read_flange_state(
+                self.config.host, self.config.secondary_port, timeout_s=min(3.0, collect_for + 1.0)
+            )
+        except (OSError, stateframe.StateFrameError) as exc:
+            state_error = f"{self.config.host}:{self.config.secondary_port}: {exc}"
+        else:
+            if st.get("flange") is not None and st.get("tcp") is not None:
+                consistency = st.get("consistency_m")
+                result = {
+                    "flange": st["flange"],
+                    "tcp": st["tcp"],
+                    "tcp_offset": st["tcp_offset"],
+                    "joints": st["joints"],
+                    "source": "state_broadcast",
+                    "flange_source": st["flange_source"],
+                    "consistency_m": consistency,
+                    # the reported offset is the one the reported TCP pose was computed with
+                    "tcp_offset_consistent": None
+                    if consistency is None
+                    else consistency <= stateframe.CONSISTENCY_TOLERANCE_M,
+                }
+                return self._log("get_flange_pose", {}, ok=True, result=result)
+            state_error = "the state broadcast had no joints/TCP pose"
         captured = self.primary.run_and_capture(
             'textmsg("urctl/flange/tcp=", get_actual_tcp_pose())\n'
             'textmsg("urctl/flange/offset=", get_tcp_offset())\n'
@@ -329,11 +362,18 @@ class Robot:
                 ok=False,
                 result={
                     "error": "no TCP pose/offset surfaced on the Primary broadcast",
+                    "state_error": state_error,
                     "captured": captured[-5:],
                 },
             )
         flange = Transform.from_pose(tcp).compose(Transform.from_pose(offset).inverse()).to_pose()
-        result = {"flange": flange, "tcp": tcp, "tcp_offset": offset}
+        result = {
+            "flange": flange,
+            "tcp": tcp,
+            "tcp_offset": offset,
+            "source": "textmsg",
+            "state_error": state_error,
+        }
         if reported is not None:
             result["flange_reported"] = reported
             result["host_controller_mismatch_m"] = max(
