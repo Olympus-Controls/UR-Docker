@@ -23,6 +23,7 @@
 - 2026-09-27 — First PolyScope 5 install of `realsense-pilot-ps5-0.1.0.urcap`: the first try on the UR3e was refused (no `Bundle-Category: URCap`, fixed 1892a21). The fixed build is on the "URE MODELS" stick (sha256 6e0318817a1e…): Settings → System → URCaps → + → Restart. Past the file checks the installer still runs a compatibility check and a trial OSGi install, and the node has never rendered on a PolyScope 5 pendant.
 - 2026-09-27 — PS5 **RealSense Pick** node 0.3.0 (auto survey = first look from where the arm is, then halfway toward the block, centred; every stage logged; popup on failure) is on the "URE MODELS" stick. Its URScript has **not run on a controller yet**: did it install and pick? The first run's trace is in `~/Library/Logs/perception/pick-server.log` (or `GET http://192.168.3.10:7631/api/pick/log`).
 - 2026-09-27 — Delete the stale pre-rebase `feature/urcap5-pick-node` on the fork? Everything in it is in `refactor/prune-2026-09-25` (4df4259).
+- 2026-09-28 — The Python package is still named `ur-docker` (pyproject) — pick the PyPI name before the first `v*` tag publishes it (names can't be taken back): `universal-perceptronics`? Also `ci.yml` runs `uv sync` without `--locked` and `codeql.yml` / `dependabot-auto-merge.yml` use floating action tags.
 
 ## After the demo (2026-09-28)
 

@@ -8,6 +8,7 @@ checks need the URCap API jars too (``python3 urcap/urcap5.py sdk``) and skip wi
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -520,3 +521,61 @@ def test_a_failed_pick_says_why_in_a_popup_for_every_status_the_server_sends(jav
 def test_pick_host_comes_from_the_installation_nodes_url(java_client):
     assert java_client("hostof", "http://192.168.3.10:7621") == "192.168.3.10"
     assert java_client("hostof", "not a url at all") == ""
+
+
+# -- the urcap5-v<version> release ---------------------------------------------------------
+
+
+def test_release_check_publishes_exactly_the_committed_jar_for_its_version():
+    version = urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8"))[
+        "Bundle-Version"
+    ]
+    out = urcap5.release_check(f"urcap5-v{version}", SRC, DIST.parent)
+    assert out["version"] == version and Path(out["path"]) == DIST
+    assert out["sha256"] == hashlib.sha256(DIST.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("tag", "why"),
+    [
+        ("v0.3.0", "not urcap5-v"),  # the Python package's tags are not this release's
+        ("urcap5-v0.3", "not urcap5-v"),
+        ("urcap5-v0.3.0-rc1", "not urcap5-v"),
+        ("urcap5-v../../etc", "not urcap5-v"),
+        ("urcap5-v9.9.9", "Bundle-Version="),
+    ],
+)
+def test_release_check_refuses_a_tag_that_is_not_this_version(tag, why):
+    with pytest.raises(urcap5.Urcap5Error, match=why):
+        urcap5.release_check(tag, SRC, DIST.parent)
+
+
+def test_release_check_refuses_a_stale_or_missing_jar(tmp_path):
+    version = urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8"))[
+        "Bundle-Version"
+    ]
+    src = tmp_path / "src"
+    shutil.copytree(SRC, src)
+    with pytest.raises(urcap5.Urcap5Error, match="not committed"):
+        urcap5.release_check(f"urcap5-v{version}", src, tmp_path / "empty")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    shutil.copy(DIST, dist / DIST.name)
+    urcap5.release_check(f"urcap5-v{version}", src, dist)  # a faithful copy passes
+    java = next((src / "src").rglob("PickScript.java"))
+    java.write_text(java.read_text(encoding="utf-8") + "\n// edited after the build\n", encoding="utf-8")
+    with pytest.raises(urcap5.Urcap5Error, match="current sources"):
+        urcap5.release_check(f"urcap5-v{version}", src, dist)
+
+
+def test_release_check_cli_prints_json_or_fails_with_the_reason(capsys):
+    version = urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8"))[
+        "Bundle-Version"
+    ]
+    assert (
+        urcap5.main(["release-check", f"urcap5-v{version}", "--src", str(SRC), "--dist", str(DIST.parent)])
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["version"] == version
+    assert urcap5.main(["release-check", "urcap5-v9.9.9", "--src", str(SRC), "--dist", str(DIST.parent)]) == 1
+    assert "Bundle-Version=" in capsys.readouterr().err

@@ -40,6 +40,17 @@ Reach is judged by the controller's inverse kinematics (`get_inverse_kin_has_sol
 when the cockpit can ask it, and by the datasheet radius only when it cannot; the target
 text says which.
 
+## Releases
+
+Pushing a `urcap5-v<version>` tag (`git tag urcap5-v0.3.0 && git push fork urcap5-v0.3.0`)
+publishes the committed `../dist/realsense-pilot-ps5-<version>.urcap` and its sha256 as a
+GitHub Release (`.github/workflows/release-urcap5.yml`). The workflow does not rebuild the
+jar — the URCap API jars are UR's and live only in the URSim image — it runs
+`python3 urcap/urcap5.py release-check <tag>`: the tag's version is `Bundle-Version`, the
+committed jar of that version exists, carries the current sources' digest, and passes
+PolyScope 5's install checks; then the URCap tests. So: bump `Bundle-Version`, `make
+urcap5-package`, commit `dist/`, then tag. The Python package's `v*` tags are a separate line.
+
 ## Build it
 
 A JDK (11+; it builds Java 8 bytecode with `--release 8`) and Docker:

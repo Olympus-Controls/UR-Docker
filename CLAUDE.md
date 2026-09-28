@@ -807,7 +807,11 @@ bumps auto-merge once CI is green (`dependabot-auto-merge.yml` — needs
 "Allow auto-merge" enabled in repo settings). CodeQL scans Python + JS weekly
 and per PR. Tagging `v<version>` (matching `urctl.__version__`) builds, tests,
 creates a GitHub Release, and publishes to PyPI via trusted publishing (the
-`pypi` environment; skipped until the PyPI publisher is configured).
+`pypi` environment; skipped until the PyPI publisher is configured). The PolyScope 5
+URCap has its own tag line: `urcap5-v<Bundle-Version>` attaches the committed
+`urcap/dist/*.urcap` + sha256 to a GitHub Release after `urcap5.py release-check`
+proves it is the tagged sources' build (`release-urcap5.yml`; CI never rebuilds it —
+the URCap API jars exist only in the URSim image).
 
 Unit tests assume a clean shell: with `UR_CELL` (or `PERCEPTION_*`) exported,
 the handeye/webapp/cockpit tests pick up the cell's defaults and fail — run them
