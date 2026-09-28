@@ -15,7 +15,7 @@ the toolkit needs only Python ≥ 3.10.
 ## Quick start
 
 ```bash
-git clone https://github.com/Olympus-Controls/UR-Docker && cd UR-Docker
+git clone https://github.com/Olympus-Controls/UR-utils && cd UR-utils
 docker compose up -d          # start the simulator (PolyScope UI: http://localhost:6080/vnc.html)
 uv sync                       # or: pip install .
 uv run urctl bring-up         # cold start -> RUNNING (power + brakes)
