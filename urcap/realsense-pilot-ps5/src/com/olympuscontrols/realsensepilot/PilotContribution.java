@@ -218,7 +218,7 @@ public class PilotContribution implements InstallationNodeContribution {
                     located = loc;
                     view.setTarget(Cockpit.targetText(loc));
                     boolean offer = !Boolean.FALSE.equals(loc.get("reachable"));
-                    view.setMoveEnabled(offer, offer);
+                    view.setMoveEnabled(offer && polyscopeCanTake(loc), offer);
                     view.setStatus(offer ? "target located — choose how to move"
                             : "target located but out of reach — pick a nearer point",
                             offer ? PilotView.Kind.OK : PilotView.Kind.WARN);
@@ -239,11 +239,12 @@ public class PilotContribution implements InstallationNodeContribution {
     // -- moving ------------------------------------------------------------------------------
 
     /**
-     * PolyScope's own hold-to-move screen. The target is the controller's joint solution
-     * for the flange target (``joint_target`` from locate: get_inverse_kin with the TCP
-     * forced to the flange), so PolyScope never re-solves the pose through an active TCP
-     * the cockpit may disagree about. Without one (no IK answer) the approach pose goes to
-     * PolyScope for its active TCP.
+     * PolyScope's own hold-to-move screen — works in Local mode. The target is the
+     * controller's joint solution for the flange target when the cockpit got one
+     * (``joint_target``: get_inverse_kin, a script, so Remote only); otherwise
+     * ``polyscope_pose``, the flange target expressed in PolyScope's active TCP (from the
+     * state broadcast, no script), which PolyScope solves itself. Never the approach pose:
+     * that is the fingertip TCP's pose, and PolyScope would put its active TCP there.
      */
     void movePolyScope() {
         final Map<String, Object> loc = located;
@@ -251,9 +252,11 @@ public class PilotContribution implements InstallationNodeContribution {
         final RobotMovement movement = api.getUserInterfaceAPI().getUserInteraction().getRobotMovement();
         final ValueFactoryProvider values = api.getInstallationAPI().getValueFactoryProvider();
         final double[] q = Cockpit.six(loc.get("joint_target"));
-        final double[] p = Cockpit.six(loc.get("approach_pose"));
+        final double[] p = Cockpit.six(loc.get("polyscope_pose"));
         if (q == null && p == null) {
-            view.setStatus("the located target has neither a joint solution nor an approach pose", PilotView.Kind.ERR);
+            Object note = loc.get("polyscope_pose_note");
+            view.setStatus("PolyScope can't be given this target: " + (note != null ? note
+                    : "no joint solution and no pose in PolyScope's TCP (update the cockpit)"), PilotView.Kind.ERR);
             return;
         }
         final RobotMovementCallback done = new RobotMovementCallback() {
@@ -285,7 +288,7 @@ public class PilotContribution implements InstallationNodeContribution {
                     } else {
                         Pose pose = values.getPoseFactory()
                                 .createPose(p[0], p[1], p[2], p[3], p[4], p[5], Length.Unit.M, Angle.Unit.RAD);
-                        view.setStatus("PolyScope's move screen is open — hold Move (pose for the active TCP)",
+                        view.setStatus("PolyScope's move screen is open — hold Move (the target in the active TCP)",
                                 PilotView.Kind.OK);
                         movement.requestUserToMoveRobot(pose, done);
                     }
@@ -317,10 +320,16 @@ public class PilotContribution implements InstallationNodeContribution {
                 } catch (IOException e) {
                     view.setStatus("move: " + Cockpit.explain(e, cockpit.base), PilotView.Kind.ERR);
                 } finally {
-                    view.setMoveEnabled(located != null, located != null);
+                    Map<String, Object> now = located;
+                    view.setMoveEnabled(now != null && polyscopeCanTake(now), now != null);
                 }
             }
         });
+    }
+
+    /** A joint solution, or a pose in PolyScope's own active TCP — what its move screen can take. */
+    static boolean polyscopeCanTake(Map<String, Object> loc) {
+        return Cockpit.six(loc.get("joint_target")) != null || Cockpit.six(loc.get("polyscope_pose")) != null;
     }
 
     private static String refusal(Map<String, Object> res) {
