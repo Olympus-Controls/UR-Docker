@@ -36,16 +36,16 @@
   }
   ::selection { background: var(--phos); color: var(--void); }
 
-  header { display: flex; align-items: center; gap: 22px; padding: 14px 24px 10px; }
-  .ident { font-size: 12px; color: var(--phos-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ident b { color: var(--phos); font-weight: 400; text-shadow: var(--glow); letter-spacing: .32em; margin-right: 14px; }
-  .lamps { display: flex; gap: 6px; margin-left: auto; }
-  .lamp { font-size: 11px; padding: 2px 7px; border: 1px solid var(--phos-ghost); color: var(--phos-dim); transition: color .25s, border-color .25s, box-shadow .25s; white-space: nowrap; }
+  header { display: flex; align-items: center; gap: 26px; padding: 16px 24px 8px; }
+  .ident { font-size: 17px; color: var(--phos-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .14em; }
+  .ident b { color: var(--phos); font-weight: 400; text-shadow: var(--glow); letter-spacing: .36em; margin-right: 22px; font-size: 30px; font-family: var(--tty); vertical-align: -3px; }
+  .lamps { display: flex; gap: 10px; margin-left: auto; }
+  .lamp { font-size: 15px; letter-spacing: .16em; padding: 5px 12px; border: 1px solid var(--phos-ghost); color: var(--phos-dim); transition: color .25s, border-color .25s, box-shadow .25s; white-space: nowrap; }
   .lamp.on { color: var(--phos); border-color: var(--phos-mid); text-shadow: var(--glow); box-shadow: inset 0 0 8px rgba(124,247,162,.12); }
   .lamp.alert { color: var(--amber); border-color: var(--amber); text-shadow: 0 0 6px rgba(255,194,71,.6); animation: blink 1.1s steps(2) infinite; }
   .lamp.warm { color: var(--amber); border-color: rgba(255,194,71,.6); }
   .lamp.crit { color: var(--red); border-color: var(--red); text-shadow: 0 0 8px rgba(255,74,61,.7); animation: blink .6s steps(2) infinite; }
-  .clock { font-size: 12px; color: var(--phos-mid); min-width: 9ch; text-align: right; }
+  .clock { font-size: 17px; color: var(--phos-mid); min-width: 9ch; text-align: right; letter-spacing: .1em; }
   @keyframes blink { 50% { opacity: .35; } }
 
   main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 33%); gap: 20px; padding: 26px 24px 20px; min-height: 0; }
@@ -138,13 +138,10 @@
 <header>
   <div class="ident"><b>PERCEPTION</b><span id="ident">— ESTABLISHING LINK —</span></div>
   <div class="lamps">
-    <span class="lamp" id="lCam" title="camera streaming">CAM</span>
-    <span class="lamp" id="lPose" title="live flange pose (RTDE) in every frame">POSE</span>
-    <span class="lamp" id="lLevel" title="the floor fitted in the base frame: should be level (the table is flat and parallel to base XY); a tilt is calibration error">LEVEL</span>
-    <span class="lamp" id="lLink" title="robot controller answers">LINK</span>
-    <span class="lamp" id="lPwr" title="robot mode RUNNING">PWR</span>
+    <span class="lamp" id="lCam" title="the wrist camera is streaming">CAM</span>
+    <span class="lamp" id="lArm" title="the controller answers and the arm is running">ARM</span>
     <span class="lamp" id="lSafe" title="safety NORMAL">SAFE</span>
-    <span class="lamp" id="lRmt" title="control mode REMOTE (needed for motion)">RMT</span>
+    <span class="lamp" id="lRmt" title="control mode REMOTE (needed for motion)">REMOTE</span>
   </div>
   <div class="clock" id="clock">--:--:--</div>
 </header>
@@ -931,13 +928,13 @@
   }
   async function home() { S.moving = true; S.plan = null; armKeys(); try { await act('/api/robot/home', {}, 'home'); } finally { S.moving = false; armKeys(); } }
   async function stop() { say('ALL STOP', 'crit'); await act('/api/robot/stop', {}, 'stop'); }
-  const lamp = (id, cls) => { $(id).className = 'lamp ' + (cls || ''); };
+  const lamp = (id, cls) => { const e = $(id); if (e) e.className = 'lamp ' + (cls || ''); };
   async function state() {
     if (!S.robot) return;
     const j = await post('/api/robot/state').catch((e) => ({ ok: false, error: e.message })), was = S.state; S.state = j;
-    if (j.ok === false && !j.robot_mode) { lamp('lLink', 'crit'); lamp('lPwr'); lamp('lSafe'); lamp('lRmt'); if (!was || was.ok !== false) say(`controller not answering: ${why(j)}`, 'crit'); return; }
+    if (j.ok === false && !j.robot_mode) { lamp('lArm', 'crit'); lamp('lSafe'); lamp('lRmt'); if (!was || was.ok !== false) say(`controller not answering: ${why(j)}`, 'crit'); return; }
     const rm = (j.robot_mode || '').replace('Robotmode: ', ''), sm = (j.safety_mode || '').replace('Safetymode: ', ''), cm = j.control_mode || '', safe = /NORMAL|REDUCED/.test(sm);
-    lamp('lLink', 'on'); lamp('lPwr', rm === 'RUNNING' ? 'on' : 'alert'); lamp('lSafe', safe ? 'on' : 'crit'); lamp('lRmt', cm === 'REMOTE' ? 'on' : 'alert');
+    lamp('lArm', rm === 'RUNNING' ? 'on' : 'alert'); lamp('lSafe', safe ? 'on' : 'crit'); lamp('lRmt', cm === 'REMOTE' ? 'on' : 'alert');
     if (was && was.ok !== false) {
       const wrm = (was.robot_mode || '').replace('Robotmode: ', ''), wsm = (was.safety_mode || '').replace('Safetymode: ', '');
       if (wrm !== rm) say(`robot ${wrm || '?'} → ${rm}`, rm === 'RUNNING' ? '' : 'warn');
@@ -1020,8 +1017,6 @@
     if (C) drawScan(now);
     drawFeedOverlay(now);
     $('nosignal').hidden = !!(S.frameAt && now - S.frameAt < 6000) || now < 1400;
-    lamp('lPose', S.Tbc ? 'on' : (S.robot && !S.robot.dry_run ? 'alert' : ''));
-    lamp('lLevel', S.level === null ? '' : (S.level < 1.5 ? 'on' : 'warm')); $('lLevel').textContent = S.level === null ? 'LEVEL' : `LEVEL ${S.level.toFixed(1)}°`;
     requestAnimationFrame(frame);
   }
   let booted = false;
@@ -1029,9 +1024,11 @@
     try {
       const j = await (await fetch('/api/info')).json(), c = j.camera || {}, d = c.device || {}, cell = j.cell || {};
       S.robot = j.robot; lamp('lCam', c.open ? (c.kind === 'synthetic' ? 'alert' : 'on') : 'crit');
-      $('ident').textContent = [cell.UR_CELL ? `CELL ${cell.UR_CELL}` : null, S.robot ? `${S.robot.platform || ''} ${S.robot.host}${S.robot.dry_run ? ' · DRY RUN' : ''}` : 'NO ROBOT', d.name ? `${d.name}${d.serial ? ' ' + d.serial : ''}` : c.kind].filter(Boolean).join('  /  ');
+      const short = (d.name || c.kind || '').replace(/^.*RealSense\s*/i, '').replace(/\s+/g, ' ').trim();
+      $('ident').textContent = [cell.UR_CELL ? String(cell.UR_CELL).toUpperCase() : (S.robot ? 'ARM' : 'NO ROBOT'), short || null, S.robot && S.robot.dry_run ? 'DRY RUN' : null].filter(Boolean).join(' · ');
+      $('ident').title = [S.robot ? `${S.robot.platform || ''} ${S.robot.host}` : 'no robot', d.name ? `${d.name}${d.serial ? ' ' + d.serial : ''}` : c.kind].filter(Boolean).join(' · ');
       (j.views || []).slice(0, 2).forEach((v, i) => { $(`view${i}`).hidden = false; $(`view${i}Name`).textContent = v.name || `VIEW ${i + 1}`; viewLoop(i); });
-      if (!S.robot) { lamp('lLink'); lamp('lPwr'); lamp('lSafe'); lamp('lRmt'); }
+      if (!S.robot) { lamp('lArm'); lamp('lSafe'); lamp('lRmt'); }
       armKeys();
       if (!booted) { booted = true; say(`${d.name || c.kind || 'camera'} ${c.open ? 'online' : 'offline'}${c.lean ? ' · lean open' : ''} · segmenter ${j.segmenter || '?'}`, c.open ? 'dim' : 'warn');
         if (S.robot) say(`hand-eye ${(S.robot.handeye || {}).source || '?'} · fingertips ${(((S.robot.approach || {}).tip_m || 0.163) * 1000).toFixed(0)} mm past the flange`, 'dim'); state(); }
