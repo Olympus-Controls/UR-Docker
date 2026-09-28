@@ -956,7 +956,7 @@
   // ---- the loop, info, boot ------------------------------------------------------------------------------------
   function frame(now) {
     if (feedTube) drawTube(feedTube, S.mode === 'TRUE' ? 1 : (S.mode === 'RANGE' ? 2 : 0), now, S.flipped);
-    viewTubes.forEach((T, i) => { if (T && !$(`view${i}`).hidden) drawTube(T, 3, now, false); });
+    viewTubes.forEach((T, i) => { if (T && !$(`view${i}`).hidden) drawTube(T, 0, now, false); });   // the same phosphor as the wrist feed
     if (C) drawScan(now);
     drawFeedOverlay(now);
     $('nosignal').hidden = !!(S.frameAt && now - S.frameAt < 6000) || now < 1400;
