@@ -23,7 +23,7 @@ from collections.abc import Callable
 from urctl.config import RobotConfig
 from urctl.pose import Transform
 
-POSE_OUTPUTS = ["timestamp", "actual_TCP_pose", "tcp_offset"]
+POSE_OUTPUTS = ["timestamp", "actual_TCP_pose", "tcp_offset", "actual_q"]
 
 
 def flange_from(sample: dict) -> list[float] | None:
@@ -54,6 +54,7 @@ class PoseStream:
         self._factory = client_factory or self._rtde_client
         self._t: list[float] = []
         self._poses: list[list[float]] = []
+        self._q: list[list[float] | None] = []  # the joints at each sample (for the arm's linkage)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -76,14 +77,15 @@ class PoseStream:
             self._thread.join(timeout=3.0)
             self._thread = None
 
-    def add(self, t: float, flange: list[float]) -> None:
+    def add(self, t: float, flange: list[float], q: list[float] | None = None) -> None:
         with self._lock:
             self._t.append(t)
             self._poses.append(flange)
+            self._q.append(q)
             self.samples += 1
             cut = bisect.bisect_left(self._t, t - self.history_s)
             if cut:
-                del self._t[:cut], self._poses[:cut]
+                del self._t[:cut], self._poses[:cut], self._q[:cut]
 
     def _run(self) -> None:
         backoff = 1.0
@@ -97,24 +99,33 @@ class PoseStream:
                             return
                         flange = flange_from(sample)
                         if flange is not None:
-                            self.add(self.clock(), flange)
+                            q = sample.get("actual_q")
+                            self.add(self.clock(), flange, list(q) if q and len(q) == 6 else None)
             except Exception as exc:  # unreachable, RTDE disabled, dropped link: retry
                 self.last_error = f"{type(exc).__name__}: {exc}"
             self._stop.wait(backoff)
             backoff = min(backoff * 2, 10.0)
 
     def at(self, t: float, max_age_s: float = 0.25) -> tuple[list[float] | None, float | None]:
-        """The sample nearest host time ``t`` and its distance from ``t`` (s); ``(None,
-        None)`` when there is none within ``max_age_s``."""
+        """The flange sample nearest host time ``t`` and its distance from ``t`` (s);
+        ``(None, None)`` when there is none within ``max_age_s``."""
+        flange, _, age = self.sample_at(t, max_age_s)
+        return flange, age
+
+    def sample_at(
+        self, t: float, max_age_s: float = 0.25
+    ) -> tuple[list[float] | None, list[float] | None, float | None]:
+        """:meth:`at` plus the joints of the same sample: ``(flange, q, age)``."""
         with self._lock:
             if not self._t:
-                return None, None
+                return None, None, None
             i = bisect.bisect_left(self._t, t)
             best = min((j for j in (i - 1, i) if 0 <= j < len(self._t)), key=lambda j: abs(self._t[j] - t))
             age = abs(self._t[best] - t)
             if age > max_age_s:
-                return None, None
-            return list(self._poses[best]), age
+                return None, None, None
+            q = self._q[best]
+            return list(self._poses[best]), (list(q) if q else None), age
 
     def latest(self) -> dict:
         with self._lock:

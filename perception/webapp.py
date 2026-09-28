@@ -452,13 +452,34 @@ class ViewerApp:
             return {}
         with self._cond:
             t = self._latest_t
-        flange, age = self.pose_stream.at(t)
+        flange, q, age = self.pose_stream.sample_at(t)
         if flange is None:
             return {}
         out: dict = {"flange_pose": [round(v, 6) for v in flange], "pose_age_s": round(age or 0.0, 3)}
         if self.robot is not None:
             out["flange_to_color_pose"] = self.robot.handeye.as_dict().get("flange_to_color_pose")
+        arm = self._arm(q, flange)
+        if arm:
+            out["arm"] = arm
         return out
+
+    def _arm(self, q: list[float] | None, flange: list[float]) -> dict | None:
+        """The linkage at joints ``q`` (``armfk``) — only when its FK flange agrees
+        with the measured one, so a wrong DH table or model never draws a wrong arm."""
+        from . import armfk
+
+        model = armfk.model_key(os.environ.get("UR_ROBOT_MODEL"))
+        if not q or model is None:
+            return None
+        chain = armfk.frames(q, model)
+        err = armfk.flange_error_m(chain, flange)
+        if err > armfk.FLANGE_TOLERANCE_M:
+            return None
+        return {
+            "model": model,
+            "frames": [[round(v, 5) for v in f] for f in chain],
+            "fk_error_mm": round(err * 1000, 2),
+        }
 
     def _flange_at(self, t: float | None) -> list[float] | None:
         """The flange pose at host time ``t`` (the pose stream), else the live one."""
