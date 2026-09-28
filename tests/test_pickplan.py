@@ -263,3 +263,17 @@ def test_the_fingers_clear_a_28mm_block_by_8mm_a_side():
     p = pickplan.plan(rect, HOME, tip_m=TIP, pick=True)
     assert p["opening_m"] == pytest.approx(rect["minor_m"] + 0.016)
     assert (p["opening_m"] - rect["minor_m"]) / 2 >= 0.008 - 1e-9 and p["fits"]
+
+
+@pytest.mark.parametrize("look", [False, True])
+def test_a_leg_that_grips_or_dwells_is_never_blended(look):
+    """UR3e, 2026-09-27 23:3x: every automated pick closed on nothing while a hand-driven
+    grasp at the same spot held. The grasp leg (not the last — lift follows) carried a
+    blend; a blended movel returns as the arm enters the blend and skips the sync(), so the
+    close went out early and the fingers shut while the arm swept on into the lift."""
+    rect = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.047, 0.028, 0.0)))
+    kw = {"flange_to_color": UR3_HANDEYE, "look_m": 0.24} if look else {}
+    p = pickplan.plan(rect, HOME, tip_m=TIP, pick=True, fancy=True, **kw)
+    for leg in p["sweep"] + p["final"]:
+        if leg.get("gripper") or leg.get("dwell_s"):
+            assert not leg.get("blend_m"), leg["name"]

@@ -132,7 +132,11 @@ def _legs(start: Sequence[float], stops: list[tuple[str, list[float], dict]], ca
     out = []
     for i, (name, pose, extra) in enumerate(stops):
         leg = {"name": name, "pose": pose, **extra}
-        if i < len(stops) - 1 and extra.get("blend", True):
+        # a leg that grips or dwells must be *arrived at*: a blended movel returns as the arm
+        # enters the blend and skips the sync(), so a close would go out early and the fingers
+        # would shut while the arm swept on (every automated pick missed so, 2026-09-27)
+        stops_here = extra.get("gripper") or extra.get("dwell_s")
+        if i < len(stops) - 1 and extra.get("blend", True) and not stops_here:
             leg["blend_m"] = _blend(path[i], path[i + 1], path[i + 2], cap)
         leg.pop("blend", None)
         out.append(leg)
