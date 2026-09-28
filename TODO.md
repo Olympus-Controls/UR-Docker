@@ -34,7 +34,7 @@
 - 2026-09-25 — (held until after the demo, Nick 09-27) Four pick-cycle faults could not be injected from the desk and are untested claims until someone does them once: pendant flipped to **Local** mid-run, a webcam or the D435 **unplugged** mid-run, the cockpit **restarted** while the routine is on a block, robot **power cut**. Note what the routine did in the field log.
 - 2026-09-27 — Fix the flaky URCap e2e (2 of 4 fork runs + PR #16 red: PolyScope's "An error occurred while starting the application" boot dialog). Fix or delete, never retry.
 - 2026-09-27 — Reminder for Nick: `sudo chown -R nick captures` (sudo cockpit runs leave it root-owned).
-- 2026-09-27 — Repo automation baseline: no `dev` branch; PRs go straight to `main`. Add `dev` + auto-merge + protection per ~/.claude/templates/github/. **Decided 2026-09-28: the repo needs a `dev` branch** — open: cut it from `main` or from `refactor/prune-2026-09-25` (main is 165 commits behind).
+- 2026-09-27 — Repo automation baseline: no `dev` branch; PRs go straight to `main`. Add `dev` + auto-merge + protection per ~/.claude/templates/github/. **Decided 2026-09-28: the repo needs a `dev` branch, cut from `refactor/prune-2026-09-25`** (main is 165 commits behind and has no URCap code; main catches up by Nick's manual merge).
 - 2026-09-27 — `pick-cycle --dry-run` without `--via-cockpit` builds a dry-run `Robot` whose flange is a stand-in pose, so the survey's base-frame block positions are fiction. Use `--via-cockpit --dry-run` until fixed.
 - 2026-09-27 — Retire the `perception pick-server` sidecar (192.168.3.10:7631) once the cockpit runs the merged code: `pkill -f "pick-server --bind"` **before** relaunching the cockpit (both bind :7622), then point the pick node's URL back at `:7621`.
 - 2026-09-27 — `tests/test_handeye.py`: `test_robotlink_locate_then_move_goes_through_the_tool_registry` and `test_robotlink_approach_defaults_come_from_the_cell_env` have failed since b41d795 halved the accelerations: they expect `a=0.3`, the code sends 0.1.
@@ -42,8 +42,9 @@
 ## Decisions (so they don't get re-asked)
 
 - 2026-09-28 — **Operator UI rule (Nick):** extremely user friendly — minimal clicks and input; the user is prompted through **at most 3 simple stages** with plenty of visual feedback. Applies to the URCap nodes' screens.
-- 2026-09-28 — Pick segmentation goes **depth-above-the-table**; part size stays as the filter.
-- 2026-09-28 — The repo gets a `dev` branch (automation baseline); PRs land there, `dev` → release line stays Nick's manual merge.
+- 2026-09-28 — Pick segmentation goes **depth-above-the-table**, the table **fitted live in every frame** (no setup step; follows a pedestal/table change); part size stays as the filter.
+- 2026-09-28 — Pick node setup = **3 stages: Show → Check → Test.** 1) tap one part in the live picture — the node **measures its size from that tap** (no typing); 2) watch the arm go above it (hold-to-move); 3) one test pick with a clear pass/fail.
+- 2026-09-28 — The repo gets a `dev` branch cut from `refactor/prune-2026-09-25` (automation baseline); PRs land there, `dev` → release line stays Nick's manual merge.
 - 2026-09-28 — PyPI / package name: **`universal-perceptronics`**.
 
 - 2026-09-27 — Demo: Nick drives the cockpit in the browser and the room watches the UR3e (e-Series) move; heuristic pick first, then a semantic object. Host: the Windows work laptop (trial tonight). The URCap and everything after target PolyScope X.
