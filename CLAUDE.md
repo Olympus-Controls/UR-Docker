@@ -8,7 +8,7 @@ me real time to discover.
 
 ## What this repo is
 
-A Docker-Compose'd PolyScope simulator (URSim 5.12.5, e-Series) plus a
+A Docker-Compose'd PolyScope simulator (URSim 5.26.0 LTS, e-Series) plus a
 small set of host-side tools that talk to it the way you'd talk to a real
 controller. Goal: make experiments with URScript, the Dashboard API, and
 PolyScope program files reproducible without needing a real robot.
@@ -27,8 +27,223 @@ the Dashboard + Primary clients), a `SafetyEnvelope` (pre-execution
 validation), an `AuditLog` (structured JSON action log), a JSON-schema'd tool
 registry (`urctl.tools`) for agent frameworks (OpenClaw/ROSClaw, MCP, plain
 function-calling), an `urctl` CLI, and an `urctl-mcp` MCP server. The older
-`scripts/` are kept as standalone shell/Python helpers; `urctl.urp` re-exports
-the converter so `scripts/urp_convert.py` stays the single source of truth.
+`scripts/` are kept as standalone shell/Python helpers; `scripts/urp_convert.py`
+is the single source of truth for the converter (vendored into the wheel as
+`urctl/_urp_convert.py`).
+
+**Deep introspection (the harness layer, see `docs/harness.md`):** the toolkit
+can read *everything* about a controller, not just live state. `urctl
+rtde-state --deep` pulls the full RTDE diagnostic recipe (per-joint
+currents/temps/drive modes, TCP force, supply power, tool telemetry, speed
+scaling — decoded to names by `urctl/codes.py`; unsupported fields drop
+gracefully). `urctl snapshot` fuses that with filesystem introspection
+(`urctl/sysinfo.py` — SSH on a real robot, docker exec on URSim, auto-inferred
+from the host) into one cell model: joint serials/firmware with replacement
+detection, kinematic-calibration mismatch, storage health, program inventory,
+installed URCaps, and the parsed active installation
+(`urctl/installation.py`) — whose `flange_tcp` flag is the decision input for
+the MoveJ-node-vs-script-node authoring choice below. `urctl programs` lists
+what the operator can load. All three are also agent tools
+(`ur_rtde_state`/`ur_system_snapshot`/`ur_list_programs`) and therefore MCP
+tools.
+
+**Portability:** the runtime — `urctl`, the GUI, and `urctl-mcp` (rewritten
+as stdlib JSON-RPC/stdio; the `mcp` extra is now an empty no-op) — has **zero
+dependencies** and runs on Windows/macOS/Linux, amd64/arm64 (CI tests all
+four). External binaries are only reached for by the *filesystem* layer and
+checked with clear errors: `ssh` (real robot; ships with all three OSes) and
+`docker` (URSim). CLI entry points reconfigure stdout with errors="replace" so
+legacy Windows codepages never crash on unicode.
+
+**RealSense RGB-D (`perception rs-info` / `gui`, see
+`docs/realsense.md`):** `perception/realsense.py` binds librealsense's C API
+with ctypes (no `pyrealsense2`; zero deps kept), streams colour + depth aligned
+to colour (both sensors at the D435's native 848×480 — **mismatched sizes give
+black colour frames** — through the SDK's spatial + temporal filter chain,
+sensor on the High Accuracy preset at full laser; `docs/realsense.md` §Depth
+quality; `--no-depth-filters` / `--rs-preset none` for raw), and the cockpit (`perception/webapp.py` + `perception/webui/`) does
+hover-to-measure, click-to-segment (`perception/segment.py`: colour+depth
+region growing, or SAM via the `sam` extra), snapshots (`POST /api/snapshot`), and a **Robot** panel that sends the segment's point to
+the arm: `ur_flange_pose` (new tool) + the bracket-nominal hand-eye seed
+(`perception/handeye.py`, override with `PERCEPTION_T_FLANGE_CAMERA`) give a
+base-frame point and an approach pose; **Move** is one `ur_move_tcp` through the
+same tool registry (`perception/robotlink.py`; `docs/realsense.md` §Sending a
+point to the robot). `urctl/pose.py` is the stdlib pose math (`pose_trans` /
+`pose_inv` semantics). **Extra viewpoints** (`--view DEVICE`, `PERCEPTION_VIEWS` in the
+cell): plain webcams under the colour/depth pair (2×2 grid) and in every snapshot,
+via ffmpeg (`perception/views.py`; macOS picks devices by AVFoundation name; launch
+from a local Terminal — SSH sessions are denied camera access by TCC). **macOS needs `sudo`** to open the camera (libusb
+must detach Apple's UVC driver — `failed to set power state` otherwise); Linux
+needs the udev rules. `--fake` runs everything on a synthetic scene. The
+target compute is a Jetson Orin next to the robot: `Dockerfile.perception` +
+`docker compose --profile perception`. The camera mounts on the tool flange via
+`hardware/d435-tool-bracket/` (parametric CadQuery, STL/STEP, spec in its
+README; nominal `T_flange_camera` seed in §3).
+
+**The pilot's seat (cells, doctor, Pilot panel, MCP keys; `docs/realsense.md`
+§The pilot's seat, presentation in `docs/realsense-cell.html`):** a *cell*
+(`perception/cells/{sim,ur3,ur20}.env`, `--cell` / `UR_CELL`) is the one-word
+selector for robot host/platform/ports + bracket print (`PERCEPTION_BRACKET`
+→ `handeye.BRACKET_SEEDS`; the UR20 print is clocked 45°, so its seed differs).
+`perception doctor` is the pre-flight (SDK, camera, per-port reachability with
+platform-mismatch diagnosis, modes, TCP offset, hand-eye status; every failure
+carries its fix; also `GET /api/doctor` and the `cell_doctor` tool). The cockpit
+has a Pilot panel (bring-up/stop/freedrive, capped jog pad, events log) and
+`POST /api/snapshot` writes PNGs an agent can read. **Hand-eye calibration**
+is touch-and-click (`perception/calibrate.py`; cockpit "Calibrate hand-eye",
+`cal_*` tools): record the mark with the tool tip, 4–6 clicked views from
+varied wrist poses, LM solve seeded from the bracket, Apply + save to
+`captures/calibration/handeye_<cell>.json` (env > file > seed). **Mark-less:**
+`perception calibrate` orbits the block under the camera (3 ranges × 13 views,
+found by identity, trimmed) and clicks every view into the cockpit's session;
+`--apply` saves it (`perception/orbitcal.py`, `docs/realsense.md` §Hand-eye
+without a mark; unverified on hardware as of 2026-09-26). `perception-mcp` (`.mcp.json`)
+serves robot + `cam_*`/`cell_*` tools; the camera tools proxy the running
+cockpit because one process owns the USB camera. Windows bring-up:
+`scripts/setup-windows.ps1` + `scripts/cockpit.ps1`. **Keep
+`docs/realsense-cell.html` current** — it is the demo/explainer and has a dated
+field log; append to it when something is verified or changes.
+
+**Pick cycle (`perception pick-cycle`, `perception/pickcycle.py`):** the
+heuristic, model-free routine — survey white blocks from one or more overlook
+poses (`--survey-pose x y z rx ry rz`, repeatable, merged by position; the camera
+must be ≥ 0.25 m from the parts, the D435 has no depth closer than ~0.2 m), fit
+each top face as the nearest 3-D plane, then per block: yaw the fingers across
+the short side, hover with the **fingertips** 40 mm over the top, descend to the
+edge and 15 mm further, close, lift an inch, set it back, release; `--drop` adds a
+pass that lets each block go from 120 mm up. A close on nothing opens and moves
+on; a protective stop unlocks, lifts and moves on. It is a client of the running
+cockpit (HTTP, like the MCP tools) and falls back to `urctl gripper` when the
+cockpit predates the gripper route. `--record DIR` saves the three feeds + the
+captioned events for `scripts/pilot/assemble.py`. Hand-E as mounted: the fingers
+travel along flange **Y**; a yaw about the tool Z (pointing down) is the negative
+of the base-heading yaw — `grasp_yaw_deg` handles it and a composed-pose test
+locks it. First runs 2026-09-25 on the UR3e + Hand-E.
+
+**The table is flat and parallel to base XY (Nick, 2026-09-27).** Only its height
+and the parts' heights vary. The UR3e stands on a ~12 in pedestal (parts ~0.27 m below
+the base) and the Hand-E adds 163 mm. `pick-cycle` grasps straight down
+(`grasp_rotation`), leans 12°/24° outward only when the controller's IK can't solve the
+vertical path, and skips a block no lean solves.
+
+**The live pose in every frame (`perception/posestream.py`, 2026-09-27).** The cockpit
+streams RTDE `actual_TCP_pose` + `tcp_offset` at 30 Hz; flange = tcp ∘ offset⁻¹ (identical
+to the `get_flange_pose` script on the UR3e, no Primary program, works in Local). Each
+`/api/rgbd` header carries `flange_pose`, `pose_age_s`, `flange_to_color_pose`; `GET
+/api/robot/pose`; `POST /api/objects` lists every white block with its top-face points.
+The page (`webui/index.html`) is a scan-first ship's-computer UI: the depth as a point
+cloud in the base frame (drag/wheel/WASD/Space/click-to-centre), light columns over
+objects, the feed's target box re-projected through the live pose; `/classic` is the
+old page (calibration lives there). Needs a cockpit restart to pick up server changes;
+the page itself is read from disk per request.
+
+**Pick from the cockpit (`POST /api/robot/pick`, `perception/pickplan.py`, 2026-09-27).**
+Nick's spec: the gripper comes in straight down the base Z axis, wrist 3 across the
+object's short side, fingers pre-opened to 1.2x its width, fingertips 25 mm over its top.
+Two programs: a blended sweep from the picture pose (`PERCEPTION_HOME_POSE`; FANCY adds a
+swing and a wrist flourish) to a **close look** — the object on the colour camera's axis at
+0.24 m, just outside the D435's blind zone — then the object is re-found there and the
+final program (over → approach [→ grasp → lift with PICK]) is built from that measurement.
+Every pose goes to the controller's IK first. The look is **tilted 10°** (`LOOK_TILT_DEG`; the camera looks out at the part from the base side) and the re-find casts the detector's pixels onto the top plane, so the tilt doesn't bias it. A pick can name a stored object instead of the clicked mask (`target: {centre, theta, major_m, minor_m}` — the page sends it for a selected card), and `survey: true` stops after the close look and returns the fresh measurement; in the page, right-click a card or a part → APPROACH / PICK / SURVEY. The Robotiq pre-open rides the sweep program (`move_tcp_path(gripper_first=POS)`: set before the first `movel`, not waited for). The page's LEVEL lamp is the fitted floor's
+tilt in the base frame: the table is flat, so any tilt is calibration error. The arm's
+linkage comes from RTDE `actual_q` through `perception/armfk.py` (UR3e DH verified 0.84 mm
+against the controller's flange; other models guarded by the same check).
+
+**Hand-eye drift, 2026-09-27 evening:** the 09-25 solve placed blocks 2–5 cm off,
+view-dependently (the tilted survey and a vertical look disagreed by 26–28 mm; both
+grasps missed). Re-run `perception calibrate` before trusting a pick again.
+
+**Approach by the fingertips, always (Nick, 2026-09-27: "the tool offset is
+critical").** The cockpit's default approach reference is `fingertip`: the gripper's
+fingertips (`PERCEPTION_TIP_M` along flange +Z — 0.163 m = Hand-E 157 mm + 6 mm adapter,
+the same length pick-cycle uses) sit `PERCEPTION_STANDOFF_M` short of the object along the
+**tool axis**, and every cockpit move, approach cycle and controller-IK reach check runs
+with the TCP set to those fingertips (`RobotLink.reference_tcp`; `RobotLink.move` applies
+it when a client sends only a pose, an explicit `tcp` still wins). The controller's active
+TCP is never trusted for this — on the UR3e it is a 220 mm training offset the Hand-E
+doesn't match. `flange` / `tcp` references remain for a cell with no tool; `perception
+doctor`'s `approach` line names the tool length and whether the active TCP differs. A new
+cell with a different tool must set `PERCEPTION_TIP_M` (the `ur20.env` stub says so).
+Cell files also note where the work surface is relative to the base (UR3e: parts ~0.27 m
+below it) — that height, not the datasheet radius, is what decides reach.
+
+**One GUI.** The RGB-D cockpit (`perception gui`) is the only web UI; the
+older robot-only `urctl gui` / `urctl-gui` panel was retired on 2026-09-26
+(it lives in git history before that commit). Its Pilot panel covers the
+same bring-up / jog / stop / freedrive buttons through the same tool registry.
+
+**Demo view (`perception gui --demo`, `/?demo=1`, header **Demo** button):** the
+RGB-D cockpit reduced to the picture, four big buttons (Start robot → Find
+object → Pick, STOP), one status light and one instruction line; **Developer
+view** toggles back. Same page, same API — `body.demo` CSS hides the rest, the
+buttons call the existing bring-up / nearest / approach-cycle / stop actions.
+
+**PolyScope X URCap (`urcap/` — `README.md` to install, `DEVELOPING.md` to work on it):** an
+Application Node that embeds the cockpit's colour feed in PolyScope X and turns a
+click into a base-frame point + approach pose (`/api/segment` → `/api/robot/locate`)
+with two Move buttons — PolyScope's IK + auto-move screen, or the cockpit over
+Primary. Plain JavaScript, no npm: `urcap/urcapx.py package|install|list|delete`
+(gzipped tar, manifest first; multipart to the Robot-API's `urcaps/v1/urcaps/`);
+`make urcap-package|urcap-install|urcap-cockpit`. **`urcap/dist/*.urcapx` is the
+committed download** and a test holds it byte-equal to a fresh (reproducible)
+build — after editing the URCap run `make urcap-package` and commit `dist/`. The cockpit must be started
+with `--cors <PolyScope origin>` (`PERCEPTION_CORS`) and serves `GET
+/api/color.png` for it. The installer posts `urcapxFile` to the **urservice**
+endpoint System Manager itself uses (`/universal-robots/urservice/api/v1/urcaps`;
+201 / 409 / DELETE, no Remote mode needed) — the SDK's Robot-API path answers
+403 unless the robot is in Remote mode, from inside the container too. Built
+against SDK 6.5.65 (the 10.13 pairing) — the worker speaks threads.js's
+protocol directly. Verified 2026-09-26 in the 10.13.0 sim (headless Chromium):
+node loads, feed + hover + click-to-segment work against the fake cockpit;
+locate/move still need a cockpit with a robot link. **Release tracking:** the URCap targets
+*one* PolyScope X release — the newest minor's newest patch — pinned in
+`urcap/target.json` (notes URL, sim image by digest, SDK tag + contribution-api /
+threads / manifest-spec versions); `urcap/track.py check|update|compat` and
+`urcap/e2e.py` (boot that sim, install, load + click the node headless; ~2 min) are
+what `.github/workflows/urcap-track.yml` runs weekly → PR or `urcap-attention` issue.
+10.14.0 verified 2026-09-27 (the 10.14 Services-toggle bug doesn't touch URCaps), then
+**held at 10.13** the same day to match the local sim image (`"hold": "10.13"` in
+`target.json`: the track re-pins that minor's newest patch, never a newer minor). **Move (PolyScope)** re-expresses the
+cockpit's flange target in *PolyScope's own* active TCP (`getKinematicInfo` DH +
+`convertJointPositionsToTcpPose` at zero joints) before `getInverseKinematics(pose,
+qNear)`, which takes no TCP — handing it the cockpit's `approach_pose` (a pose under the
+*cockpit controller's* TCP) made every click unreachable in the sim. That IK never
+answers an unsolvable pose (the node gives it 8 s). Cockpit field shorthand (`:7621`,
+`host:port`) is completed to a URL; a bare `:7621` used to be fetched relative to
+PolyScope's own page and its 404 misread as an outdated cockpit.
+
+**PolyScope 5 (e-Series) URCap (`urcap/realsense-pilot-ps5/`, `README.md`):** the same node
+as a Java 8 Swing **Installation node**, same layout and buttons (Open cockpit dropped —
+no browser on the pendant); Move (PolyScope) hands `RobotMovement.requestUserToMoveRobot`
+the controller's `joint_target`. Built by `urcap/urcap5.py` (`make urcap5-sdk` copies the
+URCap API bundles out of the URSim e-Series image into `target/` — they are not on Maven
+Central and never committed; `make urcap5-package` → `urcap/dist/*.urcap`, reproducible,
+with a sources digest a test checks). PolyScope 5's loader needs `URCapCompatibility-CB3`
+/ `-eSeries` in the manifest and reads the API version from an embedded
+`META-INF/maven/**/pom.xml` (`com.ur.urcap:api` dependency). Its **installer** (Settings →
+URCaps → +) also demands `Bundle-Category: URCap` and the manifest among the first two zip
+entries (`URCapsServiceImpl.isValidFile`); the VM's `install-urcap` copies the jar into the
+bundle dir and skips those checks, so a VM load does not prove the pendant will install it
+(missed once, 2026-09-27). Check with PolyScope's own `URCapFileValidationHelper` from the
+image's `/ursim/GUI/bundle`. Installed and rendered on the UR3e pendant 2026-09-27 (0.2.0).
+
+**RealSense Pick program node (same bundle, 0.3.0; `PickScript.java`, `perception/picknode.py`):**
+Program tab → URCaps → RealSense Pick. Its URScript runs in the operator's program (Local mode,
+no Primary) and talks to a pick server over a plain socket (`:7622`; `FIND`/`LOOK`/`REFINE`, and
+`LOG` lines that are never answered — a stray reply would be read as the next answer). No survey
+position is needed: the first look is from where the arm is, the closer look from halfway toward
+the block with it centred (never nearer than 0.25 m). Every stage is a `textmsg` **and** a `LOG`
+line; a failed pick raises a blocking popup naming the reason. The cockpit serves the pick server
+itself; a cockpit already running older code gets it from **`perception pick-server`** — a sidecar
+on `:7631` (point the node's cockpit URL there) that answers from the cockpit's frames, forwards
+every other route, and writes the whole trace to `captures/pick-server.log` or, when that's
+root-owned, `~/Library/Logs/perception/` (also `GET /api/pick/log`). **Kill the sidecar before
+relaunching the cockpit** (`pkill -f "pick-server --bind"`): both bind `:7622`, and the cockpit
+just warns and runs without its pick server. The 0.3.0 script has not yet run on a controller.
+
+**Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
+2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
+that commit if the idea comes back.
 
 ## Assistant skills (procedural how-tos)
 
@@ -65,6 +280,7 @@ are unauthenticated; treat the robot's network like a backplane.
 | 30004 | RTDE              | bi        | Subscription protocol: client picks fields + cadence. Modern drivers.  |
 | 30020 | Interpreter mode  | bi        | URScript REPL that runs **inside an already-loaded program**.          |
 | 502   | Modbus TCP        | bi        | Field I/O. Needs `NET_BIND_SERVICE` to bind (handled in compose).      |
+| 22    | SSH (real robots) | bi        | Debian sshd on the controller. The **only** way to drop files in `/programs/` on a real e-Series (no Dashboard upload, no SMB/NFS by default). Not exposed by URSim — use `docker cp` instead. |
 
 The key distinction: **Dashboard is for orchestration** (load program,
 power on, query state). **Primary 30001 is for execution** (write URScript,
@@ -117,7 +333,19 @@ changed enough to matter:
   brake release, load, play) returns **HTTP 403** unless the robot is in
   **Remote** control mode, and there is **no REST endpoint to switch
   Local→Remote** — it's a toggle on the Safety screen in the UI. (On e-Series
-  only Dashboard `play` needed Remote; Primary URScript did not.)
+  only Dashboard `play` needed Remote; Primary URScript did not.) **Primary
+  URScript is gated on Remote too on PolyScope X** (verified 2026-09-04 on the
+  10.13.0 sim): in Local the port accepts and broadcasts state but scripts are
+  silently ignored — `textmsg` never surfaces, `run_and_capture` returns `[]`,
+  `move-*` returns `landed: null`. Once Remote, `textmsg`, confirmed moves and
+  `get_flange_pose` all work over `:31001`.
+- **UI passwords** (UR's published defaults, first use forces a change): admin
+  `easybot` (gates Settings → Security → Services), operational mode `operator`
+  (gates Manual/Automatic + Remote). **Stay on the 10.13.0 image** — see the
+  comment in `docker-compose.yml`; on 10.14 the Services toggles never stick.
+- **Runs natively on Apple Silicon** (arm64 image; `HOST_ARCH=arm64 make
+  simx-up`), which makes it the sim to use on this Mac now that the e-Series
+  image can't boot under Rosetta here (gotchas table).
 
 `urctl` drives PolyScope X with the **same commands** — select the platform with
 `--platform polyscopex` (or `UR_PLATFORM=polyscopex`) and point the Robot-API at
@@ -362,6 +590,25 @@ them over hand-rolled URScript.
   def-wrapped `movel` moved the robot with `is in remote control` → `false`).
   Only the **Dashboard `play` command** requires Remote mode. Don't add a
   remote-control precondition to motion — it would reject moves that work.
+- **Absolute moves are reach-checked by the controller's own IK.** Before an
+  absolute `move_tcp` / `move_tcp_path`, `Robot.inverse_kin` asks the controller
+  (`get_inverse_kin_has_solution` + `get_inverse_kin`, one Primary program, same
+  `tcp=` as the move; no motion, so it answers in Local on e-Series). Its verdict
+  replaces the datasheet sphere both ways: a no is an `ik_reach` violation (nothing
+  sent), a yes passes a pose the sphere would reject. The sphere — sized by
+  `SafetyEnvelope.for_model` (UR3e 0.5 m, UR20 1.75 m, unknown → UR10 1.3 m;
+  `UR_MAX_REACH_M` overrides) from the **base origin** — is only the fallback when
+  the controller gives no answer (dry-run, Primary busy, PolyScope X in Local). On
+  the UR3e cell (2026-09-27, parts 0.27 m below the base) it rejected reachable
+  targets — flanges 0.505–0.533 m out that the controller solves — and a sphere
+  cannot see an in-radius pose the arm can't reach either. `locate` reports `reachable`, `reach_check` (`controller_ik`/`sphere`) and
+  the controller's `joint_target`; check `reachable` before offering a Move.
+- **One program at a time.** A new submission on 30001 replaces whatever is
+  running. `Robot.move_tcp_path` runs a whole multi-leg Cartesian path
+  (over → down → dwell → up → back) as one program on one connection, and
+  `PrimaryClient` refuses a concurrent submission (`PrimaryBusyError`) so a
+  state poll or a Locate can't kill it. `tcp=` on `move_tcp`/`move_tcp_path`
+  runs `set_tcp` in the same program (`[0]*6` = the flange).
 - **Relative moves are base-frame.** `move_tcp(..., relative=True)` adds the
   delta to the live TCP via `pose_add(get_actual_tcp_pose(), p[...])`, so the
   XYZ delta is in the **base** frame (use `pose_trans` if you ever want the
@@ -435,6 +682,80 @@ joint-space path as one `def` over a single connection: it pays the handshake
 final `movej` errors; see the movej blend-radius pitfall in ur-program-authoring).
 This is both faster and the only way that doesn't risk wedging the controller.
 
+## Driving a real e-Series (vs URSim): which path to use
+
+Three divergences cost real time on the physical UR10 at `192.168.1.50` —
+none reproduce on URSim. The decision tree:
+
+| You want to…                                            | URSim                                         | Real e-Series                                                                                   |
+| ------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Read state, send `popup`/`addToLog`/`load`/`stop`        | Always works                                  | Always works (Dashboard does not need Remote)                                                   |
+| Move via Primary URScript (`move-joints`, `move-tcp`, `move_trajectory`, `run-script` with motion) | Works in Local — verified                     | **Requires Remote control mode.** In Local, `urctl move-*` and `ur_move_trajectory` silently return `ok:false`, `landed:null`, with **no** safety violation. `run-script` of a textmsg-only script still returns `ok:true` and executes, so it's the motion specifically that is gated. There is no network endpoint to switch Local→Remote — flip the indicator in the top-right corner of the pendant. |
+| Play a loaded `.urp` via Dashboard `play`               | Requires Remote                               | Requires Remote                                                                                  |
+| Drop a `.urp` (or `.installation`) in `/programs/`       | `docker cp` into the URSim container          | **SCP over SSH** (port 22). `/programs` is the PolyScope-visible path. `default.installation` typically already exists, so no installation upload is needed when `urp_builder`'s default matches. |
+| Build a `.urp` of native Move/Waypoint nodes (`UrpProgram.movej(Waypoint(...))`) | Plays cleanly — `kinematicsFlags="4"` + `positionType="CartesianPose"` with the zero kinematics envelope satisfies URSim's IK | **Fails with "Robot cannot reach the required pose"** at runtime if the customer's active tool has a non-zero TCP offset. PolyScope's MoveJ does FK→IK through the **active TCP**, and a long gripper (the installations on this robot have offsets up to ~0.15 m on `tcpOffset`) puts the IK target outside reach for joint configurations that raw URScript `movej(joints)` accepts. URScript's `movej(joints,...)` does NOT do this round-trip — it just runs the joints. So a `.urp` whose motion comes from a `<Script>` node calling `movej` is the reliable path. Switching `kinematicsFlags` to `"6"` (what PolyScope itself emits) alone does **not** fix it. |
+
+The first two divergences are gates (state polling and orchestration are
+fine in Local; motion isn't). The third is structural: the same `.urp`
+that loads and runs on URSim can stall on a real robot if the customer's
+active tool has a non-zero TCP offset, even though the joint targets are
+reachable. **Programs you author for a real-robot cell should emit motion
+as `script_file`/`script_line` nodes**, not native `MoveJ`/`Waypoint`
+nodes. Native nodes are still right for URSim, demos, and any cell whose
+active TCP is at the flange — but you can't tell from the `.urp` alone
+which side of that line you're on.
+
+### File placement on a real robot
+
+```bash
+export SSHPASS='<password>'                       # do not pass -p (visible in ps)
+sshpass -e scp programs/Dance/Dance.urp root@192.168.1.50:/programs/Dance.urp
+uv run urctl --host 192.168.1.50 load Dance
+uv run urctl --host 192.168.1.50 play
+```
+
+Verified: real e-Series ships Debian + sshd on `:22`, root login enabled,
+`/programs/` writable. Pre-existing `/programs/default.installation` pairs
+with `UrpProgram(..., installation="default")` (the builder default). Long
+term, `ssh-copy-id root@<ip>` and drop `sshpass`. There is no Dashboard
+upload command and no SMB/NFS exposed — SSH is the only file-placement
+path.
+
+For step-by-step live program authoring on a real robot, `urctl guided
+--live` accepts **`--live-scp root@<ip>`** (in addition to the URSim
+`--live-container` and mounted-share `--live-program-dir`). Each
+approved step is saved → scp'd into `/programs/` → reloaded over
+Dashboard, so the PolyScope tree grows node-by-node on the pendant. Set
+`SSHPASS` once per shell or enroll a pubkey first — the placer does not
+prompt for a password. The matching `<installation>.installation` is
+expected to already exist on the controller (the placer does not push one
+— a real-cell installation is configuration the operator owns, not
+something to overwrite from the dev box).
+
+### Build motion programs with script nodes (for real-robot cells)
+
+```python
+from urctl.urp_builder import UrpProgram
+
+prog = UrpProgram("Dance", run_only_once=False)
+prog.comment("Looping dance — raw movej() bypasses MoveJ-node IK validation")
+prog.script_file("dance", """def dance():
+  movej([-0.7427, -2.1034, -2.5358, -0.0718, 1.5714, 2.9782], a=1.2, v=1.0, r=0.03)
+  ...
+  movej(home, a=1.2, v=1.0)   # final waypoint — no r= (see movej blend pitfall)
+  sync()
+end
+""")
+prog.script_line("dance()")
+prog.save("programs/Dance/Dance.urp")
+```
+
+The operator sees one "Script: dance helper" definition + one "Script:
+dance()" call line in the Program tree — less editable than native
+Move/Waypoint nodes, but it's the difference between a program that
+runs and one that pops "cannot reach the required pose" mid-cycle.
+`programs/Dance/Dance.urp` is the worked example.
+
 ## Common gotchas (and the symptoms that lead you there)
 
 | Symptom                                       | Cause                                                        | Fix                                                 |
@@ -453,10 +774,48 @@ This is both faster and the only way that doesn't risk wedging the controller.
 | RTDE / Secondary / RT reads refused on `:30004`/`:30002`/`:30003` | Those ports weren't published by docker-compose | The e-Series `ports:` list now publishes `30002-30004`, `30020`, `502`; recreate the container (`docker compose up -d`) after editing it |
 | Moves start failing fast (`ok:false`, no `protective_stop`) and the robot ends `POWER_OFF` after a burst of moves | ~10+ rapid per-move Primary reconnects wedged URControl (`Socket::OperatorOverload`) | Don't loop single moves — use `move_trajectory` (one connection). `bring_up()` to recover. See "How fast can you actually drive it". |
 | A move returns `ok:false` instantly with a `velocity`/`tcp_velocity` violation | Speed exceeds the safety envelope cap (joints ~2.09 rad/s, TCP 1.0 m/s) | Lower the velocity, or raise the cap on a custom `SafetyEnvelope` if you really mean it |
+| **On a real e-Series**, `urctl move-joints` / `move-tcp` / `ur_move_trajectory` returns `ok:false`, `landed:null`, **no safety violation** and joints don't change. `urctl run-script 'textmsg(...)'` still returns `ok:true` from the same robot | Robot is in **Local** control mode. Real e-Series gates Primary URScript *motion* (not state, not textmsg, not Dashboard) on Remote. URSim doesn't, so this only bites on hardware. | Flip the top-right pendant indicator Local→Remote (no network endpoint exists). Add a precondition: read `urctl state`, refuse motion unless `control_mode == "REMOTE"`. See "Driving a real e-Series". |
+| **On a real e-Series**, a `.urp` built with `UrpProgram.movej(Waypoint(...))` loads, plays the first few waypoints, then pops **"Robot cannot reach the required pose"** — yet `ur_move_trajectory` with the *same joint targets* runs clean | PolyScope's MoveJ node does FK→IK through the **active tool TCP** (`useActiveTCP="true"`, `positionType="CartesianPose"`). With a non-flange TCP (gripper, sensor — common, up to ~0.15 m on this robot), the FK pose can be outside reach even when the joints themselves are valid. Raw URScript `movej(joints)` skips the round-trip. Patching `kinematicsFlags="4"`→`"6"` (what PolyScope itself emits) does not fix it. | Don't use native Move/Waypoint nodes for real-robot cells with a non-flange TCP — emit motion via `prog.script_file("helpers", "def f(): movej(...) end")` + `prog.script_line("f()")`. See "Build motion programs with script nodes". |
 | PolyScope GUI (noVNC on :6080) stuck on "Please wait…" | Cosmetic — the Java/AWT front-end is slow under emulation; the controller and all network interfaces (Dashboard/Primary/RTDE) are fine | Ignore it; the headless `urctl` path doesn't use the GUI. Confirm with `urctl state` (RUNNING/NORMAL). `docker compose restart ursim` only if you actually need the GUI |
 | `docker ps` shows the container `(unhealthy)` but everything works | The healthcheck shelled out to `nc`, which **isn't installed in the URSim image**, so it always failed (not the controller) | Fixed: the healthcheck now uses `python3` (present in the image). Benign regardless — verify the controller with `urctl state` |
+| `make sim-up` fails with `port 5900 … address already in use` on a Mac | macOS **Screen Sharing** serves VNC on 5900 (`nc localhost 5900` answers `RFB …`) | Use noVNC on 6080 instead; publish the container's 5900 elsewhere (`15900:5900`) or turn Screen Sharing off. Compose < 2.24 has no `!override` for `ports:`, so edit the mapping or `docker run` the service |
+| URSim container is `Up` but 29999 refuses / resets and `docker logs` shows `Trace/breakpoint trap   Xvfb` | Docker Desktop is emulating amd64 with **Rosetta**; Xvfb crashes under it, PolyScope (which serves the Dashboard) never starts, and URControl stops listening within minutes. Seen 2026-09-04 on the Mac Studio; the `Exited (101)` containers from weeks earlier were the same | **Docker Desktop's emulators can't run the e-Series sim on the Mac Studio**: with Rosetta off (QEMU user-mode) Xvfb survives but URControl dies (TODO.md, 2026-09-04; re-confirmed 2026-09-27). The image is amd64-only (every tag). `scripts/ursim-e-vm.sh up` runs it in a full x86_64 QEMU VM instead: URControl, Dashboard, Primary/RTDE and the URCap loader work (8 min to Dashboard), but PolyScope's JVM crashes in JIT code there (SIGILL/SIGSEGV, `hs_err_pid*.log`) — fine for "does the URCap load", not for clicking through PolyScope. For that: an amd64 host, CI, or the real UR3e |
+| Every cockpit click on the UR3e cell reads **OUT OF REACH** although the arm reaches the parts | The reach check was the datasheet radius (0.5 m) from the base **origin**; the parts sit 0.27 m below the base | Fixed 2026-09-27: `locate` and every absolute move ask the controller's IK (`reach_check: controller_ik`); the sphere is only the no-answer fallback. If you still see `reach_check: sphere`, Primary isn't answering (PolyScope X in Local, Primary disabled) |
+| A cockpit Move with the Hand-E on drives the fingers into the part | The standoff was measured from the **flange** (`PERCEPTION_APPROACH_REFERENCE=flange`, 75 mm) — the fingertips are 163 mm past it | Fixed 2026-09-27: approach by the fingertips (the default); check `perception doctor`'s `approach` line shows the tool length you measured |
+| The RealSense Pick node (or any FIND) seems **hung**: nothing moves, the pick-server log shows `FIND: no fresh camera frame` (status −4) over and over | The D435 dropped out of the cockpit: its frames freeze at one `seq` while `fps` still reads ~30, and `/api/info`'s `last_error` says `Frame didn't arrive within 5000` (the macOS USB-claim race). Each FIND waits for a frame newer than the request, gets none, answers −4, and a looping program asks again | Re-plug the camera; the lean open re-opens it by itself. The sidecar's log now says `cockpit frames stalled at seq N` with the camera's error, and 0.3.0 pops up the reason instead of looping silently |
+| The cockpit runs the **old hand-eye** although `perception/cells/ur3.env` has the new solve (`/api/info` → `robot.handeye.flange_to_depth_pose` ≠ the cell file's value; seen 2026-09-27) | `apply_cell` only fills keys the environment doesn't already have, so a `PERCEPTION_T_FLANGE_CAMERA` already in the cockpit's environment wins. `handeye.source` reads `env:…` either way, so it can't tell you which one won | Launch with `sudo env -u PERCEPTION_T_FLANGE_CAMERA .venv/bin/perception --cell ur3 gui …`; after every launch compare `flange_to_depth_pose` in `/api/info` with the cell file |
+| RealSense colour panel black, depth fine, RGB options at factory | depth and colour streaming at **different sizes** on the D435 | keep both at 848×480 (the default); `docs/realsense.md` §Depth quality |
+| Cockpit shows nothing on a **USB 2** link; log says `Couldn't resolve requests` then `RS2_USB_STATUS_ACCESS` on every retry | USB 2 lists **no 848×480 colour** (and 848×480 depth only at 10/6 Hz), so the default pair can't start; each failed open re-runs the macOS UVC race | Fixed: `open()` enumerates the camera's profiles (`Api.stream_modes`) and `negotiate_mode` picks the fastest same-size pair it offers (640×480 @ 15 on the D435) — no flags needed; re-plug once to clear the race. `docs/realsense.md` §Troubleshooting |
+| RealSense open fails on the Mac with `RS2_USB_STATUS_ACCESS` / `set_xu … timed out` / no frame, and the process **segfaults** after `usb device disconnected` | The Mac is a desktop now: libusb's claim re-enumerates the device and every camera-aware app (Spotify won it on 2026-09-24; browsers; Apple's UVCAssistant) races for it; a disconnect mid-open crashes librealsense 2.58.4 in libusb | Don't chase it. On this Mac every libusb handle open resets the camera (root-only kernel-driver detach = re-enumerate with capture) and Apple's `UVCAssistant` re-claims it each time: 43 resets in 40 s and a stream that dies after 2 frames, with nothing else on the bus (2026-09-25, webcams and Spotify gone). The Mac-as-desktop is not a D435 host; use the Windows laptop under WSL2 (verified 09-23) or the Jetson. the cockpit under `--rs-lean`. `docs/realsense.md` §Troubleshooting |
+| RealSense first open of a process never delivers a frame, re-opens work | sensor options written between pipeline start and the first frameset | write them on the first `read()` (`DepthTuning` does); never at open |
+| **On a real e-Series**, `move-tcp` / cockpit **Move** to a target the arm can't reach returns `ok:false`, `landed:null`, no violation — and the arm **stretches to a straight elbow** chasing it (UR3e, 2026-09-23: a 0.69 m target on a 0.5 m arm) | The envelope's reach cap used to be a hardcoded UR10 1.3 m, whatever the arm | Fixed: `SafetyEnvelope.for_model` sizes `max_reach` from `UR_ROBOT_MODEL` (the cell files) or the Dashboard's `get robot model` (probed once before the first absolute move); `MODEL_REACH_M` covers UR3/5/7e/10/12e/15/16e/20/30. `locate` now returns `reachable` and the cockpit's event says **OUT OF REACH** before you press Move. `UR_MAX_REACH_M` overrides (long TCP). Doctor line `robot.model` shows the cap and flags a cell/controller model mismatch. |
+| A multi-leg move (`ur_move_tcp_path`, the cockpit **Approach** cycle) stops part-way with `ok:false`, no protective stop, robot parked mid-path | **Any new URScript on 30001 replaces the running program.** A concurrent state poll whose RTDE read hiccuped (legacy `textmsg` fallback), a Locate (`get_flange_pose` is a script), or a second Move kills the cycle silently. Seen once on the UR3e 2026-09-23 (4-leg cycle died after leg 2) | Fixed inside one process: `PrimaryClient` holds a non-blocking in-flight lock — a concurrent submission raises `PrimaryBusyError`, and `get_state` reports `primary_busy` with no joints instead of sending. Across *processes* (a CLI `run-script` while the cockpit drives) nothing can protect you — don't. |
+| The cockpit's flange-referenced approach lands a constant ~35 mm off the object, even with the TCP forced to zero | The hand-measured `PERCEPTION_T_FLANGE_CAMERA` (to the camera housing) was 21 mm off in X, 36 mm in Z and had the tilt sign inverted — the depth origin is the **left IR imager**, not the housing centre | Run the touch-and-click hand-eye (mark = flange centre on the part with `set_tcp(p[0,…])`, 3 clicked views from varied wrist poses); 2026-09-23 on the UR3e: RMS 1.7 mm, located point 3 mm from the mark afterwards. The solved pose is in `perception/cells/ur3.env` + `captures/calibration/handeye_ur3.json`. |
+| `ur_flange_pose` / Locate gives a flange pose that is wrong by tens of mm while `get_tcp_offset()` looks plausible | The controller reported an active-TCP offset (`0,-0.035,0.22,…`) that was **not** what its motion actually used; `pose_trans(tcp, inv(offset))` then puts the "flange" in the wrong place | Force the TCP yourself: `set_tcp(p[0,0,0,0,0,0])` (persists until the next `set_tcp`/installation load) — then TCP == flange and every read/move agrees. `move_tcp(..., tcp=[0]*6)` / `--tcp` puts it in the same program as the `movel`; the flange-referenced cycle does this on every leg. |
+| Robotiq gripper: port 63352 is closed from the network although the URCap is installed | the URCap daemon binds the controller's loopback only | `urctl gripper status\|open\|close\|move --position N` / `ur_gripper` / `POST /api/robot/gripper` — one Primary program opens the socket from inside the controller (UR3e + Hand-E, 2026-09-25) |
+| Cockpit **Freedrive** (or `urctl freedrive on`, `ur_freedrive`) reports ok but the real arm stays stiff; the reteach/inspect dialogs *do* hand-guide | Freedrive lives only while the program that called `freedrive_mode()` runs. A one-line script ends instantly → freedrive ends instantly (URSim is lenient, hardware isn't) | Fixed: `Robot.freedrive(True, hold_s=600)` sends a bounded `sleep` loop that keeps the program alive and confirms via `textmsg("urctl/freedrive=on")` (`ok:false` if the echo never comes); `off` sends `end_freedrive_mode()` as a new program, which also kills the hold; the hold releases itself when it expires (`--hold`, tool `hold_s`, max 1 h). |
 
 ## Working in this repo
+
+**CI/CD** (`.github/`): every PR runs lint (ruff check + format, shellcheck),
+unit tests on Python 3.10/3.12/3.14, and a packaging job that builds the wheel,
+verifies it carries `perception/webui/` + the vendored `_urp_convert.py`, and
+smoke-installs it. Integration tests (URSim boot) run on pushes to main or on
+PRs labeled **`run-integration`**. Dependabot maintains uv deps, action pins,
+and simulator images (weekly/monthly, grouped); minor/patch non-simulator
+bumps auto-merge once CI is green (`dependabot-auto-merge.yml` — needs
+"Allow auto-merge" enabled in repo settings). CodeQL scans Python + JS weekly
+and per PR. Tagging `v<version>` (matching `urctl.__version__`) builds, tests,
+creates a GitHub Release, and publishes to PyPI via trusted publishing (the
+`pypi` environment; skipped until the PyPI publisher is configured). The PolyScope 5
+URCap has its own tag line: `urcap5-v<Bundle-Version>` attaches the committed
+`urcap/dist/*.urcap` + sha256 to a GitHub Release after `urcap5.py release-check`
+proves it is the tagged sources' build (`release-urcap5.yml`; CI never rebuilds it —
+the URCap API jars exist only in the URSim image).
+
+Unit tests assume a clean shell: with `UR_CELL` (or `PERCEPTION_*`) exported,
+the handeye/webapp/cockpit tests pick up the cell's defaults and fail — run them
+with `env -u UR_CELL uv run pytest …` or in a fresh shell.
 
 ```bash
 make sim-up          # start URSim
@@ -471,7 +830,7 @@ Environment + deps are managed with **`uv`** (the repo's `pyproject.toml`
 declares the `urctl`/`perception` packages and a `dev` group). `uv sync` builds
 `.venv`; prefix commands with `uv run`. The core (`urctl` + perception core) is
 pure stdlib — numpy/OpenCV/torch/the MCP SDK are optional extras
-(`uv sync --extra perception --extra mcp`).
+(`uv sync --extra perception`).
 
 ```bash
 uv sync                                   # create .venv with dev deps
@@ -497,6 +856,19 @@ then surface it as a `Tool` in `urctl/tools.py` (schema + handler) and, if it
 needs a human entry point, a subcommand in `urctl/cli.py`. The CLI, the agent
 tool registry, and the MCP server all sit on the same `Robot`, so they stay in
 lockstep. Keep mutating actions routed through the safety envelope + audit log.
+
+**The vendor-neutral seam (`urctl/controller.py`, 2026-09-26):** `Controller`
+and `Gripper` are `typing.Protocol`s — `Robot` satisfies `Controller`
+structurally (e-Series and PolyScope X are one class selected by
+`RobotConfig.platform`), `Robot.gripper_device` is the `RobotiqUrcapGripper`
+adapter. A Fanuc is a second class satisfying `Controller`; the tools, the
+cockpit's `RobotLink`, `pick-cycle` and `calibrate` program against the
+protocol's method names. **Tool names are canonical without a vendor prefix**
+(`move_tcp`, `get_state`, `gripper`, …); the original `ur_*` names are aliases
+(`urctl.tools.TOOL_ALIASES`) accepted by `call_tool`, both MCP servers and the
+CLI, so existing agent configurations and the `ur_*` mentions in this file keep
+working. `tools/list` shows canonical names; `get_tool_schemas(include_aliases=True)`
+adds the aliases.
 
 For deeper development tasks:
 

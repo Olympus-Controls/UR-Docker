@@ -1,0 +1,14 @@
+{
+  "applicationNodes": [
+    {
+      "translationPath": "assets/i18n/",
+      "behaviorURI": "realsense-pilot-node.worker.js",
+      "presenterURI": "main.js",
+      "componentTagName": "olympus-realsense-pilot"
+    }
+  ],
+  "programNodes": [],
+  "smartSkills": [],
+  "sidebarItems": [],
+  "operatorScreens": []
+}

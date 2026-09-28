@@ -27,15 +27,21 @@ from __future__ import annotations
 
 from .audit import AuditLog, AuditRecord
 from .config import RobotConfig
+from .controller import Controller, Gripper, RobotiqUrcapGripper
 from .guided import GuidedSession, LiveReloader, StepResult, docker_placer, local_dir_placer
+from .installation import parse_installation, parse_installation_file
 from .robot import Robot
 from .rtde import RtdeClient, RtdeError
 from .safety import SafetyEnvelope, SafetyVerdict, SafetyViolation
+from .sysinfo import DockerRunner, SshRunner, SystemInspector, runner_for
 from .urp_builder import UrpProgram, Waypoint
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "Controller",
+    "Gripper",
+    "RobotiqUrcapGripper",
     "RobotConfig",
     "Robot",
     "SafetyEnvelope",
@@ -52,5 +58,11 @@ __all__ = [
     "LiveReloader",
     "docker_placer",
     "local_dir_placer",
+    "SystemInspector",
+    "SshRunner",
+    "DockerRunner",
+    "runner_for",
+    "parse_installation",
+    "parse_installation_file",
     "__version__",
 ]

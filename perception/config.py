@@ -34,6 +34,39 @@ DEFAULT_DEVICE_INDEX = 0
 # torch / OpenCV and raise a clear install hint if missing.
 DEFAULT_DEPTH_BACKEND = "stub"
 DEFAULT_BLOB_BACKEND = "stub"
+# Click-to-segment backend for RGB-D frames: "stub" (color + depth region
+# growing, pure Python) or "sam" (Segment Anything via the `sam` extra).
+DEFAULT_SEGMENT_BACKEND = "stub"
+# Checkpoint for the "sam" backend (any SamModel-loadable id). "" = the
+# backend's default (facebook/sam-vit-base); Zigeng/SlimSAM-uniform-50 is the
+# light option — see perception/backends/sam.py.
+DEFAULT_SAM_MODEL = ""
+
+# RealSense selection. Empty serial = first attached camera. The RealSense
+# streams run at their own rate independent of the pure-Python pipeline's
+# `fps` above; 0 = auto (30 on USB 3, 15 on a USB 2 link).
+DEFAULT_RS_SERIAL = ""
+DEFAULT_RS_FPS = 0
+# Depth stream resolution (independent of the colour size above; aligned depth
+# lands on the colour grid anyway). 848x480 is the D435's native stereo mode.
+DEFAULT_RS_DEPTH_WIDTH = 848
+DEFAULT_RS_DEPTH_HEIGHT = 480
+# librealsense post-processing on the depth frame (spatial + temporal in the
+# disparity domain; see perception.realsense.DepthFilters for the knobs).
+DEFAULT_RS_FILTERS = True
+# Depth-sensor options at open: a visual preset name ("none" = leave the sensor
+# as configured) and projector power ("max", "none", or mW).
+DEFAULT_RS_PRESET = "high_accuracy"
+DEFAULT_RS_LASER_POWER = "max"
+# Lean open: the fewest USB handle opens per start (no USB-type probe, no mode
+# enumeration, no preset/laser writes, global time off). A macOS experiment —
+# see perception.realsense.RealSenseCamera.lean.
+DEFAULT_RS_LEAN = False
+# Extra webcam viewpoints under the colour/depth pair (perception.views): device
+# names, comma-separated ("" = none), their capture size and rate.
+DEFAULT_VIEWS = ""
+DEFAULT_VIEW_RES = "640x480"
+DEFAULT_VIEW_FPS = 15
 
 # The stub depth estimator emits a normalized 0..1 map; near/far scale it into
 # metres so downstream consumers always see physical units. These bracket a
@@ -108,6 +141,19 @@ class PerceptionConfig:
     blob_min_chroma: int = DEFAULT_BLOB_MIN_CHROMA
     blob_link_tolerance: int = DEFAULT_BLOB_LINK_TOLERANCE
     blob_split_touching: bool = DEFAULT_BLOB_SPLIT_TOUCHING
+    segment_backend: str = DEFAULT_SEGMENT_BACKEND
+    sam_model: str = DEFAULT_SAM_MODEL
+    rs_serial: str = DEFAULT_RS_SERIAL
+    rs_fps: int = DEFAULT_RS_FPS
+    rs_depth_width: int = DEFAULT_RS_DEPTH_WIDTH
+    rs_depth_height: int = DEFAULT_RS_DEPTH_HEIGHT
+    rs_filters: bool = DEFAULT_RS_FILTERS
+    rs_preset: str = DEFAULT_RS_PRESET
+    rs_laser_power: str = DEFAULT_RS_LASER_POWER
+    rs_lean: bool = DEFAULT_RS_LEAN
+    views: str = DEFAULT_VIEWS
+    view_res: str = DEFAULT_VIEW_RES
+    view_fps: int = DEFAULT_VIEW_FPS
 
     @classmethod
     def from_env(cls, **overrides) -> PerceptionConfig:
@@ -129,6 +175,19 @@ class PerceptionConfig:
             "blob_min_chroma": _env_int("PERCEPTION_BLOB_MIN_CHROMA", DEFAULT_BLOB_MIN_CHROMA),
             "blob_link_tolerance": _env_int("PERCEPTION_BLOB_LINK_TOLERANCE", DEFAULT_BLOB_LINK_TOLERANCE),
             "blob_split_touching": _env_bool("PERCEPTION_BLOB_SPLIT_TOUCHING", DEFAULT_BLOB_SPLIT_TOUCHING),
+            "segment_backend": _env_str("PERCEPTION_SEGMENT_BACKEND", DEFAULT_SEGMENT_BACKEND),
+            "sam_model": _env_str("PERCEPTION_SAM_MODEL", DEFAULT_SAM_MODEL),
+            "rs_serial": _env_str("PERCEPTION_RS_SERIAL", DEFAULT_RS_SERIAL),
+            "rs_fps": _env_int("PERCEPTION_RS_FPS", DEFAULT_RS_FPS),
+            "rs_depth_width": _env_int("PERCEPTION_RS_DEPTH_WIDTH", DEFAULT_RS_DEPTH_WIDTH),
+            "rs_depth_height": _env_int("PERCEPTION_RS_DEPTH_HEIGHT", DEFAULT_RS_DEPTH_HEIGHT),
+            "rs_filters": _env_bool("PERCEPTION_RS_FILTERS", DEFAULT_RS_FILTERS),
+            "rs_preset": _env_str("PERCEPTION_RS_PRESET", DEFAULT_RS_PRESET),
+            "rs_laser_power": _env_str("PERCEPTION_RS_LASER_POWER", DEFAULT_RS_LASER_POWER),
+            "rs_lean": _env_bool("PERCEPTION_RS_LEAN", DEFAULT_RS_LEAN),
+            "views": _env_str("PERCEPTION_VIEWS", DEFAULT_VIEWS),
+            "view_res": _env_str("PERCEPTION_VIEW_RES", DEFAULT_VIEW_RES),
+            "view_fps": _env_int("PERCEPTION_VIEW_FPS", DEFAULT_VIEW_FPS),
         }
         values.update(overrides)
         return cls(**values)  # type: ignore[arg-type]

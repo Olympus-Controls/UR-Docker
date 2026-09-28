@@ -24,7 +24,11 @@ UR_HOST ?= localhost
 export UR_HOST
 
 .PHONY: help sim-up sim-down sim-logs sim-shell sim-poweron \
-        simx-up simx-down simx-logs simx-shell \
+        simx-up simx-down simx-logs simx-shell urcap-package urcap-install urcap-cockpit \
+        urcap-track urcap-compat urcap-e2e \
+        urcap5-sdk urcap5-package urcap5-install \
+        rs-info rs-gui rs-gui-fake rs-test perception-build perception-up perception-down \
+        doctor cockpit cockpit-dry mcp \
         test test-unit test-integration test-all \
         lint lint-py lint-sh fmt regen-urps install-dev
 
@@ -78,12 +82,84 @@ simx-state:  ## Read PolyScope X robot state via the Robot-API (JSON).
 simx-bring-up:  ## Power on + brake release the PolyScope X robot (needs Remote mode).
 	$(PX_ENV) $(PYTHON) -m urctl bring-up
 
+# ---- PolyScope X URCap (urcap/: README.md to install, DEVELOPING.md to work on it) --
+urcap-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-<ver>.urcapx (no npm; commit it).
+	$(PYTHON) urcap/urcapx.py package urcap/realsense-pilot --out urcap/dist
+
+urcap-install: urcap-package  ## Install (or replace) it in the PolyScope X sim on :8000; then refresh the page.
+	$(PYTHON) urcap/urcapx.py install urcap/dist/realsense-pilot-*.urcapx --port 8000 --replace
+
+urcap-cockpit:  ## A synthetic cockpit on :7621 (the normal port) the URCap page may call from the sim's origin.
+	$(PYTHON) -m perception gui --fake --no-browser --port 7621 --cors http://localhost:8000,http://127.0.0.1:8000
+
+urcap-track:  ## Is urcap/target.json still UR's newest PolyScope X release? (exit 1 + why when not)
+	$(PYTHON) urcap/track.py check
+
+urcap-compat:  ## The URCap against the pinned SDK: contribution-api members, manifest spec, worker protocol.
+	$(PYTHON) urcap/track.py compat
+
+urcap-e2e:  ## Boot target.json's simulator, install a fresh build, load + click the node headlessly.
+	$(UV) run --with playwright==1.63.0 python urcap/e2e.py
+
+# ---- PolyScope 5 (e-Series) URCap (urcap/realsense-pilot-ps5, urcap/urcap5.py) --------
+URCAP5_CONTAINER ?= ur-utils-ursim-e-ur3e
+urcap5-sdk:  ## Copy the URCap API jars out of the e-Series URSim image into target/ (never committed).
+	$(PYTHON) urcap/urcap5.py sdk
+
+urcap5-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-ps5-<ver>.urcap (JDK; commit it).
+	$(PYTHON) urcap/urcap5.py package urcap/realsense-pilot-ps5 --out urcap/dist
+
+urcap5-install: urcap5-package  ## Install it in the e-Series sim container $(URCAP5_CONTAINER) (restarts it).
+	$(PYTHON) urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-*.urcap --container $(URCAP5_CONTAINER)
+
+# ---- RealSense perception (docs/realsense.md) ----------------------------------
+# On macOS librealsense needs root to claim the camera's USB interface, hence
+# the `sudo` on the hardware targets; `rs-gui-fake` needs no camera at all.
+
+rs-info:  ## List attached RealSense cameras + SDK version (macOS: needs sudo).
+	sudo $(PYTHON) -m perception rs-info
+
+rs-gui:  ## RGB-D cockpit on the RealSense (browser, loopback).
+	sudo $(PYTHON) -m perception gui
+
+rs-gui-fake:  ## RGB-D cockpit on a synthetic scene (no camera).
+	$(PYTHON) -m perception gui --fake
+
+
+rs-test:  ## Hardware-in-the-loop RealSense tests (skips without a camera).
+	sudo $(PYTEST) -m realsense -q
+
+perception-build:  ## Build the perception service image (Jetson / Linux; compiles librealsense).
+	$(COMPOSE) --profile perception build
+
+perception-up:  ## Run the perception service (privileged, USB, cockpit on :7621).
+	$(COMPOSE) --profile perception up -d
+
+perception-down:  ## Stop the perception service.
+	$(COMPOSE) --profile perception down
+
+# ---- The pilot's seat (docs/realsense-cell.html) ------------------------------------
+# One cell profile (sim | ur3 | ur20, perception/cells/*.env) selects robot host/ports + bracket.
+CELL ?= sim
+
+doctor:  ## Pre-flight checklist for CELL (SDK, camera, robot reachability + state).
+	$(PYTHON) -m perception --cell $(CELL) doctor
+
+cockpit:  ## The RGB-D cockpit for CELL (sudo on macOS for a real camera; scripts/cockpit.sh does that).
+	./scripts/cockpit.sh $(CELL)
+
+cockpit-dry:  ## Cockpit for CELL with robot actions validated + audited but not sent.
+	./scripts/cockpit.sh $(CELL) --robot-dry-run
+
+mcp:  ## The combined robot + camera MCP server for CELL over stdio (what .mcp.json runs).
+	$(PYTHON) -m perception.mcp_server --cell $(CELL)
+
 # ---- Tests ------------------------------------------------------------------
 
 test: test-unit  ## Alias for `test-unit` (the default fast path).
 
 test-unit:  ## Run unit tests (no simulator required).
-	$(PYTEST) -m "not integration"
+	$(PYTEST) -m "not integration and not sam"
 
 test-integration:  ## Run integration tests against a running URSim.
 	$(PYTEST) -m integration
@@ -96,10 +172,10 @@ test-all:  ## Run every test.
 lint: lint-py lint-sh  ## Run all linters.
 
 lint-py:  ## Lint Python with ruff.
-	$(RUFF) check urctl perception scripts tests
+	$(RUFF) check urctl perception scripts urcap tests
 
 fmt:  ## Format Python with ruff.
-	$(RUFF) format urctl perception scripts tests
+	$(RUFF) format urctl perception scripts urcap tests
 
 lint-sh:  ## Lint shell scripts (skipped silently if shellcheck not installed).
 	@if command -v shellcheck >/dev/null; then \
@@ -128,4 +204,4 @@ regen-urps:  ## Rebuild every <name>.urp from its build.py (node tree) or siblin
 # ---- One-time setup ---------------------------------------------------------
 
 install-dev:  ## Create/refresh the uv venv with dev + optional extras.
-	$(UV) sync --extra perception --extra mcp
+	$(UV) sync --extra perception

@@ -65,16 +65,19 @@ from xml.sax.saxutils import escape
 
 # Reuse urp_convert's version constants so the two emitters stay in lockstep on
 # the header PolyScope stamps into every program. Bootstrap scripts/ onto the
-# path the same way urctl.urp does when running from a source checkout.
+# path (the vendored copy in the wheel, else scripts/ from a source checkout).
 try:
     from urp_convert import DEFAULT_CREATED_IN, DEFAULT_LAST_SAVED_IN
 except ImportError:  # pragma: no cover - exercised only outside an install
     import sys
 
     _scripts = Path(__file__).resolve().parent.parent / "scripts"
-    if str(_scripts) not in sys.path:
-        sys.path.insert(0, str(_scripts))
-    from urp_convert import DEFAULT_CREATED_IN, DEFAULT_LAST_SAVED_IN
+    if _scripts.is_dir():  # source checkout
+        if str(_scripts) not in sys.path:
+            sys.path.insert(0, str(_scripts))
+        from urp_convert import DEFAULT_CREATED_IN, DEFAULT_LAST_SAVED_IN
+    else:  # installed wheel: build-time vendored copy
+        from urctl._urp_convert import DEFAULT_CREATED_IN, DEFAULT_LAST_SAVED_IN
 
 # The all-zero, checksum-disabled kinematics that loads with every node type
 # (see module docstring). Real calibration is robot-specific and unnecessary

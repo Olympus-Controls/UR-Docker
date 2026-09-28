@@ -17,12 +17,15 @@ anything to the controller — useful for previewing what an agent would do.
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
+
 from .audit import AuditLog
 from .config import RobotConfig
 from .dashboard import DashboardClient
-from .primary import PrimaryClient
+from .primary import PrimaryBusyError, PrimaryClient
 from .robotapi import RobotAPIClient
-from .safety import SafetyEnvelope, SafetyVerdict
+from .safety import SafetyEnvelope, SafetyVerdict, normalize_model, reach_for_model
 
 # A safe candle-ish home pose for a UR10 — straight up, wrists folded. Far from
 # singularities, well within joint limits, no self-collision.
@@ -39,6 +42,15 @@ DEFAULT_TCP_ACCELERATION = 1.2  # m/s^2
 # For an absolute move, the TCP must land within this many metres (~2 mm) of
 # the commanded XYZ to count as arrived.
 TCP_LANDING_TOLERANCE = 0.002
+# How long a cockpit/CLI "freedrive on" keeps the arm hand-guidable before the
+# hold program releases it on its own (see :meth:`Robot.freedrive`).
+DEFAULT_FREEDRIVE_HOLD_S = 600.0
+# Robotiq gripper URCap: its daemon serves the ASCII GET/SET protocol on the
+# controller's loopback only (verified on the UR3e + Hand-E, 2026-09-25: closed
+# from the network, open from URScript), so the gripper is driven by a script.
+GRIPPER_DAEMON_HOST, GRIPPER_DAEMON_PORT = "127.0.0.1", 63352
+GRIPPER_ACTIONS = ("status", "open", "close", "move", "activate")
+GRIPPER_STATUS_VARS = ("STA", "ACT", "POS", "PRE", "OBJ", "FLT")
 
 
 def _sanitize_prompt(text: str, *, max_len: int = 200) -> str:
@@ -53,6 +65,22 @@ def _sanitize_prompt(text: str, *, max_len: int = 200) -> str:
     return " ".join(text.split()).replace('"', "'")[:max_len]
 
 
+def _parse_gripper_status(captured: list[str]) -> dict[str, int]:
+    """``urctl/rq/VAR=<reply>`` lines → ``{VAR: int}`` (the daemon answers a bare
+    value; a ``VAR value`` form is accepted too — the last integer wins)."""
+    import re
+
+    out: dict[str, int] = {}
+    for line in captured:
+        for var in GRIPPER_STATUS_VARS:
+            tag = f"urctl/rq/{var}="
+            if tag in line:
+                m = re.search(r"(-?\d+)\s*$", line.split(tag, 1)[1].strip())
+                if m:
+                    out[var] = int(m.group(1))
+    return out
+
+
 class Robot:
     def __init__(
         self,
@@ -63,7 +91,15 @@ class Robot:
         dry_run: bool = False,
     ):
         self.config = config or RobotConfig.from_env()
-        self.safety = safety or SafetyEnvelope()
+        # The reach cap is per model (a UR3e reaches 0.5 m, a UR20 1.75 m). An
+        # explicit envelope is the caller's business; otherwise size it from the
+        # configured model (``UR_ROBOT_MODEL``, the cell files) and, failing
+        # that, ask the controller once before the first absolute TCP move.
+        self._safety_explicit = safety is not None
+        self.safety = safety or SafetyEnvelope.for_model(
+            self.config.robot_model, max_reach=self.config.max_reach
+        )
+        self._model_probed = self._safety_explicit or self.safety.reach_known
         self.audit = audit or AuditLog()
         self.dry_run = dry_run
         # The orchestration client (power/brake/load/play/state). On PolyScope X
@@ -76,16 +112,63 @@ class Robot:
         )
         self.primary = PrimaryClient(self.config)
         # RTDE (port 30004) is created lazily on first use so tests and code
-        # paths that never touch it pay no socket.
+        # paths that never touch it pay no socket. ``_rtde_deep`` tracks which
+        # output recipe the cached client negotiated (default vs DEEP_OUTPUTS).
         self._rtde = None
+        self._rtde_deep = False
 
-    def _rtde_client(self):
+    # ----- reach / model -----------------------------------------------------
+
+    def _ensure_reach(self) -> None:
+        """Size the envelope's reach cap from the controller's reported model
+        (Dashboard ``get robot model``) when nothing configured it. Runs once;
+        an unreachable controller or an unknown reply keeps the UR10 default,
+        and the ``tcp_reach`` violation text then says the model is unknown."""
+        if self._model_probed or self.dry_run:
+            return
+        self._model_probed = True
+        try:
+            reported = self.dashboard.robot_model()
+        except OSError:
+            return
+        reach = reach_for_model(reported)
+        if reach is not None:
+            self.safety = replace(self.safety, max_reach=reach, model=normalize_model(reported))
+
+    def max_reach(self) -> float:
+        """The reach cap absolute TCP moves are validated against, in metres —
+        after the one-time model probe, so a cockpit can show the verdict
+        (``locate`` → ``reachable``) before it offers a Move."""
+        self._ensure_reach()
+        return self.safety.max_reach
+
+    @property
+    def gripper_device(self):
+        """The attached end effector as a :class:`urctl.controller.Gripper` — the
+        Robotiq-over-URCap adapter around :meth:`gripper`."""
+        from .controller import RobotiqUrcapGripper
+
+        return RobotiqUrcapGripper(self)
+
+    def _rtde_client(self, *, deep: bool = False):
         """Lazily build (and cache) the RTDE client. Dropped on read failure so
-        the next call reconnects (see :meth:`rtde_state` / :meth:`get_state`)."""
-        if self._rtde is None:
-            from .rtde import RtdeClient
+        the next call reconnects (see :meth:`rtde_state` / :meth:`get_state`).
 
-            self._rtde = RtdeClient(self.config)
+        ``deep=True`` upgrades the cached client to the full diagnostic recipe
+        (:data:`urctl.rtde.DEEP_OUTPUTS`, tolerant mode). The deep recipe is a
+        superset of the default one, so once upgraded it serves both callers.
+        """
+        from .rtde import DEEP_OUTPUTS, RtdeClient
+
+        if deep and self._rtde is not None and not self._rtde_deep:
+            self._rtde.close()
+            self._rtde = None
+        if self._rtde is None:
+            if deep:
+                self._rtde = RtdeClient(self.config, outputs=list(DEEP_OUTPUTS), strict=False)
+            else:
+                self._rtde = RtdeClient(self.config)
+            self._rtde_deep = deep
         return self._rtde
 
     def close(self) -> None:
@@ -177,7 +260,14 @@ class Robot:
                 # Any RTDE protocol error (RtdeError, recipe mismatch): fall back.
                 self._rtde = None
         if joints is None and running:
-            state = self.primary.read_state(collect_for=collect_for)
+            # Legacy path: a textmsg *program*. Never send it while a motion
+            # from this client is in flight — it would replace (kill) the
+            # running program (see PrimaryBusyError). Report no joints instead.
+            try:
+                state = self.primary.read_state(collect_for=collect_for)
+            except PrimaryBusyError:
+                state = {"joints": None, "tcp": None}
+                extra["primary_busy"] = True
             joints, tcp = state["joints"], state["tcp"]
         result = {
             "robot_mode": robot_mode,
@@ -194,39 +284,143 @@ class Robot:
         }
         return self._log("get_state", {}, ok=True, result=result)
 
-    def rtde_state(self) -> dict:
+    def get_flange_pose(self, *, collect_for: float = 3.0, script_fallback: bool = True) -> dict:
+        """The tool-flange pose in the base frame, alongside the active TCP pose
+        and TCP offset it was derived from — what a camera on the flange needs
+        to put its measurements into base coordinates (``perception.handeye``).
+
+        First the controller's **state broadcast** (Secondary port, read only —
+        :mod:`urctl.stateframe`): the flange by forward kinematics of the actual
+        joints through the robot's calibrated DH, plus the TCP pose and active
+        offset from the same message. It sends no script, so it works in Local
+        mode on a real e-Series (which ignores URScript there, textmsg included —
+        UR3e, 2026-09-27) and never replaces a running program.
+        (``source: "state_broadcast"``.)
+
+        Fallback, when the broadcast is not reachable (a sim that doesn't publish
+        the port): one Primary ``textmsg`` round-trip — the controller reports
+        ``get_actual_tcp_pose()`` and ``get_tcp_offset()``; the flange is
+        ``pose_trans(tcp, pose_inv(offset))`` (also computed host-side by
+        :mod:`urctl.pose` and cross-checked against the controller's own
+        arithmetic). (``source: "textmsg"``.) ``script_fallback=False`` skips it: a
+        caller that must never replace a running program (the stand-alone pick
+        server, beside an operator's program) gets ``ok: False`` instead. In
+        ``dry_run`` a stand-in pose is
+        returned (tool pointing down, 0.5 m out and up) so cockpits can be
+        exercised without a controller.
+        """
+        from . import stateframe
+        from .pose import Transform
+
+        if self.dry_run:
+            flange = [0.5, 0.0, 0.5, 0.0, math.pi, 0.0]
+            return self._log(
+                "get_flange_pose",
+                {},
+                ok=True,
+                result={"flange": flange, "tcp": flange, "tcp_offset": [0.0] * 6, "dry_run": True},
+            )
+        try:
+            st = stateframe.read_flange_state(
+                self.config.host, self.config.secondary_port, timeout_s=min(3.0, collect_for + 1.0)
+            )
+        except (OSError, stateframe.StateFrameError) as exc:
+            state_error = f"{self.config.host}:{self.config.secondary_port}: {exc}"
+        else:
+            if st.get("flange") is not None and st.get("tcp") is not None:
+                consistency = st.get("consistency_m")
+                result = {
+                    "flange": st["flange"],
+                    "tcp": st["tcp"],
+                    "tcp_offset": st["tcp_offset"],
+                    "joints": st["joints"],
+                    "source": "state_broadcast",
+                    "flange_source": st["flange_source"],
+                    "consistency_m": consistency,
+                    # the reported offset is the one the reported TCP pose was computed with
+                    "tcp_offset_consistent": None
+                    if consistency is None
+                    else consistency <= stateframe.CONSISTENCY_TOLERANCE_M,
+                }
+                return self._log("get_flange_pose", {}, ok=True, result=result)
+            state_error = "the state broadcast had no joints/TCP pose"
+        if not script_fallback:
+            return self._log("get_flange_pose", {}, ok=False, result={"error": state_error})
+        captured = self.primary.run_and_capture(
+            'textmsg("urctl/flange/tcp=", get_actual_tcp_pose())\n'
+            'textmsg("urctl/flange/offset=", get_tcp_offset())\n'
+            'textmsg("urctl/flange/pose=", pose_trans(get_actual_tcp_pose(), pose_inv(get_tcp_offset())))\n',
+            fn_name="urctl_flange_pose",
+            marker="urctl/flange",
+            collect_for=collect_for,
+            stop_marker="urctl/flange/pose=",
+        )
+        from .primary import parse_vector
+
+        tcp = parse_vector(captured, "urctl/flange/tcp")
+        offset = parse_vector(captured, "urctl/flange/offset")
+        reported = parse_vector(captured, "urctl/flange/pose")
+        if tcp is None or offset is None:
+            return self._log(
+                "get_flange_pose",
+                {},
+                ok=False,
+                result={
+                    "error": "no TCP pose/offset surfaced on the Primary broadcast",
+                    "state_error": state_error,
+                    "captured": captured[-5:],
+                },
+            )
+        flange = Transform.from_pose(tcp).compose(Transform.from_pose(offset).inverse()).to_pose()
+        result = {
+            "flange": flange,
+            "tcp": tcp,
+            "tcp_offset": offset,
+            "source": "textmsg",
+            "state_error": state_error,
+        }
+        if reported is not None:
+            result["flange_reported"] = reported
+            result["host_controller_mismatch_m"] = max(
+                abs(a - b) for a, b in zip(flange[:3], reported[:3], strict=False)
+            )
+        return self._log("get_flange_pose", {}, ok=True, result=result)
+
+    def rtde_state(self, *, deep: bool = False) -> dict:
         """High-rate structured state via RTDE (port 30004).
 
         Unlike :meth:`get_state`, this is RTDE-only and works even when the
         robot is not RUNNING — RTDE reflects the controller directly, not a
         URScript ``textmsg`` we injected. Returns joints/velocities, TCP
-        pose/speed/force, and the raw ``safety_status``/``runtime_state`` bit
-        words. Returns ``ok=False`` if RTDE is disabled or unreachable.
+        pose/speed/force, and decoded safety/runtime state. Returns
+        ``ok=False`` if RTDE is disabled or unreachable.
+
+        ``deep=True`` subscribes the full diagnostic recipe
+        (:data:`urctl.rtde.DEEP_OUTPUTS`): per-joint currents, temperatures,
+        voltages and drive modes, supply power, tool-connector telemetry,
+        analog IO, and speed scaling. Fields a given firmware doesn't offer are
+        dropped, not fatal (listed under ``unavailable_fields``).
         """
+        from . import codes
+
+        params = {"deep": deep} if deep else {}
         if self.dry_run:
-            return self._log("rtde_state", {}, ok=True, result={"reply": "(dry-run)"})
+            return self._log("rtde_state", params, ok=True, result={"reply": "(dry-run)"})
         if not self.config.rtde_enabled:
-            return self._log("rtde_state", {}, ok=False, result={"error": "RTDE disabled (UR_RTDE_DISABLE)"})
+            return self._log(
+                "rtde_state", params, ok=False, result={"error": "RTDE disabled (UR_RTDE_DISABLE)"}
+            )
         try:
-            raw = self._rtde_client().read_outputs()
+            client = self._rtde_client(deep=deep)
+            raw = client.read_outputs()
         except OSError as exc:
             self._rtde = None
-            return self._log("rtde_state", {}, ok=False, result={"error": f"RTDE unreachable: {exc}"})
+            return self._log("rtde_state", params, ok=False, result={"error": f"RTDE unreachable: {exc}"})
         except Exception as exc:  # RtdeError and friends
             self._rtde = None
-            return self._log("rtde_state", {}, ok=False, result={"error": str(exc)})
-        result = {
-            "joints": raw.get("actual_q"),
-            "joint_velocities": raw.get("actual_qd"),
-            "tcp": raw.get("actual_TCP_pose"),
-            "tcp_speed": raw.get("actual_TCP_speed"),
-            "tcp_force": raw.get("actual_TCP_force"),
-            "safety_status": raw.get("safety_status_bits"),
-            "runtime_state": raw.get("runtime_state"),
-            "rtde_robot_mode": raw.get("robot_mode"),
-            "timestamp": raw.get("timestamp"),
-        }
-        return self._log("rtde_state", {}, ok=True, result=result)
+            return self._log("rtde_state", params, ok=False, result={"error": str(exc)})
+        result = codes.shape_rtde_sample(raw, deep=deep, unavailable=client.dropped_outputs if deep else None)
+        return self._log("rtde_state", params, ok=True, result=result)
 
     # ----- power -------------------------------------------------------------
 
@@ -353,6 +547,86 @@ class Robot:
     def move_home(self, **kwargs) -> dict:
         return self.move_joints(HOME_JOINTS, **kwargs)
 
+    def ik_has_solution(
+        self,
+        poses: list[list[float]],
+        *,
+        tcp: list[float] | None = None,
+        collect_for: float = 3.0,
+    ) -> list[bool | None]:
+        """Whether each base-frame pose has an inverse-kinematics solution on the
+        controller — the verdicts of :meth:`inverse_kin`."""
+        return [a["reachable"] for a in self.inverse_kin(poses, tcp=tcp, collect_for=collect_for)]
+
+    def inverse_kin(
+        self,
+        poses: list[list[float]],
+        *,
+        tcp: list[float] | None = None,
+        collect_for: float = 3.0,
+    ) -> list[dict]:
+        """Ask the controller to solve each base-frame pose (URScript
+        ``get_inverse_kin_has_solution``, then ``get_inverse_kin`` nearest the live
+        joints; both verified on a PolyScope 5.25.1 UR3e, 2026-09-27) — for the
+        active TCP, or for ``tcp`` (``[0]*6`` = the flange) without changing it.
+        One Primary round-trip for all poses; no motion, so it answers in Local
+        mode on e-Series. Each answer is ``{"reachable": bool | None, "joints":
+        [6 rad] | None}``; ``reachable`` is ``None`` when there is no answer:
+        dry-run, Primary busy/unreachable, or PolyScope X in Local mode (which
+        ignores Primary scripts)."""
+        none = {"reachable": None, "joints": None}
+        try:
+            clean = [[float(v) for v in p] for p in poses]
+        except (TypeError, ValueError):
+            return [dict(none) for _ in poses]  # the envelope names the bad value
+        if (
+            self.dry_run
+            or not clean
+            or any(len(p) != 6 or not all(math.isfinite(v) for v in p) for p in clean)
+        ):
+            return [dict(none) for _ in clean]
+        tcp_arg = ""
+        if tcp is not None:
+            t = [float(v) for v in tcp]
+            if len(t) != 6 or not all(math.isfinite(v) for v in t):
+                raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
+            tcp_arg = ", tcp=p[" + ", ".join(str(v) for v in t) + "]"
+        lines = []
+        for i, p in enumerate(clean):
+            target = "p[" + ", ".join(str(v) for v in p) + "]" + tcp_arg
+            lines.append(
+                f"if get_inverse_kin_has_solution({target}):\n"
+                f'  textmsg("urctl/ik/{i}=", get_inverse_kin({target}))\n'
+                "else:\n"
+                f'  textmsg("urctl/ik/{i}=", False)\n'
+                "end\n"
+            )
+        body = "".join(lines) + 'textmsg("urctl/ik/done=", 1)\n'
+        try:
+            captured = self.primary.run_and_capture(
+                body,
+                fn_name="urctl_ik_check",
+                marker="urctl/ik",
+                collect_for=collect_for,
+                stop_marker="urctl/ik/done=",
+            )
+        except OSError:
+            return [dict(none) for _ in clean]
+        from .primary import parse_vector
+
+        answers = [dict(none) for _ in clean]
+        for i in range(len(clean)):
+            tag = f"urctl/ik/{i}"
+            joints = parse_vector(captured, tag + "=")
+            if joints is not None and len(joints) == 6:
+                answers[i] = {"reachable": True, "joints": joints}
+            elif any(
+                (tag + "=") in line and line.split(tag + "=", 1)[1].strip().lower().startswith("false")
+                for line in captured
+            ):
+                answers[i] = {"reachable": False, "joints": None}
+        return answers
+
     def move_tcp(
         self,
         pose: list[float],
@@ -362,10 +636,18 @@ class Robot:
         acceleration: float = DEFAULT_TCP_ACCELERATION,
         wait: bool = True,
         timeout: float = 30.0,
+        tcp: list[float] | None = None,
     ) -> dict:
         """Linear Cartesian move (``movel``), after safety validation.
 
         ``pose`` is ``[x, y, z, rx, ry, rz]`` (metres + rotation-vector radians).
+        ``tcp`` overrides the controller's active TCP for this move: the program
+        runs ``set_tcp(p[...])`` before the ``movel`` so ``pose`` is where *that*
+        TCP lands — ``[0]*6`` targets the tool flange itself, regardless of what
+        the installation/pendant says. (Verified need: 2026-09-23 the UR3e's
+        active TCP carried a -35 mm Y offset the physical tool didn't, and the
+        flange landed 35 mm off.) The override sticks on the controller until
+        the next ``set_tcp`` / installation reload, as any URScript ``set_tcp`` does.
         With ``relative=True`` it is a **base-frame delta** added to the live TCP
         pose (e.g. ``[0, 0.05, 0, 0, 0, 0]`` nudges +50 mm along base +Y); with
         ``relative=False`` it is an absolute base-frame target.
@@ -381,12 +663,22 @@ class Robot:
             "velocity": velocity,
             "acceleration": acceleration,
         }
+        if tcp is not None:
+            tcp = [float(v) for v in tcp]
+            if len(tcp) != 6 or not all(math.isfinite(v) for v in tcp):
+                raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
+            args["tcp"] = tcp
+        ik = None
+        if not relative:
+            self._ensure_reach()
+            ik = self.ik_has_solution([pose], tcp=tcp)[0] if len(pose) == 6 else None
         verdict: SafetyVerdict = self.safety.validate_move_tcp(
             pose,
             velocity=velocity,
             acceleration=acceleration,
             relative=relative,
             robot_mode=None if self.dry_run else self.dashboard.robot_mode(),
+            ik_reachable=ik,
         )
         if not verdict.ok:
             return self._log("move_tcp", args, ok=False, safety=verdict.as_dict())
@@ -401,8 +693,9 @@ class Robot:
 
         pose_literal = "p[" + ", ".join(str(float(x)) for x in pose) + "]"
         target_expr = f"pose_add(get_actual_tcp_pose(), {pose_literal})" if relative else pose_literal
+        set_tcp = ("set_tcp(p[" + ", ".join(str(v) for v in tcp) + "])\n") if tcp is not None else ""
         body = (
-            f"movel({target_expr}, a={acceleration}, v={velocity})\n"
+            set_tcp + f"movel({target_expr}, a={acceleration}, v={velocity})\n"
             "sync()\n"
             'textmsg("urctl/move/done=", get_actual_tcp_pose())\n'
         )
@@ -439,6 +732,211 @@ class Robot:
             if "PROTECTIVE_STOP" in self.dashboard.safety_mode():
                 result["protective_stop"] = True
         return self._log("move_tcp", args, ok=ok, safety=verdict.as_dict(), result=result)
+
+    def move_tcp_path(
+        self,
+        legs: list[dict],
+        *,
+        tcp: list[float] | None = None,
+        timeout: float = 120.0,
+        gripper_first: int | None = None,
+    ) -> dict:
+        """Run several absolute ``movel`` legs as **one** program on one Primary
+        connection — an approach cycle (over → down → dwell → up → back) is one
+        submission instead of four reconnects (rapid reconnects wedge URControl;
+        see CLAUDE.md "How fast can you actually drive it").
+
+        Each leg is ``{"pose": [x,y,z,rx,ry,rz], "velocity"?, "acceleration"?,
+        "dwell_s"?, "blend_m"?, "gripper"?}`` — the robot ``sleep``s ``dwell_s``
+        after landing that leg; ``blend_m`` > 0 rounds the corner into the next
+        leg (``movel(..., r=)``: the leg is not stopped at, so its landed check
+        is loosened to the blend radius; never on the last leg); ``gripper``
+        ``"open"``/``"close"`` runs the Robotiq daemon on the controller's
+        loopback (:meth:`gripper`) after the leg lands and echoes
+        ``urctl/path/grip<i>=POS OBJ`` — so a whole pick (hover → edge → grasp
+        → close → lift → set → open → clear) is **one** program.
+        Every leg is validated against the envelope (reach, speed) up front with
+        one mode check; nothing is sent if any leg fails. ``tcp`` runs
+        ``set_tcp`` first (``[0]*6`` = the flange). Each leg echoes its landed
+        pose (``urctl/path/leg<i>=``); ``ok`` means every leg landed within
+        :data:`TCP_LANDING_TOLERANCE` of its target and the final marker came.
+        ``gripper_first`` (Robotiq position 0..255) is sent before the first leg and
+        not waited for — the fingers move while the arm does (a pick's pre-open).
+        """
+        if not legs:
+            raise ValueError("legs must not be empty")
+        if gripper_first is not None and (
+            isinstance(gripper_first, bool)
+            or not isinstance(gripper_first, int)
+            or not 0 <= gripper_first <= 255
+        ):
+            raise ValueError("gripper_first must be an integer position 0..255")
+        norm: list[dict] = []
+        for idx, leg in enumerate(legs):
+            pose = [float(v) for v in leg["pose"]]
+            if len(pose) != 6 or not all(math.isfinite(v) for v in pose):
+                raise ValueError(f"legs[{idx}].pose must be 6 finite numbers")
+            dwell = float(leg.get("dwell_s", 0.0) or 0.0)
+            if not math.isfinite(dwell) or dwell < 0.0 or dwell > 60.0:
+                raise ValueError(f"legs[{idx}].dwell_s must be within 0..60 s")
+            blend = float(leg.get("blend_m", 0.0) or 0.0)
+            if not math.isfinite(blend) or blend < 0.0 or blend > 0.1:
+                raise ValueError(f"legs[{idx}].blend_m must be within 0..0.1 m")
+            grip = leg.get("gripper")
+            if grip not in (None, "open", "close"):
+                raise ValueError(f"legs[{idx}].gripper must be open, close or absent")
+            norm.append(
+                {
+                    "pose": pose,
+                    "velocity": float(leg.get("velocity", DEFAULT_TCP_VELOCITY)),
+                    "acceleration": float(leg.get("acceleration", DEFAULT_TCP_ACCELERATION)),
+                    "dwell_s": dwell,
+                    "blend_m": blend if idx < len(legs) - 1 else 0.0,
+                    "gripper": grip,
+                }
+            )
+        if tcp is not None:
+            tcp = [float(v) for v in tcp]
+            if len(tcp) != 6 or not all(math.isfinite(v) for v in tcp):
+                raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
+        args = {"legs": norm, "tcp": tcp, "gripper_first": gripper_first}
+        self._ensure_reach()
+        robot_mode = None if self.dry_run else self.dashboard.robot_mode()
+        iks = self.ik_has_solution([leg["pose"] for leg in norm], tcp=tcp)
+        verdicts = []
+        for idx, leg in enumerate(norm):
+            verdict = self.safety.validate_move_tcp(
+                leg["pose"],
+                velocity=leg["velocity"],
+                acceleration=leg["acceleration"],
+                relative=False,
+                robot_mode=robot_mode,
+                ik_reachable=iks[idx],
+            )
+            if not verdict.ok:
+                safety = verdict.as_dict()
+                safety["leg"] = idx
+                return self._log("move_tcp_path", args, ok=False, safety=safety)
+            verdicts.append(verdict)
+        safety = {"ok": True, "violations": [], "legs": len(norm)}
+        if self.dry_run:
+            return self._log("move_tcp_path", args, ok=True, safety=safety, result={"reply": "(dry-run)"})
+
+        lines = []
+        if tcp is not None:
+            lines.append("set_tcp(p[" + ", ".join(str(v) for v in tcp) + "])")
+        uses_gripper = any(leg["gripper"] for leg in norm) or gripper_first is not None
+        if uses_gripper:
+            lines.append(
+                f'urctl_rq_ok = socket_open("{GRIPPER_DAEMON_HOST}", {GRIPPER_DAEMON_PORT}, "urctl_rq")'
+            )
+            lines.append('textmsg("urctl/path/gripper=", urctl_rq_ok)')
+        if gripper_first is not None:  # fire and go: the fingers travel while the arm does
+            lines += [
+                "if urctl_rq_ok:",
+                f'  socket_send_line("SET POS {gripper_first}", "urctl_rq")',
+                '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                '  socket_send_line("SET GTO 1", "urctl_rq")',
+                '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                "end",
+            ]
+        for idx, leg in enumerate(norm):
+            literal = "p[" + ", ".join(str(x) for x in leg["pose"]) + "]"
+            r = f", r={leg['blend_m']}" if leg["blend_m"] > 0 else ""
+            lines.append(f"movel({literal}, a={leg['acceleration']}, v={leg['velocity']}{r})")
+            if leg["blend_m"] <= 0:
+                lines.append("sync()")
+                lines.append(f'textmsg("urctl/path/leg{idx}=", get_actual_tcp_pose())')
+            if leg["gripper"]:
+                pos = 255 if leg["gripper"] == "close" else 0
+                lines += [
+                    "if urctl_rq_ok:",
+                    f'  socket_send_line("SET POS {pos}", "urctl_rq")',
+                    '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                    '  socket_send_line("SET GTO 1", "urctl_rq")',
+                    '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                    "  sleep(0.2)",
+                    "  urctl_rq_t = 0.0",
+                    "  while (urctl_rq_t < 4.0):",
+                    '    socket_send_line("GET OBJ", "urctl_rq")',
+                    '    urctl_rq_o = socket_read_string("urctl_rq", timeout=2.0)',
+                    '    if str_find(urctl_rq_o, "0") < 0:',
+                    "      urctl_rq_t = 4.0",
+                    "    else:",
+                    "      sleep(0.05)",
+                    "      urctl_rq_t = urctl_rq_t + 0.05",
+                    "    end",
+                    "  end",
+                    '  socket_send_line("GET POS", "urctl_rq")',
+                    '  urctl_rq_p = socket_read_string("urctl_rq", timeout=2.0)',
+                    # the daemon's replies end in a newline: one value per marker line
+                    f'  textmsg("urctl/path/grip{idx}/pos=", urctl_rq_p)',
+                    f'  textmsg("urctl/path/grip{idx}/obj=", urctl_rq_o)',
+                    "end",
+                ]
+            if leg["dwell_s"] > 0:
+                lines.append(f"sleep({leg['dwell_s']})")
+        if uses_gripper:
+            lines.append("if urctl_rq_ok:")
+            lines.append('  socket_close("urctl_rq")')
+            lines.append("end")
+        lines.append('textmsg("urctl/path/done=", get_actual_tcp_pose())')
+        body = "\n".join(lines) + "\n"
+        captured = self.primary.run_and_capture(
+            body,
+            fn_name="urctl_tcp_path",
+            marker="urctl/path",
+            collect_for=timeout,
+            stop_marker="urctl/path/done=",
+        )
+        import re as _re
+
+        from .primary import parse_vector
+
+        leg_results = []
+        for idx, leg in enumerate(norm):
+            entry: dict = {"pose": leg["pose"], "dwell_s": leg["dwell_s"], "blend_m": leg["blend_m"]}
+            if leg["blend_m"] > 0:
+                # a blended leg is passed through, not stopped at: it lands if the program went on
+                later = any(
+                    f"urctl/path/leg{j}=" in line for j in range(idx + 1, len(norm)) for line in captured
+                )
+                entry.update({"landed": None, "ok": later or any("urctl/path/done=" in c for c in captured)})
+            else:
+                landed = parse_vector(captured, f"urctl/path/leg{idx}=")
+                hit = landed is not None and (
+                    max(abs(a - b) for a, b in zip(landed[:3], leg["pose"][:3], strict=False))
+                    < TCP_LANDING_TOLERANCE
+                )
+                entry.update({"landed": landed, "ok": hit})
+            if leg["gripper"]:
+                grip: dict = {"action": leg["gripper"]}
+                for key in ("pos", "obj"):
+                    tag = f"urctl/path/grip{idx}/{key}="
+                    for line in captured:
+                        if tag in line:
+                            m = _re.search(r"(-?\d+)\s*$", line.split(tag, 1)[1].strip())
+                            if m:
+                                grip[key.upper()] = int(m.group(1))
+                if "OBJ" in grip:
+                    grip["object_detected"] = grip["OBJ"] in (1, 2)
+                if "POS" not in grip:
+                    grip["error"] = "no gripper readback (daemon missing, or the program stopped before it)"
+                entry["gripper"] = grip
+            leg_results.append(entry)
+        final = parse_vector(captured, "urctl/path/done=")
+        ok = final is not None and all(r["ok"] for r in leg_results)
+        if uses_gripper and not any("urctl/path/gripper=True" in c for c in captured):
+            ok = False
+        result = {
+            "legs": leg_results,
+            "completed_legs": sum(1 for r in leg_results if r["landed"] is not None),
+            "landed": final,
+            "waited": True,
+        }
+        if final is None and "PROTECTIVE_STOP" in self.dashboard.safety_mode():
+            result["protective_stop"] = True
+        return self._log("move_tcp_path", args, ok=ok, safety=safety, result=result)
 
     def move_trajectory(
         self,
@@ -524,14 +1022,190 @@ class Robot:
             result["protective_stop"] = True
         return self._log("move_trajectory", args, ok=ok, result=result)
 
-    def freedrive(self, enable: bool) -> dict:
-        """Enable/disable freedrive (hand-guiding). All six axes in base frame."""
-        args = {"enable": enable}
+    def freedrive(self, enable: bool, *, hold_s: float = DEFAULT_FREEDRIVE_HOLD_S) -> dict:
+        """Enable/disable freedrive (hand-guiding). All six axes in base frame.
+
+        Freedrive lives exactly as long as the program that called
+        ``freedrive_mode()``: a real e-Series drops it the instant the script
+        ends (verified on the UR3e, 2026-09-23 — a bare one-liner "worked" on
+        URSim and did nothing on hardware). So enabling sends a program that
+        stays running — a ``sleep`` loop bounded by ``hold_s`` (default 10 min,
+        max 1 h) — and confirms the mode is up by its ``textmsg`` marker;
+        ``ok`` is False when that marker never surfaces. Disabling sends
+        ``end_freedrive_mode()`` as a new program, which also kills the hold.
+        The hold releases itself when it expires (``urctl/freedrive=expired``
+        in the broadcast), so an orphaned button press can't leave the arm
+        limp indefinitely.
+        """
+        hold = max(1.0, min(float(hold_s), 3600.0))
+        args = {"enable": enable, "hold_s": hold} if enable else {"enable": enable}
         if self.dry_run:
             return self._log("freedrive", args, ok=True, result={"reply": "(dry-run)"})
-        body = "freedrive_mode()\n" if enable else "end_freedrive_mode()\n"
-        self.primary.run(body, fn_name="urctl_freedrive")
-        return self._log("freedrive", args, ok=True)
+        if enable:
+            body = (
+                "freedrive_mode()\n"
+                'textmsg("urctl/freedrive=on")\n'
+                "urctl_fd_t = 0.0\n"
+                f"while (urctl_fd_t < {hold:.1f}):\n"
+                "  sleep(0.5)\n"
+                "  urctl_fd_t = urctl_fd_t + 0.5\n"
+                "end\n"
+                "end_freedrive_mode()\n"
+                'textmsg("urctl/freedrive=expired")\n'
+            )
+            marker = "urctl/freedrive=on"
+        else:
+            body = 'end_freedrive_mode()\ntextmsg("urctl/freedrive=off")\n'
+            marker = "urctl/freedrive=off"
+        captured = self.primary.run_and_capture(
+            body,
+            fn_name="urctl_freedrive",
+            marker="urctl/freedrive",
+            collect_for=5.0,
+            stop_marker=marker,
+        )
+        confirmed = any(marker in line for line in captured)
+        result = {"confirmed": confirmed}
+        if enable:
+            result["held_s"] = hold
+        # Disabling is best-effort by design (the program may already be gone):
+        # report it ok and let ``confirmed`` say whether the controller echoed.
+        return self._log("freedrive", args, ok=confirmed or not enable, result=result)
+
+    # ----- Robotiq gripper ---------------------------------------------------
+
+    def gripper(
+        self,
+        action: str,
+        *,
+        position: int | None = None,
+        speed: int = 255,
+        force: int = 100,
+        timeout_s: float = 5.0,
+    ) -> dict:
+        """Drive a Robotiq gripper (Hand-E / 2F) through its URCap daemon.
+
+        The Robotiq URCap runs a daemon on the controller that speaks a line
+        protocol — ``SET VAR value`` → ``ack``, ``GET VAR`` → the value — on
+        ``127.0.0.1:63352`` (Robotiq's own ``rq_*`` script functions use the
+        same socket). It listens on the loopback only, so this sends one
+        Primary program that opens the socket from *inside* the controller,
+        talks to the daemon, and echoes the answers as ``textmsg`` markers.
+
+        ``action``: ``status`` reads; ``open`` / ``close`` / ``move`` (to
+        ``position`` 0 = fully open … 255 = fully closed) set speed, force and
+        position, trigger the motion (``GTO``) and wait until the gripper
+        reports it stopped (``OBJ`` ≠ 0: 1/2 = contact = an object is held,
+        3 = at the requested position, nothing in the fingers); ``activate``
+        (re)runs the activation cycle and waits for ``STA`` 3. Every call ends
+        with the full status readback; ``ok`` is False when the daemon is
+        missing, a fault (``FLT``) is set, or a move never settled.
+        Protocol from Robotiq's socket example (dof.robotiq.com #2420).
+        """
+        if action not in GRIPPER_ACTIONS:
+            raise ValueError(f"action must be one of {GRIPPER_ACTIONS}, got {action!r}")
+        if action == "open":
+            position = 0
+        elif action == "close":
+            position = 255
+        elif action == "move":
+            if position is None:
+                raise ValueError("move needs position (0 = open … 255 = closed)")
+        if position is not None and not (0 <= int(position) <= 255):
+            raise ValueError("position must be within 0..255")
+        if not (0 <= int(speed) <= 255) or not (0 <= int(force) <= 255):
+            raise ValueError("speed and force must be within 0..255")
+        timeout = max(0.5, min(float(timeout_s), 30.0))
+        args = {"action": action, "speed": int(speed), "force": int(force), "timeout_s": timeout}
+        if position is not None:
+            args["position"] = int(position)
+        if self.dry_run:
+            return self._log("gripper", args, ok=True, result={"reply": "(dry-run)", "status": {}})
+
+        sock = "urctl_rq"
+        get = lambda var: (  # noqa: E731 — one GET round-trip echoed as a marker
+            f'socket_send_line("GET {var}", "{sock}")\n'
+            f'textmsg("urctl/rq/{var}=", socket_read_string("{sock}", timeout=2.0))\n'
+        )
+        set_ = lambda var, val: (  # noqa: E731
+            f'socket_send_line("SET {var} {int(val)}", "{sock}")\n'
+            f'urctl_rq_r = socket_read_string("{sock}", timeout=2.0)\n'
+        )
+        body = (
+            f'if socket_open("{GRIPPER_DAEMON_HOST}", {GRIPPER_DAEMON_PORT}, "{sock}") == False:\n'
+            f'  textmsg("urctl/rq/error=", "no gripper daemon on {GRIPPER_DAEMON_HOST}:{GRIPPER_DAEMON_PORT} '
+            f'(is the Robotiq URCap installed and running?)")\n'
+            "else:\n"
+        )
+        if action == "activate":
+            body += "".join("  " + line for line in (set_("ACT", 0) + set_("ACT", 1)).splitlines(True))
+            body += (
+                "  urctl_rq_t = 0.0\n"
+                f"  while (urctl_rq_t < {timeout:.1f}):\n"
+                f'    socket_send_line("GET STA", "{sock}")\n'
+                f'    urctl_rq_s = socket_read_string("{sock}", timeout=2.0)\n'
+                '    if str_find(urctl_rq_s, "3") >= 0:\n'
+                f"      urctl_rq_t = {timeout:.1f}\n"
+                "    else:\n"
+                "      sleep(0.2)\n"
+                "      urctl_rq_t = urctl_rq_t + 0.2\n"
+                "    end\n"
+                "  end\n"
+            )
+        elif position is not None:
+            moves = set_("SPE", speed) + set_("FOR", force) + set_("POS", position) + set_("GTO", 1)
+            body += "".join("  " + line for line in moves.splitlines(True))
+            body += (
+                "  sleep(0.2)\n"
+                "  urctl_rq_t = 0.0\n"
+                f"  while (urctl_rq_t < {timeout:.1f}):\n"
+                f'    socket_send_line("GET OBJ", "{sock}")\n'
+                f'    urctl_rq_o = socket_read_string("{sock}", timeout=2.0)\n'
+                '    if str_find(urctl_rq_o, "0") < 0:\n'
+                f"      urctl_rq_t = {timeout:.1f}\n"
+                "    else:\n"
+                "      sleep(0.1)\n"
+                "      urctl_rq_t = urctl_rq_t + 0.1\n"
+                "    end\n"
+                "  end\n"
+            )
+        body += "".join("  " + line for line in "".join(get(v) for v in GRIPPER_STATUS_VARS).splitlines(True))
+        body += f'  socket_close("{sock}")\n  textmsg("urctl/rq/done=", "1")\nend\n'
+
+        captured = self.primary.run_and_capture(
+            body,
+            fn_name="urctl_gripper",
+            marker="urctl/rq",
+            collect_for=timeout + 4.0,
+            stop_marker="urctl/rq/done=",
+        )
+        status = _parse_gripper_status(captured)
+        error = next(
+            (line.split("urctl/rq/error=", 1)[1].strip() for line in captured if "urctl/rq/error=" in line),
+            None,
+        )
+        done = any("urctl/rq/done=" in line for line in captured)
+        result: dict = {"status": status, "captured": captured[-8:]}
+        if error:
+            result["error"] = error
+        elif not done:
+            result["error"] = "no reply from the gripper program on the Primary broadcast"
+        elif status.get("FLT"):
+            result["error"] = f"gripper fault FLT={status['FLT']}"
+        elif status.get("ACT") == 0 or status.get("STA") not in (None, 3):
+            result["error"] = (
+                f"gripper not activated (ACT={status.get('ACT')}, STA={status.get('STA')}) — run activate"
+            )
+        obj = status.get("OBJ")
+        if obj is not None:
+            result["object_detected"] = obj in (1, 2)
+            result["at_position"] = obj == 3
+            result["moving"] = obj == 0
+        if status.get("POS") is not None:
+            result["opening_est_mm"] = round((255 - status["POS"]) / 255.0 * 50.0, 1)  # Hand-E: 50 mm stroke
+        if position is not None and "error" not in result and obj == 0:
+            result["error"] = f"the gripper was still moving after {timeout:.1f} s"
+        return self._log("gripper", args, ok="error" not in result, result=result)
 
     # ----- RTDE writes -------------------------------------------------------
 

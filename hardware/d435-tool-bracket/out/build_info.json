@@ -1,0 +1,361 @@
+{
+  "params": {
+    "PLATE_OD": 96.0,
+    "PATTERNS": [
+      "iso50",
+      "iso80"
+    ],
+    "PLATE_T": 6.0,
+    "PLATE_EDGE_CHAMFER": 1.0,
+    "CENTER_HOLE_D": 24.0,
+    "PCD50": 50.0,
+    "BOLT50_HOLE_D": 6.6,
+    "BOLT50_ANGLES_DEG": [
+      45.0,
+      135.0,
+      225.0,
+      315.0
+    ],
+    "DOWEL50_SLOT_W": 6.2,
+    "DOWEL50_SLOT_L": 9.0,
+    "SPIGOT_OD": 31.3,
+    "SPIGOT_H": 4.0,
+    "SPIGOT_CHAMFER": 0.8,
+    "TOP_RECESS_D": 31.7,
+    "TOP_RECESS_H": 4.0,
+    "PCD80": 80.0,
+    "BOLT80_HOLE_D": 9.0,
+    "BOLT80_ANGLES_DEG": [
+      0.0,
+      60.0,
+      120.0,
+      180.0,
+      240.0,
+      300.0
+    ],
+    "DOWEL80_SLOT_W": 8.2,
+    "DOWEL80_SLOT_L": 11.0,
+    "SPIGOT80_OD": 0.0,
+    "SPIGOT80_H": 3.0,
+    "DOWEL_ANGLE_DEG": 90.0,
+    "TOOL_CONNECTOR_Z_ESERIES": -35.65,
+    "TOOL_CONNECTOR_Z_UR20": -17.6,
+    "TOOL_CONNECTOR_D": 10.0,
+    "TOOL_PLUG_D": 12.0,
+    "ARM_ANGLE_DEG": 90.0,
+    "ESERIES_PLATE_OD": 63.0,
+    "ESERIES_PATTERNS": [
+      "iso50"
+    ],
+    "ESERIES_WRIST_R": 45.0,
+    "UR20_ARM_ANGLE_DEG": 45.0,
+    "UR20_SPIGOT_OD": 49.8,
+    "UR20_TOP_RECESS_D": 50.2,
+    "ARM_W": 56.0,
+    "WRIST_R": 50.0,
+    "WALL_CLEAR": 3.0,
+    "WALL_T": 6.0,
+    "WALL_BELOW_CAM": 0.0,
+    "WALL_CORNER_R": 6.0,
+    "CAM_PROUD": 0.0,
+    "CAM_L": 90.0,
+    "CAM_H": 25.0,
+    "CAM_D": 25.05,
+    "TRIPOD_FROM_FRONT": 14.9,
+    "TRIPOD_HOLE_D": 6.6,
+    "TRIPOD_CSK_D": 12.7,
+    "TRIPOD_CSK_ANGLE": 82.0,
+    "M3_FROM_FRONT": 14.2,
+    "M3_HOLE_D": 3.4,
+    "M3_CSK_D": 6.6,
+    "M3_CSK_ANGLE": 90.0,
+    "M3_SPACING": 45.0,
+    "IMAGER_OFFSET": 17.5,
+    "BASELINE": 50.0,
+    "DEPTH_ORIGIN_FROM_FRONT": 4.3,
+    "HOLE_PRINT_ALLOWANCE": 0.0
+  },
+  "variants": [
+    "eseries",
+    "ur20"
+  ],
+  "derived": {
+    "wall_inner_x": 53.0,
+    "wall_outer_x": 59.0,
+    "wall_z_range": [
+      -19.05,
+      6.0
+    ],
+    "camera_front_z": 6.0,
+    "camera_back_z": -19.05,
+    "camera_x_range": [
+      59.0,
+      84.0
+    ],
+    "camera_y_range": [
+      -45.0,
+      45.0
+    ],
+    "camera_z_range": [
+      -19.05,
+      6.0
+    ],
+    "tripod_z": -8.9,
+    "m3_z": -8.2,
+    "radial_extent": 84.0,
+    "lowest_z": -19.05,
+    "usb_c": {
+      "where": "camera back face (-Z), camera-left end, 36\u201345 mm from centre; exits along -Z",
+      "flange_xyz_mm": [
+        40.5,
+        71.5,
+        -19.05
+      ]
+    },
+    "tool_connector": {
+      "eseries": {
+        "angular_gap_deg": -34.3,
+        "axial_gap_mm": 10.6,
+        "clear": true
+      },
+      "ur20_at_this_angle": {
+        "angular_gap_deg": -34.3,
+        "axial_gap_mm": -7.45,
+        "clear": false
+      },
+      "ur20_at_UR20_ARM_ANGLE_DEG": {
+        "angular_gap_deg": 10.7,
+        "axial_gap_mm": -7.45,
+        "clear": true
+      }
+    },
+    "depth_origin_flange_mm": [
+      17.5,
+      71.5,
+      1.7
+    ],
+    "camera_axes_in_flange": {
+      "x_cam": [
+        -1.0,
+        0.0,
+        0
+      ],
+      "y_cam": [
+        -0.0,
+        -1.0,
+        0
+      ],
+      "z_cam": [
+        0,
+        0,
+        1
+      ]
+    },
+    "arm_angle_deg": 90.0
+  },
+  "camera_mesh": {
+    "url": "https://raw.githubusercontent.com/IntelRealSense/realsense-ros/9189b0591fae677570d2dfd0ae8957fb6f12e635/realsense2_description/meshes/d435.dae",
+    "sha256": "42f3b66f47a1f8f425a2e4dc07c1d9c283183167d8441f520a15623d98f9bf78",
+    "license": "Apache-2.0 (IntelRealSense/realsense-ros)",
+    "triangles": 12000
+  },
+  "export": {
+    "variants": {
+      "eseries": {
+        "overrides": {
+          "PLATE_OD": 63.0,
+          "PATTERNS": [
+            "iso50"
+          ],
+          "WRIST_R": 45.0
+        },
+        "derived": {
+          "wall_inner_x": 48.0,
+          "wall_outer_x": 54.0,
+          "wall_z_range": [
+            -19.05,
+            6.0
+          ],
+          "camera_front_z": 6.0,
+          "camera_back_z": -19.05,
+          "camera_x_range": [
+            54.0,
+            79.0
+          ],
+          "camera_y_range": [
+            -45.0,
+            45.0
+          ],
+          "camera_z_range": [
+            -19.05,
+            6.0
+          ],
+          "tripod_z": -8.9,
+          "m3_z": -8.2,
+          "radial_extent": 79.0,
+          "lowest_z": -19.05,
+          "usb_c": {
+            "where": "camera back face (-Z), camera-left end, 36\u201345 mm from centre; exits along -Z",
+            "flange_xyz_mm": [
+              40.5,
+              66.5,
+              -19.05
+            ]
+          },
+          "tool_connector": {
+            "eseries": {
+              "angular_gap_deg": -37.4,
+              "axial_gap_mm": 10.6,
+              "clear": true
+            },
+            "ur20_at_this_angle": {
+              "angular_gap_deg": -37.4,
+              "axial_gap_mm": -7.45,
+              "clear": false
+            },
+            "ur20_at_UR20_ARM_ANGLE_DEG": {
+              "angular_gap_deg": 7.6,
+              "axial_gap_mm": -7.45,
+              "clear": true
+            }
+          },
+          "depth_origin_flange_mm": [
+            17.5,
+            66.5,
+            1.7
+          ],
+          "camera_axes_in_flange": {
+            "x_cam": [
+              -1.0,
+              0.0,
+              0
+            ],
+            "y_cam": [
+              -0.0,
+              -1.0,
+              0
+            ],
+            "z_cam": [
+              0,
+              0,
+              1
+            ]
+          },
+          "arm_angle_deg": 90.0
+        },
+        "volume_cm3": 29.72339403739811,
+        "mass_g_ppa_cf_solid": 37.15424254674764,
+        "bbox_mm": [
+          63.01,
+          85.52,
+          25.07
+        ],
+        "stl": "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/out/d435_tool_bracket_eseries.stl",
+        "step": "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/out/d435_tool_bracket_eseries.step",
+        "assembly_step": "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/out/d435_tool_bracket_assembly_eseries.step"
+      },
+      "ur20": {
+        "overrides": {
+          "TOP_RECESS_D": 50.2,
+          "SPIGOT80_OD": 49.8,
+          "ARM_ANGLE_DEG": 45.0
+        },
+        "derived": {
+          "wall_inner_x": 53.0,
+          "wall_outer_x": 59.0,
+          "wall_z_range": [
+            -19.05,
+            6.0
+          ],
+          "camera_front_z": 6.0,
+          "camera_back_z": -19.05,
+          "camera_x_range": [
+            59.0,
+            84.0
+          ],
+          "camera_y_range": [
+            -45.0,
+            45.0
+          ],
+          "camera_z_range": [
+            -19.05,
+            6.0
+          ],
+          "tripod_z": -8.9,
+          "m3_z": -8.2,
+          "radial_extent": 84.0,
+          "lowest_z": -19.05,
+          "usb_c": {
+            "where": "camera back face (-Z), camera-left end, 36\u201345 mm from centre; exits along -Z",
+            "flange_xyz_mm": [
+              79.195959,
+              21.92031,
+              -19.05
+            ]
+          },
+          "tool_connector": {
+            "eseries": {
+              "angular_gap_deg": 10.7,
+              "axial_gap_mm": 10.6,
+              "clear": true
+            },
+            "ur20_at_this_angle": {
+              "angular_gap_deg": 10.7,
+              "axial_gap_mm": -7.45,
+              "clear": true
+            },
+            "ur20_at_UR20_ARM_ANGLE_DEG": {
+              "angular_gap_deg": 10.7,
+              "axial_gap_mm": -7.45,
+              "clear": true
+            }
+          },
+          "depth_origin_flange_mm": [
+            62.932504,
+            38.183766,
+            1.7
+          ],
+          "camera_axes_in_flange": {
+            "x_cam": [
+              -0.707107,
+              0.707107,
+              0
+            ],
+            "y_cam": [
+              -0.707107,
+              -0.707107,
+              0
+            ],
+            "z_cam": [
+              0,
+              0,
+              1
+            ]
+          },
+          "arm_angle_deg": 45.0
+        },
+        "volume_cm3": 44.19259158259314,
+        "mass_g_ppa_cf_solid": 55.24073947824142,
+        "bbox_mm": [
+          109.54,
+          109.54,
+          25.07
+        ],
+        "stl": "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/out/d435_tool_bracket_ur20.stl",
+        "step": "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/out/d435_tool_bracket_ur20.step",
+        "assembly_step": "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/out/d435_tool_bracket_assembly_ur20.step"
+      }
+    },
+    "camera_body_stl": "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/out/d435_body_in_flange_frame.stl"
+  },
+  "renders": [
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/iso_closeup.png",
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/iso_wide.png",
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/iso_ur20.png",
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/side_xz.png",
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/top_xy.png",
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/underside_eseries.png",
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/underside_ur20.png",
+    "/Users/nick/github/UR-utils/hardware/d435-tool-bracket/renders/wrist_side.png"
+  ]
+}

@@ -105,15 +105,19 @@ def run_guided_command(session, line: str) -> dict:
 def build_live_reloader(robot, args):
     """Return a LiveReloader for ``--live`` (or None if not requested).
 
-    ``--live-program-dir`` (a host-reachable controller program dir) wins over
-    ``--live-container`` (docker cp into this repo's URSim). The reload target
-    must be loadable by the controller, hence one of these two placers.
+    Placer precedence: ``--live-scp`` (real robot over SSH) wins over
+    ``--live-program-dir`` (host-reachable share / mounted controller dir) wins
+    over ``--live-container`` (docker cp into this repo's URSim — the dev
+    default). One of these must reach the controller or PolyScope can't reload
+    the tree.
     """
     if not args.live:
         return None
-    from .guided import LiveReloader, docker_placer, local_dir_placer
+    from .guided import LiveReloader, docker_placer, local_dir_placer, scp_placer
 
-    if args.live_program_dir:
+    if getattr(args, "live_scp", None):
+        placer = scp_placer(args.live_scp)
+    elif args.live_program_dir:
         placer = local_dir_placer(args.live_program_dir, installation=args.installation)
     else:
         placer = docker_placer(args.live_container, installation=args.installation)
@@ -243,9 +247,40 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("state", help="read and print robot state")
-    sub.add_parser("rtde-state", help="read high-rate structured state via RTDE (port 30004)")
+    rt = sub.add_parser("rtde-state", help="read high-rate structured state via RTDE (port 30004)")
+    rt.add_argument(
+        "--deep",
+        action="store_true",
+        help="full diagnostic recipe: joint currents/temps/voltages, power, tool, analog IO",
+    )
     sub.add_parser("bring-up", help="cold start to RUNNING (power on + brake release)")
     sub.add_parser("power-off", help="power off motors")
+
+    def _add_access_args(p):
+        p.add_argument(
+            "--ssh",
+            metavar="[USER@]HOST",
+            default=None,
+            help="reach the controller filesystem over SSH (default user root; default host = --host)",
+        )
+        p.add_argument(
+            "--container",
+            metavar="NAME",
+            default=None,
+            help="reach a URSim container filesystem via docker exec",
+        )
+
+    sn = sub.add_parser(
+        "snapshot",
+        help="full cell model: live state + deep RTDE + controller filesystem (joints, "
+        "calibration, programs, installation, storage)",
+    )
+    _add_access_args(sn)
+    sn.add_argument("--installation", default="default", help="installation name to parse (default: default)")
+    sn.add_argument("--no-live", action="store_true", help="skip the network reads (offline robot)")
+
+    pr = sub.add_parser("programs", help="list .urp/.script/.installation files on the controller")
+    _add_access_args(pr)
 
     sp = sub.add_parser("speed", help="set the global speed slider (0-1) via RTDE")
     sp.add_argument("fraction", type=float, help="speed scale 0-1 (1.0 = full programmed speed)")
@@ -272,6 +307,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="treat pose as a base-frame delta from the current TCP (e.g. 0 0.05 0 0 0 0 = +50mm Y)",
     )
+    mt.add_argument(
+        "--tcp",
+        type=float,
+        nargs=6,
+        metavar="T",
+        default=None,
+        help="override the active TCP for this move (set_tcp in the same program); 0 0 0 0 0 0 = flange",
+    )
     mt.add_argument("--velocity", type=float, default=None, help="linear speed in m/s")
     mt.add_argument("--acceleration", type=float, default=None, help="linear acceleration in m/s^2")
 
@@ -281,6 +324,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     fd = sub.add_parser("freedrive", help="enable/disable hand-guiding")
     fd.add_argument("state", choices=["on", "off"])
+    fd.add_argument(
+        "--hold",
+        type=float,
+        default=None,
+        help="seconds to hold freedrive before it releases itself (default 600)",
+    )
+
+    gr = sub.add_parser(
+        "gripper", help="Robotiq gripper via its URCap daemon: status/open/close/move/activate"
+    )
+    gr.add_argument("action", choices=["status", "open", "close", "move", "activate"])
+    gr.add_argument("--position", type=int, default=None, help="move target, 0 = open … 255 = closed")
+    gr.add_argument("--speed", type=int, default=255, help="0..255 (default 255)")
+    gr.add_argument("--force", type=int, default=100, help="0..255 (default 100)")
+    gr.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for the motion to settle")
 
     pu = sub.add_parser("popup", help="show a popup on the teach pendant")
     pu.add_argument("text")
@@ -344,6 +402,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="host-reachable controller program dir for --live (overrides --live-container; "
         "use for a real robot whose program folder is a mounted share)",
     )
+    gd.add_argument(
+        "--live-scp",
+        default=None,
+        help="SCP target for --live on a real e-Series (e.g. root@192.168.1.50). "
+        "Wins over --live-program-dir / --live-container. Set $SSHPASS for password "
+        "auth, otherwise enroll a pubkey first (ssh-copy-id). The matching "
+        "<installation>.installation must already exist on the controller.",
+    )
 
     insp = sub.add_parser(
         "inspect",
@@ -372,6 +438,12 @@ def build_parser() -> argparse.ArgumentParser:
     insp.add_argument("--live", action="store_true", help="reload the program after each capture")
     insp.add_argument("--live-container", default="ur-docker-ursim-1", help="container for --live")
     insp.add_argument("--live-program-dir", default=None, help="controller program dir for --live")
+    insp.add_argument(
+        "--live-scp",
+        default=None,
+        help="SCP target for --live on a real e-Series (e.g. root@192.168.1.50); see "
+        "`urctl guided --help` for the env vs. pubkey auth options",
+    )
 
     sub.add_parser("tools", help="print the agent tool schemas as JSON")
 
@@ -389,6 +461,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # legacy Windows codepages: replace, don't crash
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
 
     # `tools` needs no connection — print and exit.
     if args.cmd == "tools":
@@ -412,7 +487,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "state":
         return _emit(robot.get_state())
     if args.cmd == "rtde-state":
-        return _emit(robot.rtde_state())
+        return _emit(robot.rtde_state(deep=args.deep))
+    if args.cmd in ("snapshot", "programs"):
+        from .sysinfo import SystemInspector, runner_for
+
+        access = "ssh" if args.ssh else "docker" if args.container else None
+        runner = runner_for(config, access=access, target=args.ssh or args.container)
+        inspector = SystemInspector(runner)
+        if args.cmd == "programs":
+            return _emit({"ok": True, **inspector.programs()})
+        result: dict = {"ok": True, "host": config.host}
+        if not args.no_live:
+            result["live"] = robot.get_state()
+            result["telemetry"] = robot.rtde_state(deep=True)
+        result["system"] = inspector.snapshot(installation_name=args.installation)
+        return _emit(result)
     if args.cmd == "bring-up":
         return _emit(robot.bring_up())
     if args.cmd == "power-off":
@@ -434,6 +523,8 @@ def main(argv: list[str] | None = None) -> int:
             kwargs["velocity"] = args.velocity
         if args.acceleration is not None:
             kwargs["acceleration"] = args.acceleration
+        if args.tcp is not None:
+            kwargs["tcp"] = args.tcp
         return _emit(robot.move_tcp(args.pose, **kwargs))
     if args.cmd == "move-home":
         kwargs = {}
@@ -443,7 +534,13 @@ def main(argv: list[str] | None = None) -> int:
             kwargs["acceleration"] = args.acceleration
         return _emit(robot.move_home(**kwargs))
     if args.cmd == "freedrive":
-        return _emit(robot.freedrive(args.state == "on"))
+        kwargs = {} if args.hold is None else {"hold_s": args.hold}
+        return _emit(robot.freedrive(args.state == "on", **kwargs))
+    if args.cmd == "gripper":
+        kwargs = {"speed": args.speed, "force": args.force, "timeout_s": args.timeout}
+        if args.position is not None:
+            kwargs["position"] = args.position
+        return _emit(robot.gripper(args.action, **kwargs))
     if args.cmd == "popup":
         return _emit(robot.popup(args.text))
     if args.cmd == "load":
