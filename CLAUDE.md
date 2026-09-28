@@ -612,7 +612,7 @@ checks `safetymode` when a move fails to confirm). The raw reason is in the
 container's URControl log, not `polyscope.log`:
 
 ```bash
-sudo docker exec ur-docker-ursim-1 grep -i 'protective\|C154' /ursim/URControl.log | tail
+sudo docker exec universal-perceptronics-ursim-1 grep -i 'protective\|C154' /ursim/URControl.log | tail
 ```
 
 **`robot_mode` stays `RUNNING` through a protective stop** — only `safety_mode`
@@ -852,7 +852,7 @@ For deeper development tasks:
   it spells out exactly what's wrong even when Dashboard returns "unknown
   failure":
   ```bash
-  sudo docker exec ur-docker-ursim-1 tail -f /ursim/polyscope.log
+  sudo docker exec universal-perceptronics-ursim-1 tail -f /ursim/polyscope.log
   ```
 
 ## Things NOT to do

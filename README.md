@@ -1,6 +1,6 @@
 ![ur](docs/ur-hero.png)
 
-# UR-utils
+# universal-perceptronics
 
 Drive a Universal Robots arm from your laptop. This repo gives you a PolyScope
 simulator in Docker and `urctl`, a zero-dependency Python CLI, library and MCP
@@ -10,7 +10,7 @@ way: `--host` is the only difference.
 ## Quick start
 
 ```bash
-git clone https://github.com/Olympus-Controls/UR-utils && cd UR-utils
+git clone https://github.com/Olympus-Controls/universal-perceptronics && cd universal-perceptronics
 docker compose up -d          # the simulator; pendant at http://localhost:6080/vnc.html
 uv sync                       # or: pip install .
 uv run urctl bring-up         # power on + release brakes

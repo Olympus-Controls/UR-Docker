@@ -446,7 +446,7 @@ class TestBuildLiveReloader:
 
         d = dict(
             live=False,
-            live_container="ur-docker-ursim-1",
+            live_container="universal-perceptronics-ursim-1",
             live_program_dir=None,
             live_scp=None,
             name="P",

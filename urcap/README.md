@@ -124,7 +124,7 @@ a base-frame point. The robot silently ignores the pose query, and the node show
 Get this repository and its environment:
 
 ```bash
-git clone https://github.com/Olympus-Controls/UR-utils.git && cd UR-utils
+git clone https://github.com/Olympus-Controls/universal-perceptronics.git && cd universal-perceptronics
 uv sync --extra perception
 ```
 

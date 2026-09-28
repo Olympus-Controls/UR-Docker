@@ -1,5 +1,5 @@
 [project]
-name = "ur-docker"
+name = "universal-perceptronics"
 version = "0.1.0"
 description = "Host-side control + perception tooling for Universal Robots e-Series (URSim sandbox)"
 readme = "README.md"

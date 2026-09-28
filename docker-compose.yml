@@ -1,3 +1,6 @@
+# Pinned so container names (universal-perceptronics-ursim-1, …) don't depend on the checkout directory.
+name: universal-perceptronics
+
 services:
   ursim:
     image: universalrobots/ursim_e-series:5.26.0
