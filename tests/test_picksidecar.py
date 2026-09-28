@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 import socket
 import threading
@@ -273,3 +274,21 @@ def test_the_preview_flange_never_falls_back_to_a_primary_script():
             primary.accept()
     finally:
         primary.close()
+
+
+def test_an_unwritable_log_falls_back_to_the_user_log_dir(tmp_path, monkeypatch):
+    import perception.picksidecar as sidecar
+
+    locked = tmp_path / "captures"
+    locked.mkdir()
+    locked.chmod(0o500)  # what a sudo cockpit run leaves behind: not ours to write
+    monkeypatch.setattr(sidecar, "user_log_dir", lambda: tmp_path / "user-logs")
+    try:
+        got = sidecar.writable_log(locked / "pick-server.log")
+        if os.access(locked, os.W_OK):  # running as root: nothing is locked
+            pytest.skip("the test runs as root; the directory is writable")
+        assert got == tmp_path / "user-logs" / "pick-server.log" and got.exists()
+        free = tmp_path / "free" / "pick-server.log"
+        assert sidecar.writable_log(free) == free  # a writable preference is kept
+    finally:
+        locked.chmod(0o700)

@@ -16,7 +16,9 @@ session is using — can't grow those without a restart. This process adds them 
 
 Everything it hears and answers — including the program's own ``LOG`` lines (start,
 FIND, look, REFINE, hover, grip, lift, and why it gave up) — goes, timestamped, to
-stderr, to ``--log`` (default ``captures/pick-server.log``) and to ``GET /api/pick/log``
+stderr, to ``--log`` (default ``captures/pick-server.log``; when that isn't writable —
+a sudo cockpit run leaves ``captures/`` root-owned — the per-user log directory,
+:func:`user_log_dir`) and to ``GET /api/pick/log``
 (the last lines as text, for a browser next to the pendant).
 
 Point the node's cockpit URL at this process (``http://<host>:7631``); the detect reply
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import sys
 import threading
 import time
@@ -65,6 +68,31 @@ _HOP_BY_HOP = {
     "server",
     "date",
 }
+
+
+def user_log_dir() -> Path:
+    """The per-user log directory: ``~/Library/Logs/perception`` (macOS),
+    ``%LOCALAPPDATA%\\perception\\logs`` (Windows), ``$XDG_STATE_HOME/perception``
+    (else ``~/.local/state/perception``)."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "perception"
+    if os.name == "nt":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "perception" / "logs"
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "perception"
+
+
+def writable_log(preferred: Path) -> Path | None:
+    """``preferred`` if it can be appended to, else the same name in :func:`user_log_dir`,
+    else None (stderr only)."""
+    for path in (preferred, user_log_dir() / preferred.name):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8"):
+                pass
+        except OSError:
+            continue
+        return path
+    return None
 
 
 class PickLog:
@@ -330,11 +358,12 @@ def run_pick_server(args) -> int:
     from .handeye import tip_m_from_env
 
     robot = Robot(RobotConfig.from_env(host=args.host), dry_run=args.dry_run)
-    try:
-        args.log.parent.mkdir(parents=True, exist_ok=True)
-        LOG.path = args.log
-    except OSError as exc:
-        print(f"[pick-server] log file {args.log}: {exc} — stderr only", file=sys.stderr)
+    LOG.path = writable_log(args.log)
+    if LOG.path != args.log:
+        print(
+            f"[pick-server] {args.log} is not writable — logging to {LOG.path or 'stderr only'}",
+            file=sys.stderr,
+        )
 
     def flange() -> dict:
         return robot.get_flange_pose(script_fallback=False)
