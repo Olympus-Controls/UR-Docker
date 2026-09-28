@@ -2,15 +2,14 @@
 
 ## Needs the cell (UR3e + Hand-E; demo Monday 2026-09-28)
 
-- 2026-09-25 — Four pick-cycle faults could not be injected from the desk and are untested claims until someone does them once: pendant flipped to **Local** mid-run, a webcam or the D435 **unplugged** mid-run, the cockpit **restarted** while the routine is on a block, robot **power cut**. Note what the routine did in the field log.
 - 2026-09-25 — The survey sees 3 of 4 blocks from the three overlook poses: add a `--survey-pose` from the far side of the pile. The second look sometimes shifts a centre 20–30 mm and closes on nothing — 0.4 m looks like the edge of the D435's depth on foam; try surveying from 0.3 m.
-- 2026-09-25 — `pick-cycle --min-radius-m` is opt-in (default 0). On the UR3e pass `0.25` (the block at 0.24 m protective-stopped twice), or teach a via-point. A per-model default would remove the flag.
+- 2026-09-27 — Nick: "survey the entire FOV". Found at 18:45: a dry-run survey found **0** of the 2 blocks in view. In the evening light the foam reads 55–100 on its darkest channel and `WHITE_MIN` is a fixed 180. At 50 both blocks are found, at 60 neither — the floor is 20–40. The Hand-E also covers the lower-right quarter of the colour frame, and blobs touching the frame edge are dropped. Open: light the cell for the demo, make the white threshold follow the frame's exposure, or did "entire FOV" mean something else?
 - 2026-09-25 — Mac Studio + D435: `--rs-lean` streams (first open errors once, the back-off re-open holds). Open: why the *first* open still loses — shave one more reset, or accept the one retry. Ruled out: software drift, headless-vs-desktop, a fresh daemon, the webcams, Spotify. The Mac is a dev box, not a camera host; Windows laptop (WSL2, verified 09-23) and Jetson are.
 - 2026-09-12 — The native Windows path (`scripts/setup-windows.ps1`, `scripts/cockpit.ps1`, `REALSENSE_LIB` at the SDK's default `bin\x64\realsense2.dll`) has not been run on a Windows box. First run on the work laptop is the verification; paste the doctor output (`uv run perception --cell ur20 doctor --stream --json`) if anything fails.
 
 ## PolyScope X URCap (2026-09-26, `urcap/DEVELOPING.md`)
 
-- Installed in the sim and verified headless (node loads, feed/hover/click against `make urcap-cockpit` on :7622). **Still owed:** a cockpit with a robot behind it — restart your live one with `--cors http://localhost:8000` (your `Quickstart` line + that flag), set the node's cockpit URL to `http://localhost:7621`, click a block: base point + approach + reach, then **Move (cockpit)** on the UR3e. **Move (PolyScope)** (IK + auto-move; is `Pose.orientation` a rotation vector?) needs the sim's arm powered + Remote, or the real PolyScope X cell.
+- Installed in the sim and verified headless (node loads, feed/hover/click against `make urcap-cockpit` on :7622). **Still owed:** a cockpit with a robot behind it — restart your live one with `--cors http://localhost:8000` (`scripts/cockpit-mac.sh` + that flag), set the node's cockpit URL to `http://localhost:7621`, click a block: base point + approach + reach, then **Move (cockpit)** on the UR3e. **Move (PolyScope)** (IK + auto-move; is `Pose.orientation` a rotation vector?) needs the sim's arm powered + Remote, or the real PolyScope X cell.
 - Later, on the robot: a backend-container packaging of the cockpit (`containers:` + `devices: video` + `services: urcontrol-primary`) so the pendant needs no external host.
 
 ## Code (no robot needed)
@@ -20,17 +19,23 @@
 ## Open questions for Nick
 
 - 2026-09-02 — The on-controller GPU is a **Jetson** (decided 2026-09-25); which JetPack / L4T base to pin in `Dockerfile.perception` for CUDA + SAM is still open.
-- 2026-09-25 — Pruning, second half. Scope A was only half done: the monocular scanner and the dead bits are gone, but the pre-RealSense **2-D `perceive` pipeline** is still here (`pipeline`/`depth`/`blobs`/`sources`/`tools`/`factory`, backends `blob_cv` + `depth_anything`, CLI `synthetic`/`capture`/`image`/`call`/`tools`, the `depth` extra, `docs/perception.md`, ~2k lines; its `perception/tools.py` registry is merged into `urctl-mcp` and the `urctl` GUI). Delete?
-- 2026-09-25 — Guided/inspect wizard (`urctl/guided.py`, `LiveReloader` placers) + `InspectionBot`/`Dance`/`AppleStack`/`PickPlace` programs + the `ur-pick-from-image` skill: delete, or keep as an optional UR-only module? (`urp_convert` + `urp_builder` + `NodeTreeDemo` + `MotionDemo` stay: loading programs is core control.)
-- 2026-09-25 — One GUI: retire `urctl-gui` (`urctl/webapp.py` + its `index.html`) in favour of the cockpit?
-- 2026-09-25 — `sysinfo`/`installation` + `ur_system_snapshot`/`ur_list_programs` (SSH/docker filesystem introspection): delete? Neither the UR3e nor PolyScope X exposes SSH; RTDE deep state + `codes` stay.
-- 2026-09-25 — SAM extra: keep the hook for the Jetson, or drop until it exists?
-- 2026-09-27 — `get_flange_pose` failed twice (12:49:06–:15) with *no TCP pose/offset surfaced on the Primary broadcast* on the UR3e (Remote, RUNNING/NORMAL, idle), then recovered; cause unknown (no audit log, SSH :22 closed). Add a Dashboard snapshot (robotmode/safetymode/programState/remote + wait time) and the `captured` tail to the failure so the next one explains itself?
-- 2026-09-27 — URCap package verification: the reproducible `urcap/dist/` build (new tar headers) hasn't been installed in the sim yet — the sim was in use. OK to `make urcap-install` (replaces the installed 0.1.0), and to open a **draft** PR for this branch (it touches `ci.yml` lint paths)? `urcap/README.md` tells people to clone `main`, which has no `urcap/` until this merges.
-- 2026-09-27 — First PolyScope 5 load of `urcap/dist/realsense-pilot-ps5-0.1.0.urcap` (the e-Series sim can't run on the Mac): install it on the UR3e from USB (asked 2026-09-27 "install it now": no network path — SSH closed, no install API; needs the stick) (Settings → System → URCaps → +, restarts PolyScope; removable from the same screen) — before or after Monday's demo? Or add a CI step that copies it into URSim's `/urcaps` and asserts `polyscope.log` loads it (a `ci.yml` edit → draft PR)?
+- 2026-09-27 — `get_flange_pose` failed twice (12:49) with *no TCP pose/offset surfaced on the Primary broadcast*; reproduced 18:40 with the pendant in **Local** (doctor `robot.tcp`), passes in Remote. So on 5.25.1 the textmsg read is gated on Remote too, and `Robot.get_flange_pose`'s docstring ("works in Local") is wrong. After the demo: say so in the error (Dashboard snapshot incl. remote + the `captured` tail) and fix the docstring/CLAUDE.md.
+- 2026-09-27 — First PolyScope 5 install of `realsense-pilot-ps5-0.1.0.urcap`: the first try on the UR3e was refused (no `Bundle-Category: URCap`, fixed 1892a21). The fixed build is on the "URE MODELS" stick (sha256 6e0318817a1e…): Settings → System → URCaps → + → Restart. Past the file checks the installer still runs a compatibility check and a trial OSGi install, and the node has never rendered on a PolyScope 5 pendant.
+
+## After the demo (2026-09-28)
+
+- 2026-09-25 — (held until after the demo, Nick 09-27) Four pick-cycle faults could not be injected from the desk and are untested claims until someone does them once: pendant flipped to **Local** mid-run, a webcam or the D435 **unplugged** mid-run, the cockpit **restarted** while the routine is on a block, robot **power cut**. Note what the routine did in the field log.
+- 2026-09-27 — Fix the flaky URCap e2e (2 of 4 fork runs + PR #16 red: PolyScope's "An error occurred while starting the application" boot dialog). Fix or delete, never retry.
+- 2026-09-27 — Reminder for Nick: `sudo chown -R nick captures` (sudo cockpit runs leave it root-owned).
+- 2026-09-27 — Repo automation baseline: no `dev` branch; PRs go straight to `main`. Add `dev` + auto-merge + protection per ~/.claude/templates/github/.
+- 2026-09-27 — `pick-cycle --dry-run` without `--via-cockpit` builds a dry-run `Robot` whose flange is a stand-in pose, so the survey's base-frame block positions are fiction. Use `--via-cockpit --dry-run` until fixed.
 
 ## Decisions (so they don't get re-asked)
 
+- 2026-09-27 — Demo: Nick drives the cockpit in the browser and the room watches the UR3e (e-Series) move; heuristic pick first, then a semantic object. Host: the Windows work laptop (trial tonight). The URCap and everything after target PolyScope X.
+- 2026-09-27 — Keep the 09-25 orbit hand-eye solve (nothing moved). `pick-cycle --min-radius-m` defaults to 0.2 m.
+- 2026-09-27 — URCap X target held at 10.13 (`target.json` `hold`) to match the local simulator image.
+- 2026-09-27 — Public docs point at Olympus-Controls/UR-utils, not the personal fork.
 - 2026-09-26 — Pruning round two: only `urctl-gui` goes (done); the 2-D `perceive` pipeline, `sysinfo`/snapshot and the guided wizard + sample programs **stay**; SAM extra stays for the Jetson. Done the same day, not after the demo.
 - 2026-09-26 — `Controller` / `Gripper` protocols in `urctl/controller.py`; tool names canonical without the `ur_` prefix, `ur_*` kept as aliases. A Fanuc implementation is a later branch.
 - 2026-09-26 — PolyScope X integration = a URCap X Application Node (`urcap/realsense-pilot`) talking to the cockpit over HTTP with CORS; the cockpit stays the one place the camera is opened.
