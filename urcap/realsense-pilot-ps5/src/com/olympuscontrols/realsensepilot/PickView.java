@@ -121,8 +121,17 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         JPanel where = row();
         survey.setForeground(INK);
         JButton set = button("Set survey position", PRIMARY, Color.WHITE);
-        set.setToolTipText("where the robot looks from: the camera ≥ 0.25 m above the blocks, all of them in view");
+        set.setToolTipText("optional: where the robot looks from first (camera ≥ 0.25 m above the blocks); "
+                + "without one it looks from wherever the arm is");
         JButton go = button("Move there", null, null);
+        JButton clear = button("Clear", null, null);
+        clear.setToolTipText("forget the survey position: look from wherever the arm is");
+        on(clear, new Runnable() {
+            @Override
+            public void run() {
+                node().clearSurvey();
+            }
+        });
         on(set, new Runnable() {
             @Override
             public void run() {
@@ -137,6 +146,7 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         });
         where.add(set);
         where.add(go);
+        where.add(clear);
         where.add(survey);
         panel.add(where);
 
@@ -188,8 +198,9 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         status.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
         panel.add(status);
 
-        JLabel hint = new JLabel("<html>The program goes to the survey position, finds the block, looks again from "
-                + "above, and lowers the fingertips straight down into it; your gripper nodes <b>inside this node</b> "
+        JLabel hint = new JLabel("<html>The program finds the block from where the arm is (or from the survey position, "
+                + "if you set one), looks again from halfway there with the block in the middle of the "
+                + "picture, and lowers the fingertips straight down into it; your gripper nodes <b>inside this node</b> "
                 + "run at the grip, then it lifts. <b>rs_pick_found</b> is True after a pick — test it with an If. "
                 + "The cockpit address is set once in Installation → URCaps → RealSense Pilot.</html>");
         hint.setForeground(MUTED);
@@ -227,7 +238,7 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
                 cockpit.setText("cockpit " + n.cockpit().base + " · pick server port "
                         + n.script().port + "   (Installation → URCaps → RealSense Pilot)");
                 double[] q = n.surveyJoints();
-                survey.setText(q == null ? "not taught yet" : "taught");
+                survey.setText(q == null ? "none: first look from where the arm is" : "taught");
                 choice.setText(n.tapU() >= 0 ? "Picks the block nearest the spot you tapped (" + n.tapU() + ", "
                         + n.tapV() + ")" : "Picks the block nearest the middle — or tap one in the picture");
                 grip.setText(String.format(Locale.ROOT, "Grip depth: %.0f mm below the top", n.gripMm()));

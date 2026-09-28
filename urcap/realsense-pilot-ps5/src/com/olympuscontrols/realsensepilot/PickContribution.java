@@ -32,8 +32,9 @@ import javax.swing.SwingUtilities;
 
 /**
  * One RealSense Pick node in a program. Teach time (the node's screen open): the
- * cockpit's colour feed with the blocks its detector sees, a tap to choose one, the
- * survey position taught through PolyScope's own screen, and two checks that open
+ * cockpit's colour feed with the blocks its detector sees, a tap to choose one, an
+ * optional survey position taught through PolyScope's own screen (without one the first
+ * look is from wherever the arm is), and two checks that open
  * PolyScope's hold-to-move screen over and into the grasp the program would make —
  * all in Local mode. Run time: {@link PickScript}.
  */
@@ -228,10 +229,22 @@ public class PickContribution implements ProgramNodeContribution {
         });
     }
 
+    void clearSurvey() {
+        change(new UndoableChanges() {
+            @Override
+            public void executeChanges() {
+                model.remove(KEY_SURVEY);
+            }
+        });
+        view.show(this);
+        view.setStatus("no survey position: the first look is from wherever the arm is when the node runs",
+                PilotView.Kind.OK);
+    }
+
     void moveToSurvey() {
         JointPositions q = model.get(KEY_SURVEY, (JointPositions) null);
         if (q == null) {
-            view.setStatus("teach the survey position first", PilotView.Kind.WARN);
+            view.setStatus("no survey position taught: the node looks from where the arm is", PilotView.Kind.WARN);
             return;
         }
         api.getUserInterfaceAPI().getUserInteraction().getRobotMovement().requestUserToMoveRobot(q, done("survey position"));

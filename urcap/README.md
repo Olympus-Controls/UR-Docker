@@ -1,7 +1,7 @@
 # RealSense Pilot — the wrist camera inside PolyScope X
 
 > **e-Series robot on PolyScope 5?** Use the Installation-node build instead:
-> [`realsense-pilot-ps5/`](realsense-pilot-ps5/README.md) (`dist/realsense-pilot-ps5-0.2.0.urcap`).
+> [`realsense-pilot-ps5/`](realsense-pilot-ps5/README.md) (`dist/realsense-pilot-ps5-0.3.0.urcap`).
 
 A URCap for **PolyScope X** (PolyScope 10) robots. It adds a **RealSense Pilot**
 node under **Application** that shows the live colour feed from an Intel

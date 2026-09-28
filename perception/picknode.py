@@ -20,6 +20,18 @@ Requests (one line each, ASCII, ≤ 1 kB; the pose is URScript's ``to_str(pose)`
     The second, closer look: the block whose top centre lies within 60 mm of
     ``(cx, cy, cz)`` (the FIND answer), seen from the flange pose sent.
 
+``LOOK p[x, y, z, rx, ry, rz] p[cx, cy, cz, 0, 0, 0]``
+    Where to take the closer look from: the flange pose that puts the camera halfway
+    from where it is now to the block's top centre (never nearer than
+    :data:`LOOK_MIN_M` — the D435 has no depth closer than ~0.2 m), aimed so the block
+    is in the middle of the picture, and backed out along that line until the
+    fingertips clear the top by :data:`LOOK_TIP_CLEAR_M`. Status -6 when no such pose
+    exists (the node then looks from straight over the block, as before).
+
+``LOG <text>``
+    The robot program saying where it is (``start``, ``FIND status 1``, ``hover`` …):
+    written to the server's log, printable ASCII only, capped; **no reply**.
+
 ``lean`` (0–30°, default 0): the grasp is **straight down** — the work surface is
 flat and parallel to the base XY plane (Nick, 2026-09-27) — unless the program's own
 IK check found that unsolvable and asks again leaned outward (the pick-cycle's
@@ -53,6 +65,10 @@ from .pickcycle import Block, detect_blocks, grasp_rotation, grasp_yaw_deg, tip_
 DEFAULT_PICK_PORT = 7622
 MAX_LINE = 1024
 REFINE_RADIUS_M = 0.06
+LOOK_MIN_M = 0.25  # camera to the block's top, the closest the D435 still measures well
+LOOK_TIP_CLEAR_M = 0.06  # fingertips above the top at the look pose
+LOOK_MAX_TILT_DEG = 60.0  # tool Z from straight down
+MAX_LOG_TEXT = 240
 DEFAULT_STROKE_M = 0.050  # Hand-E
 FRESH_FRAMES = 2  # frames after the request's arrival before one is trusted still
 
@@ -64,6 +80,7 @@ STATUS = {
     -3: "the cockpit has no hand-eye calibration",
     -4: "no fresh camera frame",
     -5: "the second look did not find the block again",
+    -6: "no look pose keeps the camera in range and the fingertips clear",
     -9: "malformed request",
 }
 
@@ -81,12 +98,17 @@ class RequestError(ValueError):
 
 
 def parse_request(line: str) -> dict:
-    """``{"verb", "flange", "near" (REFINE), "pixel" (FIND, optional)}`` or RequestError."""
+    """``{"verb", "flange", "near" (REFINE, LOOK), "pixel" (FIND, optional)}``,
+    ``{"verb": "LOG", "text"}``, or RequestError."""
     text = line.strip()
+    if text[:4].upper() in ("LOG", "LOG "):  # the program never reads a reply to LOG: never refuse one
+        said = text[3:].strip()[: MAX_LOG_TEXT * 2]
+        clean = "".join(c if " " <= c <= "~" else "?" for c in said)[:MAX_LOG_TEXT]
+        return {"verb": "LOG", "text": clean}
     if not text or len(text) > MAX_LINE:
         raise RequestError("empty or oversized request")
     verb = text.split(None, 1)[0].upper()
-    if verb not in ("FIND", "REFINE"):
+    if verb not in ("FIND", "REFINE", "LOOK"):
         raise RequestError(f"unknown verb {verb[:16]!r}")
     poses = [[float(g) for g in m.groups()] for m in _POSE_RX.finditer(text)]
     if not poses or not all(math.isfinite(v) and abs(v) < 100.0 for p in poses for v in p):
@@ -97,9 +119,9 @@ def parse_request(line: str) -> dict:
         out["lean"] = float(lean.group(1))
         if not (0.0 <= out["lean"] <= MAX_LEAN_DEG):
             raise RequestError(f"lean must be within 0..{MAX_LEAN_DEG:.0f} deg")
-    if verb == "REFINE":
+    if verb in ("REFINE", "LOOK"):
         if len(poses) < 2:
-            raise RequestError("REFINE needs the flange pose and the block centre")
+            raise RequestError(f"{verb} needs the flange pose and the block centre")
         out["near"] = poses[1][:3]
     else:
         kv = {k: int(v) for k, v in _KV_RX.findall(text)}
@@ -118,6 +140,56 @@ def format_reply(
         + [float(v) for v in (pose or (0.0,) * 6)]
     )
     return "(" + ",".join(f"{v:.6f}" for v in vals) + ")\n"
+
+
+def look_pose(
+    flange: Sequence[float],
+    top: Sequence[float],
+    handeye: Sequence[float],
+    tip_m: float,
+    *,
+    min_m: float = LOOK_MIN_M,
+    tip_clear_m: float = LOOK_TIP_CLEAR_M,
+    max_tilt_deg: float = LOOK_MAX_TILT_DEG,
+) -> list[float] | None:
+    """The flange pose for the closer look (see ``LOOK``), or None when none will do.
+
+    The camera goes halfway along the line from where it is to ``top`` (not nearer
+    than ``min_m``, never farther than it already is) and turns to aim its optical
+    axis at ``top``, keeping its image X as close as it was (the least wrist roll).
+    If the fingertips would come within ``tip_clear_m`` of the top's height, the
+    camera backs out along the same line; a tool tilted past ``max_tilt_deg`` from
+    straight down is refused."""
+    T_fc = Transform.from_pose(handeye)
+    T_bc = Transform.from_pose(flange).compose(T_fc)
+    cam = T_bc.translation
+    away = [cam[i] - top[i] for i in range(3)]
+    d0 = math.hypot(*away)
+    if d0 < 1e-6:
+        return None
+    unit = [a / d0 for a in away]
+    z = [-u for u in unit]  # the optical axis, toward the block
+    x_cam = T_bc.rotate((1.0, 0.0, 0.0))
+    dot = sum(x_cam[i] * z[i] for i in range(3))
+    x = [x_cam[i] - dot * z[i] for i in range(3)]
+    if math.hypot(*x) < 1e-6:
+        return None
+    n = math.hypot(*x)
+    x = [v / n for v in x]
+    y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]]
+    start = min(d0, max(min_m, d0 / 2.0))
+    steps = 20
+    for k in range(steps + 1):
+        d = start + (d0 - start) * k / steps
+        origin = [top[i] + unit[i] * d for i in range(3)]
+        T_bf = Transform.from_axes(x, y, z, origin).compose(T_fc.inverse())
+        tip = T_bf.apply((0.0, 0.0, tip_m))
+        tool_z = T_bf.rotate((0.0, 0.0, 1.0))
+        if math.degrees(math.acos(max(-1.0, min(1.0, -tool_z[2])))) > max_tilt_deg:
+            return None
+        if tip[2] >= top[2] + tip_clear_m:
+            return T_bf.to_pose()
+    return None
 
 
 def choose(blocks: list[Block], pixel: tuple[int, int] | None, width: int, height: int) -> Block | None:
@@ -161,7 +233,10 @@ class PickPlanner:
         except RequestError as exc:
             self.log(f"pick request refused: {exc}", False)
             return format_reply(-9)
-        status, centre, pose = self._plan(req)
+        if req["verb"] == "LOG":
+            self.log(f"robot: {req['text']}", True)
+            return ""  # the program does not read a reply to LOG
+        status, centre, pose = self._look(req) if req["verb"] == "LOOK" else self._plan(req)
         what = STATUS.get(status, "?")
         where = f" top {[round(c, 3) for c in centre]}" if centre else ""
         self.log(f"pick {req['verb']}: {what}{where}", status == 1)
@@ -175,6 +250,13 @@ class PickPlanner:
             req["pixel"] = pixel
         status, centre, pose = self._plan(req)
         return {"status": status, "reason": STATUS.get(status, "?"), "centre": centre, "top_pose": pose}
+
+    def _look(self, req: dict) -> tuple[int, list[float] | None, list[float] | None]:
+        he = self.handeye()
+        if not he:
+            return -3, None, None
+        pose = look_pose(req["flange"], req["near"], he, self.tip_m)
+        return (1, list(req["near"]), pose) if pose else (-6, list(req["near"]), None)
 
     def _plan(self, req: dict) -> tuple[int, list[float] | None, list[float] | None]:
         he = self.handeye()
@@ -303,9 +385,14 @@ class _Handler(socketserver.StreamRequestHandler):
             try:
                 line = raw.decode("ascii")
             except UnicodeDecodeError:
+                if raw.lstrip()[:3].upper() == b"LOG":  # never answered, whatever it holds
+                    planner.answer(raw.decode("ascii", errors="replace"))
+                    continue
                 self.wfile.write(format_reply(-9).encode())
                 continue
-            self.wfile.write(planner.answer(line).encode())
+            answer = planner.answer(line)
+            if answer:
+                self.wfile.write(answer.encode())
 
 
 class PickServer(socketserver.ThreadingTCPServer):

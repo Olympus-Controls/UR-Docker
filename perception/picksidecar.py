@@ -14,6 +14,11 @@ session is using — can't grow those without a restart. This process adds them 
 * every other request forwarded to the cockpit unchanged, so the node's one "cockpit URL"
   (this process) still gets the feed, segment, locate and move routes.
 
+Everything it hears and answers — including the program's own ``LOG`` lines (start,
+FIND, look, REFINE, hover, grip, lift, and why it gave up) — goes, timestamped, to
+stderr, to ``--log`` (default ``captures/pick-server.log``) and to ``GET /api/pick/log``
+(the last lines as text, for a browser next to the pendant).
+
 Point the node's cockpit URL at this process (``http://<host>:7631``); the detect reply
 tells it the pick socket's port. It moves nothing; like the cockpit it is unauthenticated,
 so bind it to the cell network only.
@@ -21,13 +26,16 @@ so bind it to the cell network only.
 
 from __future__ import annotations
 
+import collections
 import json
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from .pickcycle import DEFAULT_COCKPIT, Cockpit, CockpitError
 from .picknode import (
@@ -40,6 +48,8 @@ from .picknode import (
 )
 
 DEFAULT_SIDECAR_PORT = 7631
+DEFAULT_LOG = Path("captures") / "pick-server.log"
+LOG_TAIL = 400
 MAX_BODY = 1 << 20  # the node's requests are small JSON; refuse anything bigger
 PROXY_TIMEOUT_S = 30.0  # the cockpit's longest long-poll is 10 s
 _HOP_BY_HOP = {
@@ -57,8 +67,38 @@ _HOP_BY_HOP = {
 }
 
 
+class PickLog:
+    """One line per event: stderr, an append-only file, and the last lines in memory."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path
+        self.tail: collections.deque[str] = collections.deque(maxlen=LOG_TAIL)
+        self._lock = threading.Lock()
+
+    def say(self, text: str) -> None:
+        clean = "".join(c if " " <= c <= "~" or c in "°×→—" else " " for c in text)
+        line = f"{time.strftime('%H:%M:%S')}.{int(time.time() * 1000) % 1000:03d} {clean}"
+        with self._lock:
+            self.tail.append(line)
+            print(f"[pick-server] {line}", file=sys.stderr, flush=True)
+            if self.path is not None:
+                try:
+                    with self.path.open("a", encoding="utf-8") as f:
+                        f.write(line + "\n")
+                except OSError as exc:
+                    print(f"[pick-server] log file {self.path}: {exc} — stderr only", file=sys.stderr)
+                    self.path = None
+
+    def text(self) -> str:
+        with self._lock:
+            return "\n".join(self.tail) + "\n"
+
+
+LOG = PickLog()
+
+
 def _say(text: str) -> None:
-    print(f"[pick-server] {text.replace(chr(10), ' ').replace(chr(13), ' ')}", file=sys.stderr, flush=True)
+    LOG.say(text)
 
 
 class CockpitFrames:
@@ -88,6 +128,14 @@ class CockpitFrames:
             _say(f"cockpit /api/rgbd: {exc}")
             return None
         if after is not None and seq <= after:
+            try:
+                info = self.info()
+            except (OSError, ValueError):
+                info = {}
+            _say(
+                f"cockpit frames stalled at seq {seq} (asked for > {after}); "
+                f"camera error: {str(info.get('last_error') or 'none')[:200]}"
+            )
             return None
         return frame
 
@@ -180,6 +228,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
         route = urllib.parse.urlsplit(self.path).path
         try:
+            if method == "GET" and route == "/api/pick/log":
+                data = LOG.text().encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if method == "GET" and route == "/api/pick/detect":
                 self._json(self.side.detect())
                 return
@@ -260,6 +316,12 @@ def add_pick_server_args(ap) -> None:
     ap.add_argument(
         "--dry-run", action="store_true", help="stand-in flange pose for the preview; no controller"
     )
+    ap.add_argument(
+        "--log",
+        type=Path,
+        default=DEFAULT_LOG,
+        help=f"append every request, answer and robot LOG line here (default {DEFAULT_LOG})",
+    )
 
 
 def run_pick_server(args) -> int:
@@ -268,6 +330,11 @@ def run_pick_server(args) -> int:
     from .handeye import tip_m_from_env
 
     robot = Robot(RobotConfig.from_env(host=args.host), dry_run=args.dry_run)
+    try:
+        args.log.parent.mkdir(parents=True, exist_ok=True)
+        LOG.path = args.log
+    except OSError as exc:
+        print(f"[pick-server] log file {args.log}: {exc} — stderr only", file=sys.stderr)
 
     def flange() -> dict:
         return robot.get_flange_pose(script_fallback=False)
@@ -286,7 +353,7 @@ def run_pick_server(args) -> int:
     _say(
         f"http://{args.bind}:{http.server_address[1]} (the node's cockpit URL) + pick socket "
         f"{args.bind}:{sidecar.pick_port}, over {frames.base}; robot {robot.config.host}"
-        f"{' (dry-run)' if args.dry_run else ''}; tip {sidecar.tip_m:.3f} m. Ctrl-C to stop."
+        f"{' (dry-run)' if args.dry_run else ''}; tip {sidecar.tip_m:.3f} m; log {LOG.path}. Ctrl-C to stop."
     )
     if args.bind not in ("127.0.0.1", "localhost", "::1"):
         _say(f"WARNING: bound to {args.bind} with no authentication — only on a trusted cell network.")

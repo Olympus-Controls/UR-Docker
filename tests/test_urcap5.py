@@ -9,6 +9,7 @@ checks need the URCap API jars too (``python3 urcap/urcap5.py sdk``) and skip wi
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -30,7 +31,7 @@ import urcap5  # noqa: E402
 
 SRC = ROOT / "urcap" / "realsense-pilot-ps5"
 JAVA = SRC / "src" / "com" / "olympuscontrols" / "realsensepilot"
-DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.2.0.urcap"
+DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.3.0.urcap"
 JAVAC = shutil.which("javac")
 HAS_SDK = all(any(urcap5.SDK_DIR.glob(p + "*.jar")) for p in urcap5.SDK_JARS)
 
@@ -419,6 +420,7 @@ def test_pick_script_is_ascii_balanced_and_calls_the_children_at_the_grip(java_c
         'socket_open("192.168.3.10", 7622, "rs_pick")',
         '"FIND "',
         " u=412 v=233",
+        '"LOOK "',
         "rs_leans = [0, 12, 24]",
         '"REFINE "',
         "movel(rs_hover",
@@ -447,7 +449,6 @@ def test_pick_script_without_a_tap_asks_for_any_block(java_client):
 @pytest.mark.parametrize(
     ("kw", "problem"),
     [
-        ({"q": None}, "survey"),
         ({"host": ""}, "cockpit address"),
         ({"host": 'x"); popup("pwned'}, "not an address"),  # a saved field can't inject URScript
         ({"port": 0}, "port"),
@@ -464,6 +465,56 @@ def test_pick_script_refuses_what_it_cannot_generate_safely(java_client, kw, pro
     else:
         out = _pick(java_client, **kw)
     assert out["script"] is None and problem in out["problem"]
+
+
+def test_without_a_survey_position_the_first_look_is_from_where_the_arm_is(java_client):
+    body = {k: v for k, v in PICK.items() if k != "q"}
+    out = java_client("pick", json.dumps({**body, "children": "  CHILD()"}))
+    assert out["problem"] is None
+    text = out["script"]
+    assert "first look from where the arm is" in text
+    # no motion at all before the first FIND: the arm stays where the operator left it
+    before = text[: text.index('"FIND "')]
+    assert "movej(" not in before and "movel(" not in before
+
+
+def test_every_stage_is_logged_to_the_server_and_the_log_tab(java_client):
+    text = _pick(java_client, children="  CHILD()")["script"]
+    for stage in (
+        "start",
+        "FIND status",
+        "LOOK",
+        "at the look pose",
+        "REFINE status",
+        "hover",
+        "down to the grip",
+        "gripper nodes",
+        "lift",
+        "picked",
+        "no pick - ",
+    ):
+        assert f'"LOG {stage}' in text, stage
+        assert f'textmsg("RealSense Pick: {stage}' in text, stage
+    # a reply's fields are read only after the read came back whole (rs_r[0] == 10): a timed-out
+    # read must end as "no answer", not as an index error that stops the operator's program
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if "rs_r[1]" in line:
+            guard = next(lines[j] for j in range(i - 1, -1, -1) if lines[j].strip().startswith("if "))
+            assert guard.strip() == "if rs_r[0] == 10:", (line, guard)
+    # LOG is only ever sent on the open socket, never before socket_open
+    assert text.index("socket_send_line(") > text.index("socket_open(")
+
+
+def test_a_failed_pick_says_why_in_a_popup_for_every_status_the_server_sends(java_client):
+    from perception.picknode import STATUS
+
+    text = _pick(java_client, children="  CHILD()")["script"]
+    handled = {int(m) for m in re.findall(r"rs_st == (-?\d+):", text)}
+    # 1 is a pick; -6 (no look pose) never reaches rs_st - the program looks from over the block
+    assert handled - {1} == (set(STATUS) - {1, -6}) | {-8}  # `if rs_st == 1:` is the success branch
+    assert 'popup(str_cat("RealSense Pick: no pick - ", rs_why)' in text
+    assert text.index("if rs_pick_found == False:") < text.index('popup(str_cat("RealSense Pick: no pick')
 
 
 def test_pick_host_comes_from_the_installation_nodes_url(java_client):
