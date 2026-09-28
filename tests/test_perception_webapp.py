@@ -100,14 +100,17 @@ def test_classic_page_is_kept(server):
 
 def inline_scripts(html: str) -> list[str]:
     """The bodies of every <script> element (for ``node --check``, not a sanitiser)."""
-    return re.findall(r"<script\b[^>]*>(.*?)</script\s*>", html, flags=re.S | re.I)
+    return re.findall(r"<script\b[^>]*>(.*?)</script\b[^>]*>", html, flags=re.S | re.I)
 
 
 def test_inline_scripts_finds_every_spelling():
     """CodeQL py/bad-tag-filter: an upper-case tag, attributes or `</script >` must not
     slip a script past the parse check."""
-    html = "<SCRIPT type='text/javascript'>a()</SCRIPT><script defer>b()</script ><script>c()</script>"
-    assert inline_scripts(html) == ["a()", "b()", "c()"]
+    html = (
+        "<SCRIPT type='text/javascript'>a()</SCRIPT><script defer>b()</script ><script>c()</script>"
+        "<script>d()</script\t\n bar>"
+    )
+    assert inline_scripts(html) == ["a()", "b()", "c()", "d()"]
 
 
 @pytest.mark.parametrize("page", ["index.html", "classic.html"])
