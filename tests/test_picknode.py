@@ -309,3 +309,95 @@ def test_the_teach_time_preview_gives_hover_and_grip_in_the_active_tcp():
     assert math.dist(tips(out["grip_pose"]), out["centre"]) == pytest.approx(0.015, abs=1e-6)
     # the dry-run link's active TCP is the flange: the PolyScope poses equal the flange poses
     assert out["polyscope_hover_pose"] == pytest.approx(out["hover_pose"], abs=1e-9)
+
+
+# -- the closer look: halfway to the block, aimed at it -------------------------------------------
+
+
+def _camera(flange, handeye):
+    return Transform.from_pose(flange).compose(Transform.from_pose(handeye))
+
+
+@pytest.mark.parametrize(
+    "flange",
+    [
+        [0.30, 0.10, 0.60, 0.0, math.pi, 0.0],  # high and straight down, block off to the side
+        [0.10, 0.35, 0.45, 2.9, -1.2, 0.0],  # the UR3e's usual tilted wrist
+        [-0.2, 0.30, 0.80, 0.3, 2.9, 0.1],
+    ],
+)
+def test_the_look_pose_puts_the_camera_halfway_and_aims_it_at_the_block(flange):
+    from perception.picknode import LOOK_MIN_M, look_pose
+
+    handeye = [0.0133, 0.0553, 0.0129, 0.10, -0.164, 3.119]  # the UR3e bracket's solve
+    top = [0.25, 0.30, -0.26]
+    pose = look_pose(flange, top, handeye, TIP)
+    assert pose is not None
+    before, after = _camera(flange, handeye), _camera(pose, handeye)
+    d0 = math.dist(before.translation, top)
+    d1 = math.dist(after.translation, top)
+    assert d1 == pytest.approx(max(LOOK_MIN_M, d0 / 2), abs=0.02) or d1 > d0 / 2  # halfway, or backed out
+    assert LOOK_MIN_M - 1e-9 <= d1 <= d0 + 1e-9
+    # the block is dead centre: on the optical axis
+    axis = after.rotate((0.0, 0.0, 1.0))
+    to_block = [(top[i] - after.translation[i]) / d1 for i in range(3)]
+    assert sum(a * b for a, b in zip(axis, to_block, strict=True)) == pytest.approx(1.0, abs=1e-9)
+    # on the line from where the camera was: it moved toward the block, not sideways
+    away0 = [(before.translation[i] - top[i]) / d0 for i in range(3)]
+    away1 = [(after.translation[i] - top[i]) / d1 for i in range(3)]
+    assert away0 == pytest.approx(away1, abs=1e-9)
+    # the fingertips stay clear of the top
+    tip = Transform.from_pose(pose).apply((0.0, 0.0, TIP))
+    assert tip[2] >= top[2] + 0.06 - 1e-9
+
+
+def test_a_camera_already_close_is_not_moved_nearer_than_the_d435_can_see():
+    from perception.picknode import LOOK_MIN_M, look_pose
+
+    top = [0.40, 0.0, 0.0]
+    flange = [0.40, 0.0, LOOK_MIN_M + 0.02, 0.0, math.pi, 0.0]  # camera 0.27 m straight above
+    pose = look_pose(flange, top, CAMERA_AT_FLANGE, 0.05)
+    assert pose is not None
+    assert math.dist(Transform.from_pose(pose).translation, top) >= LOOK_MIN_M - 1e-9
+
+
+def test_no_look_pose_when_the_tool_would_tip_past_the_limit():
+    from perception.picknode import look_pose
+
+    # camera level with the block, 0.5 m away sideways: aiming at it means a horizontal tool
+    flange = [0.9, 0.0, 0.0, 0.0, math.pi / 2, 0.0]
+    assert look_pose(flange, [0.4, 0.0, 0.0], CAMERA_AT_FLANGE, TIP) is None
+
+
+def test_look_over_the_socket_answers_with_the_pose_and_needs_a_hand_eye():
+    line = f"LOOK p[{', '.join(str(v) for v in FLANGE)}] p[0.45, 0.02, 0.0, 0, 0, 0]"
+    vals = reply(planner(), line)
+    assert vals[0] == 1.0 and vals[1:4] == pytest.approx([0.45, 0.02, 0.0])
+    assert reply(planner(handeye=None), line)[0] == -3.0
+
+
+# -- LOG: the program's own trace ------------------------------------------------------------------
+
+
+def test_log_lines_are_recorded_cleaned_and_never_answered():
+    heard = []
+    p = planner(log=lambda text, ok: heard.append(text))
+    assert p.answer("LOG FIND status 1\n") == ""
+    assert p.answer("LOG " + "x\x1b[2J\x00" * 200 + "\n") == ""
+    assert heard[0] == "robot: FIND status 1"
+    assert heard[1].startswith("robot: x?[2J?") and len(heard[1]) <= len("robot: ") + 240
+    assert all(" " <= c <= "~" for c in heard[1])
+    # a LOG line is never answered, even malformed: a stray reply would be read as FIND's
+    for odd in ("LOG\n", "log lower case\n", "LOG " + "y" * 5000 + "\n", "LOG \xff\xfe\n"):
+        assert p.answer(odd) == ""
+
+
+def test_log_then_find_on_one_connection_reads_the_find_answer(server):
+    with socket.create_connection(("127.0.0.1", server), timeout=10) as s:
+        f = s.makefile("rwb")
+        f.write(b"LOG start\n")
+        f.write(b"LOG \xff\xfe not ascii\n")
+        f.write(f"FIND p[{', '.join(str(v) for v in FLANGE)}]\n".encode())
+        f.flush()
+        first = f.readline().decode()
+    assert first.startswith("(1.0")  # LOG sent nothing back, so the first reply is FIND's

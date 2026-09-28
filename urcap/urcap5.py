@@ -26,7 +26,7 @@ maven-bundle-plugin; this does the same steps with ``javac`` / ``jdeps`` and
 
     python3 urcap/urcap5.py sdk
     python3 urcap/urcap5.py package urcap/realsense-pilot-ps5 --out urcap/dist
-    python3 urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-0.2.0.urcap \
+    python3 urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-0.3.0.urcap \
         --container ur-utils-ursim-e-ur3e
 """
 
