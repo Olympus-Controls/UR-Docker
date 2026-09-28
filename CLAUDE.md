@@ -144,7 +144,7 @@ Two programs: a blended sweep from the picture pose (`PERCEPTION_HOME_POSE`; FAN
 swing and a wrist flourish) to a **close look** — the object on the colour camera's axis at
 0.24 m, just outside the D435's blind zone — then the object is re-found there and the
 final program (over → approach [→ grasp → lift with PICK]) is built from that measurement.
-Every pose goes to the controller's IK first. The page's LEVEL lamp is the fitted floor's
+Every pose goes to the controller's IK first. The look is **tilted 10°** (`LOOK_TILT_DEG`; the camera looks out at the part from the base side) and the re-find casts the detector's pixels onto the top plane, so the tilt doesn't bias it. A pick can name a stored object instead of the clicked mask (`target: {centre, theta, major_m, minor_m}` — the page sends it for a selected card), and `survey: true` stops after the close look and returns the fresh measurement; in the page, right-click a card or a part → APPROACH / PICK / SURVEY. The Robotiq pre-open rides the sweep program (`move_tcp_path(gripper_first=POS)`: set before the first `movel`, not waited for). The page's LEVEL lamp is the fitted floor's
 tilt in the base frame: the table is flat, so any tilt is calibration error. The arm's
 linkage comes from RTDE `actual_q` through `perception/armfk.py` (UR3e DH verified 0.84 mm
 against the controller's flange; other models guarded by the same check).

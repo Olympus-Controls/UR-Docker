@@ -1305,6 +1305,26 @@ class TestMoveTcpPath:
         # one Dashboard mode check for the whole path, not one per leg
         assert sum("robotmode" in s for s in fake.dashboard_sends) == 1
 
+    def test_gripper_first_moves_the_fingers_while_the_arm_goes(self, monkeypatch):
+        """The pre-open rides the path program: SET POS + GTO before the first movel, and the
+        program does not wait for the fingers (a pick sweep used to spend ~1 s on a separate
+        gripper program before it could start, 2026-09-28)."""
+        fake = FakeController().install(monkeypatch)
+        res = Robot(RobotConfig(robot_model="UR3e")).move_tcp_path(self.LEGS, tcp=[0] * 6, gripper_first=31)
+        assert res["ok"]
+        (sent,) = [s for s in fake.primary_sends if "movel(" in s]
+        first_move = sent.index("movel(")
+        assert sent.index('socket_open("127.0.0.1", 63352') < sent.index("SET POS 31") < first_move
+        assert sent.index("SET GTO 1") < first_move
+        head = sent[:first_move]
+        assert "GET OBJ" not in head and "while" not in head  # fire and go: no waiting on the fingers
+        robot = Robot(RobotConfig(robot_model="UR3e"))
+        for bad in (-1, 256, 3.5, "open"):
+            with pytest.raises(ValueError):
+                robot.move_tcp_path(self.LEGS, gripper_first=bad)
+        res = urctl_tools.call_tool(robot, "move_tcp_path", {"legs": self.LEGS, "gripper_first": 0})
+        assert res["ok"] and "SET POS 0" in [s for s in fake.primary_sends if "movel(" in s][-1]
+
     def test_any_bad_leg_sends_nothing(self, monkeypatch):
         fake = FakeController().install(monkeypatch)
         legs = [dict(self.LEGS[0]), {"pose": [-0.9, 0.0, 0.2, 0, 3.14, 0]}]  # leg 1 beyond a UR3e's reach

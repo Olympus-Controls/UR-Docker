@@ -34,6 +34,7 @@ GRASP_BELOW_M = 0.015
 LIFT_M = 0.05
 DROP_M = 0.06  # the last stretch of the sweep runs straight down the Z axis
 LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2 m blind zone
+LOOK_TILT_DEG = 10.0  # ... from a slight angle (a second viewpoint, and it reads as "taking a look")
 STROKE_M = 0.05  # Hand-E
 # Motion (Nick, 2026-09-27: "all moves should be extremely fluid and smooth, not abrupt"):
 # gentle accelerations everywhere; the speed only where the arm is clear of the parts.
@@ -102,7 +103,7 @@ def _blend(prev: Sequence[float], here: Sequence[float], nxt: Sequence[float], c
     """A blend radius the controller accepts: under half of both neighbouring segments."""
     a = math.dist(prev[:3], here[:3])
     b = math.dist(here[:3], nxt[:3])
-    return round(max(0.0, min(cap, 0.45 * a, 0.45 * b)), 4)
+    return math.floor(max(0.0, min(cap, 0.45 * a, 0.45 * b)) * 1e4) / 1e4  # round down: never past it
 
 
 def look_pose(
@@ -111,15 +112,37 @@ def look_pose(
     yaw_deg: float,
     flange_to_color: Sequence[float],
     range_m: float = LOOK_M,
+    tilt_deg: float = LOOK_TILT_DEG,
 ) -> list[float]:
     """The flange pose (grasp orientation, wrist yawed) that puts the object's top
     centre on the colour camera's optical axis ``range_m`` away — as close as the D435
-    still sees depth, and in the middle of the picture, clear of the gripper's body."""
+    still sees depth, and in the middle of the picture, clear of the gripper's body.
+    ``tilt_deg`` leans the tool about the horizontal axis square to the base→object
+    direction so the camera looks slightly outward at the part from the base's side: a
+    second angle on it (Nick, 2026-09-28: "help get more robust angles and help the user
+    understand it's taking a closer look, not just frozen"), and the flange comes in
+    closer to the column."""
     oriented = Transform.from_pose(tip_pose(rect["centre"], rot, 0.0, yaw_deg))
+    c = rect["centre"]
+    r = math.hypot(c[0], c[1])
+    if tilt_deg and r > 1e-6:
+        axis = (-c[1] / r, c[0] / r, 0.0)  # horizontal, square to the radial direction
+        T_fc0 = Transform.from_pose(flange_to_color)
+        best = None
+        for sign in (1.0, -1.0):
+            t = math.radians(tilt_deg) * sign
+            tilt = Transform.from_pose([0.0, 0.0, 0.0, axis[0] * t, axis[1] * t, 0.0])
+            cand = Transform(
+                tilt.compose(Transform(oriented.rotation, (0.0, 0.0, 0.0))).rotation, (0.0, 0.0, 0.0)
+            )
+            cz = cand.rotate(T_fc0.rotate((0.0, 0.0, 1.0)))
+            outward = (cz[0] * c[0] + cz[1] * c[1]) / r  # > 0: the camera looks out, from the base side
+            if best is None or outward > best[0]:
+                best = (outward, cand)
+        oriented = best[1]
     T_fc = Transform.from_pose(flange_to_color)
     cam_z = oriented.rotate(T_fc.rotate((0.0, 0.0, 1.0)))
     cam_off = oriented.rotate(T_fc.translation)
-    c = rect["centre"]
     return [c[i] - range_m * cam_z[i] - cam_off[i] for i in range(3)] + list(oriented.to_pose()[3:])
 
 

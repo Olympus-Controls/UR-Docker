@@ -567,8 +567,21 @@ class ViewerApp:
         f_look = objs.get("flange_pose") or self._flange_at(time.time()) or list(look)
         T = Transform.from_pose(f_look).compose(Transform.from_pose(self._handeye_fc()))
         best = None
+        o_cam = T.translation
         for o in objs.get("objects") or []:
-            r = pickplan.rectangle(pickplan.top_face([T.apply(q) for q in o["points_cam"]]))
+            top = pickplan.top_face([T.apply(q) for q in o["points_cam"]])
+            if len(top) < 10:
+                continue
+            # cast every detected pixel along its ray onto the (horizontal) top plane — exact
+            # whatever the camera's tilt; the detector's points all sit at one camera depth
+            top_z = sorted(q[2] for q in top)[len(top) // 2]
+            cast = []
+            for q in o["points_cam"]:
+                ray = T.rotate(q)
+                if ray[2] < -1e-9:
+                    t = (top_z - o_cam[2]) / ray[2]
+                    cast.append((o_cam[0] + t * ray[0], o_cam[1] + t * ray[1], top_z))
+            r = pickplan.rectangle(cast)
             if r is None:
                 continue
             d = math.dist(r["centre"][:2], near[:2])
@@ -586,14 +599,24 @@ class ViewerApp:
         iks = self.robot.robot.inverse_kin([leg["pose"] for leg in legs], tcp=[0.0] * 6)
         return [leg["name"] for leg, a in zip(legs, iks, strict=True) if a.get("reachable") is False]
 
-    def _run(self, legs: list[dict]) -> dict:
-        return self.robot._tool(
-            "move_tcp_path",
-            {"legs": [{k: v for k, v in leg.items() if k != "name"} for leg in legs], "tcp": [0.0] * 6},
-        )
+    def _run(self, legs: list[dict], gripper_first: int | None = None) -> dict:
+        params: dict = {
+            "legs": [{k: v for k, v in leg.items() if k != "name"} for leg in legs],
+            "tcp": [0.0] * 6,
+        }
+        if gripper_first is not None:
+            params["gripper_first"] = int(gripper_first)  # the fingers travel while the arm does
+        return self.robot._tool("move_tcp_path", params)
 
     def pick(
-        self, *, pick: bool = False, fancy: bool = False, plan_only: bool = False, look: bool = True
+        self,
+        *,
+        pick: bool = False,
+        fancy: bool = False,
+        plan_only: bool = False,
+        look: bool = True,
+        survey: bool = False,
+        target: dict | None = None,
     ) -> dict:
         """Sweep to the clicked object and hover over it (``pickplan``), in two programs:
 
@@ -605,24 +628,47 @@ class ViewerApp:
            side opened to 1.2x its width, fingertips 25 mm over its top; with ``pick``
            down 15 mm under the top, close, lift.
 
-        No close look when ``look`` is off or its pose is out of reach (one program)."""
+        No close look when ``look`` is off or its pose is out of reach (one program).
+        ``target`` — a stored object ``{centre [x y z], theta, major_m, minor_m}`` in the
+        base frame — stands in for the clicked mask: no segmentation, and the object need
+        not be in view. ``survey`` stops after the close look and returns its measurement."""
         from . import pickplan
         from .handeye import tip_m_from_env
         from .pickcycle import grasp_rotation, grasp_yaw_deg
 
         if self.robot is None:
             raise ValueError("no robot link (started with --no-robot)")
-        with self._seg_lock:
-            mask, frame, mask_t = self.mask, self.mask_frame, self.mask_t
-        if mask is None or frame is None or not mask.area:
-            raise ValueError("no target: click an object first")
-        f_then = self._flange_at(mask_t)
         f_now = self._flange_at(time.time())
-        if f_then is None or f_now is None:
+        if f_now is None:
             return {"ok": False, "error": "no flange pose (pose stream or controller)"}
-        rect0 = self._rect_from_mask(mask, frame, f_then)
-        if rect0 is None:
-            return {"ok": False, "error": "not enough depth on the target's top face"}
+        if target is not None:
+            try:
+                c = [float(v) for v in target["centre"]]
+                rect0 = {
+                    "centre": c,
+                    "theta": float(target.get("theta", 0.0)),
+                    "major_m": float(target["major_m"]),
+                    "minor_m": float(target["minor_m"]),
+                }
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("target needs centre [x y z], major_m, minor_m (theta optional)") from exc
+            if (
+                len(c) != 3
+                or not all(math.isfinite(v) for v in c)
+                or not (0 < rect0["minor_m"] <= rect0["major_m"] < 0.5)
+            ):
+                raise ValueError("target: centre must be 3 finite numbers, 0 < minor_m <= major_m < 0.5 m")
+        else:
+            with self._seg_lock:
+                mask, frame, mask_t = self.mask, self.mask_frame, self.mask_t
+            if mask is None or frame is None or not mask.area:
+                raise ValueError("no target: click an object first")
+            f_then = self._flange_at(mask_t)
+            if f_then is None:
+                return {"ok": False, "error": "no flange pose for the target's frame"}
+            rect0 = self._rect_from_mask(mask, frame, f_then)
+            if rect0 is None:
+                return {"ok": False, "error": "not enough depth on the target's top face"}
         tip, hfc = tip_m_from_env(), self._handeye_fc()
         notes: list[str] = []
 
@@ -670,10 +716,7 @@ class ViewerApp:
             return {"ok": False, "error": f"out of reach: {', '.join(bad)}", **summary}
         if plan_only:
             return {"ok": True, "plan_only": True, **summary}
-        g = self.robot.gripper("move", position=p["gripper_position"])
-        if not g.get("ok"):
-            return {"ok": False, "error": f"gripper: {g.get('error') or 'no answer'}", **summary}
-        run = self._run(p["sweep"])
+        run = self._run(p["sweep"], gripper_first=p["gripper_position"])
         if not run.get("ok"):
             return {
                 "ok": False,
@@ -712,6 +755,10 @@ class ViewerApp:
                     **summary,
                 }
             rect = rect1
+            if survey:  # a survey ends at the look: the fresh measurement, nothing more
+                summary.update(rect={**rect1, "theta_deg": round(math.degrees(rect1["theta"]), 1)})
+                self.events.add("robot", f"survey → {[round(v, 3) for v in rect1['centre']]}", ok=True)
+                return {"ok": True, "survey": True, "notes": notes, **summary}
             notes.append(
                 f"close look: {rect1['major_m'] * 1000:.0f} x {rect1['minor_m'] * 1000:.0f} mm at "
                 f"{[round(v, 3) for v in rect1['centre']]}"
@@ -731,15 +778,16 @@ class ViewerApp:
                     "error": f"out of reach after the close look: {', '.join(bad)}",
                     **summary,
                 }
-            if abs(p2["gripper_position"] - p["gripper_position"]) > 6:
-                self.robot.gripper("move", position=p2["gripper_position"])
+            regrip = (
+                p2["gripper_position"] if abs(p2["gripper_position"] - p["gripper_position"]) > 6 else None
+            )
             summary.update(
                 rect={**rect, "theta_deg": round(math.degrees(rect["theta"]), 1)},
                 yaw_deg=round(p2["yaw_deg"], 1),
                 opening_mm=round(p2["opening_m"] * 1000, 1),
                 gripper_position=p2["gripper_position"],
             )
-            run = self._run(final)
+            run = self._run(final, gripper_first=regrip)
         held = None
         for leg in run.get("legs") or []:
             gr = leg.get("gripper") if isinstance(leg, dict) else None
@@ -1524,6 +1572,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
                     fancy=bool(payload.get("fancy")),
                     plan_only=bool(payload.get("plan_only")),
                     look=payload.get("look", True) is not False,
+                    survey=bool(payload.get("survey")),
+                    target=payload.get("target"),
                 )
             )
         elif route == "/api/robot/home":

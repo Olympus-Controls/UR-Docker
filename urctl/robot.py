@@ -739,6 +739,7 @@ class Robot:
         *,
         tcp: list[float] | None = None,
         timeout: float = 120.0,
+        gripper_first: int | None = None,
     ) -> dict:
         """Run several absolute ``movel`` legs as **one** program on one Primary
         connection — an approach cycle (over → down → dwell → up → back) is one
@@ -759,9 +760,17 @@ class Robot:
         ``set_tcp`` first (``[0]*6`` = the flange). Each leg echoes its landed
         pose (``urctl/path/leg<i>=``); ``ok`` means every leg landed within
         :data:`TCP_LANDING_TOLERANCE` of its target and the final marker came.
+        ``gripper_first`` (Robotiq position 0..255) is sent before the first leg and
+        not waited for — the fingers move while the arm does (a pick's pre-open).
         """
         if not legs:
             raise ValueError("legs must not be empty")
+        if gripper_first is not None and (
+            isinstance(gripper_first, bool)
+            or not isinstance(gripper_first, int)
+            or not 0 <= gripper_first <= 255
+        ):
+            raise ValueError("gripper_first must be an integer position 0..255")
         norm: list[dict] = []
         for idx, leg in enumerate(legs):
             pose = [float(v) for v in leg["pose"]]
@@ -790,7 +799,7 @@ class Robot:
             tcp = [float(v) for v in tcp]
             if len(tcp) != 6 or not all(math.isfinite(v) for v in tcp):
                 raise ValueError("tcp must be 6 finite numbers [x, y, z, rx, ry, rz]")
-        args = {"legs": norm, "tcp": tcp}
+        args = {"legs": norm, "tcp": tcp, "gripper_first": gripper_first}
         self._ensure_reach()
         robot_mode = None if self.dry_run else self.dashboard.robot_mode()
         iks = self.ik_has_solution([leg["pose"] for leg in norm], tcp=tcp)
@@ -816,12 +825,21 @@ class Robot:
         lines = []
         if tcp is not None:
             lines.append("set_tcp(p[" + ", ".join(str(v) for v in tcp) + "])")
-        uses_gripper = any(leg["gripper"] for leg in norm)
+        uses_gripper = any(leg["gripper"] for leg in norm) or gripper_first is not None
         if uses_gripper:
             lines.append(
                 f'urctl_rq_ok = socket_open("{GRIPPER_DAEMON_HOST}", {GRIPPER_DAEMON_PORT}, "urctl_rq")'
             )
             lines.append('textmsg("urctl/path/gripper=", urctl_rq_ok)')
+        if gripper_first is not None:  # fire and go: the fingers travel while the arm does
+            lines += [
+                "if urctl_rq_ok:",
+                f'  socket_send_line("SET POS {gripper_first}", "urctl_rq")',
+                '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                '  socket_send_line("SET GTO 1", "urctl_rq")',
+                '  urctl_rq_r = socket_read_string("urctl_rq", timeout=2.0)',
+                "end",
+            ]
         for idx, leg in enumerate(norm):
             literal = "p[" + ", ".join(str(x) for x in leg["pose"]) + "]"
             r = f", r={leg['blend_m']}" if leg["blend_m"] > 0 else ""

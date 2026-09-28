@@ -182,6 +182,24 @@ def test_the_cockpit_plans_and_dry_runs_a_pick(monkeypatch):
         assert run["ok"] is False and run["stage"] == "look" and "lost the target" in run["error"], run
         run = post("/api/robot/pick", {"look": False})
         assert run["ok"] and run["dry_run"], run
+        # a stored object stands in for the click: no mask, and it need not be in view
+        tgt = {"centre": [-0.205, 0.242, -0.27], "theta": 0.3, "major_m": 0.047, "minor_m": 0.028}
+        plan = post("/api/robot/pick", {"target": tgt, "pick": True, "plan_only": True})
+        assert (
+            plan["ok"]
+            and plan["rect"]["centre"] == pytest.approx(tgt["centre"])
+            and plan["opening_mm"] == 44.0
+        )
+        for bad in (
+            {"centre": [0, 0]},
+            {"centre": [0, 0, 0], "major_m": 0.01, "minor_m": 0.02},
+            {"centre": [0, "x", 0], "major_m": 0.04, "minor_m": 0.02},
+            {"major_m": 0.04},
+        ):
+            r = post("/api/robot/pick", {"target": bad, "plan_only": True})
+            assert r["ok"] is False and "target" in r["error"], (bad, r)
+        run = post("/api/robot/pick", {"target": tgt, "pick": True, "look": False})
+        assert run["ok"] and run["dry_run"] and run["rect"]["centre"] == pytest.approx(tgt["centre"])
         home = post("/api/robot/home", {})
         assert home["ok"] and home["pose"] == pytest.approx(HOME)
     finally:
@@ -205,9 +223,15 @@ def test_the_close_look_puts_the_object_on_the_optical_axis(fancy, pick):
     q = cam.inverse().apply(rect["centre"])  # the object's top centre in the camera frame
     assert q[0] == pytest.approx(0.0, abs=1e-9) and q[1] == pytest.approx(0.0, abs=1e-9)
     assert q[2] == pytest.approx(0.24, abs=1e-9)
-    assert Transform.from_pose(look).rotate((0, 0, 1)) == pytest.approx(
-        (0, 0, -1), abs=1e-9
-    )  # already square
+    # a slight tilt (2026-09-28): 10 deg off vertical, the camera looking out from the base's side ...
+    z = Transform.from_pose(look).rotate((0, 0, 1))
+    assert math.degrees(math.acos(-z[2])) == pytest.approx(pickplan.LOOK_TILT_DEG, abs=1e-6)
+    cz = cam.rotate((0, 0, 1))
+    c = rect["centre"]
+    assert (cz[0] * c[0] + cz[1] * c[1]) > 0
+    # ... and the final approach is straight down the base Z all the same
+    approach = next(leg for leg in p["final"] if leg["name"] == "approach")["pose"]
+    assert Transform.from_pose(approach).rotate((0, 0, 1)) == pytest.approx((0, 0, -1), abs=1e-9)
     names = [leg["name"] for leg in p["final"]]
     assert names == (
         ["over", "approach", "grasp", "lift", "place", "clear"] if pick else ["over", "approach"]
@@ -302,6 +326,6 @@ def test_a_pick_flows_home_without_stopping_and_moves_fast_but_gently():
     assert by["approach"].get("blend_m", 0) > 0 and not by["approach"].get("dwell_s")  # one descent
     stops = [n for n in names if not legs[names.index(n)].get("blend_m")]
     assert set(stops) <= {"look", "grasp", "lift", "place", "home"}  # only where physics needs one
-    # 23:55 "much faster, a safe demo space": fast transit, accelerations well under the 0.8 m/s^2 that thudded
+    # 23:55 "much faster, a safe demo space": fast transit, accels well under the 0.8 m/s^2 that thudded
     assert all(leg["acceleration"] <= 0.35 for leg in legs)
     assert max(leg["velocity"] for leg in legs) >= 0.6

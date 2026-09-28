@@ -140,6 +140,8 @@ def _h_move_tcp_path(robot: Robot, p: dict) -> dict:
         kwargs["tcp"] = p["tcp"]
     if "timeout" in p:
         kwargs["timeout"] = p["timeout"]
+    if p.get("gripper_first") is not None:
+        kwargs["gripper_first"] = p["gripper_first"]
     return robot.move_tcp_path(p["legs"], **kwargs)
 
 
@@ -346,6 +348,7 @@ TOOLS: list[Tool] = [
                 },
                 "tcp": _POSE_SCHEMA,
                 "timeout": {"type": "number", "minimum": 1, "maximum": 600},
+                "gripper_first": {"type": "integer", "minimum": 0, "maximum": 255},
             },
             required=["legs"],
         ),
