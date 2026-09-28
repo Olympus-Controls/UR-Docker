@@ -70,7 +70,8 @@ def test_the_approach_nick_asked_for(theta, fancy, pick):
         1.0, abs=1e-6
     )  # across the short side
     # 20 % wider, but never under 8 mm a side (a 24 mm block: 40 mm, not 28.8)
-    assert p["opening_m"] == pytest.approx(max(1.2 * rect["minor_m"], rect["minor_m"] + 0.016))
+    # the jaws open the full stroke, every time (2026-09-28: "maximum slop")
+    assert p["opening_m"] == pytest.approx(0.05)
     assert p["gripper_position"] == pickplan.robotiq_position(p["opening_m"])
     names = [leg["name"] for leg in p["legs"]]
     assert names[-1 if not pick else -5] == "approach"
@@ -174,7 +175,7 @@ def test_the_cockpit_plans_and_dry_runs_a_pick(monkeypatch):
         plan = post("/api/robot/pick", {"plan_only": True, "fancy": True})
         assert plan["ok"] and plan["plan_only"], plan
         assert [leg["name"] for leg in plan["legs"]] == ["swing", "flourish", "look", "over", "approach"]
-        assert plan["opening_mm"] == 50.0  # 1.2 x 80 mm, capped at the stroke
+        assert plan["opening_mm"] == 50.0  # the full stroke
         # the synthetic disks are not white blocks: the close look finds no block by identity
         # and the pick stops at the look instead of grabbing whatever lies at the old pixel
         # (on the UR3e, 2026-09-27, that was a patch of carpet)
@@ -188,7 +189,7 @@ def test_the_cockpit_plans_and_dry_runs_a_pick(monkeypatch):
         assert (
             plan["ok"]
             and plan["rect"]["centre"] == pytest.approx(tgt["centre"])
-            and plan["opening_mm"] == 44.0
+            and plan["opening_mm"] == 50.0
         )
         for bad in (
             {"centre": [0, 0]},
@@ -290,13 +291,13 @@ def test_white_level_keeps_a_shadowed_block_and_drops_the_carpet():
     assert not white_blobs(w, h, 3, bytes(px), min_px=100)[1:]  # the fixed 180 only sees the slats
 
 
-def test_the_fingers_clear_a_28mm_block_by_8mm_a_side():
+def test_a_28mm_block_gets_11mm_of_slop_a_side():
     """UR3e, 2026-09-27: at 1.2 x 28 mm = 34 mm (3.4 mm a side) a fingertip caught the
-    block's edge and the Hand-E closed on nothing; fully open at the same spot it held."""
+    block's edge and the Hand-E closed on nothing; fully open at the same spot it held.
+    Since 2026-09-28 the jaws always open the full 50 mm."""
     rect = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.047, 0.028, 0.0)))
     p = pickplan.plan(rect, HOME, tip_m=TIP, pick=True)
-    assert p["opening_m"] == pytest.approx(rect["minor_m"] + 0.016)
-    assert (p["opening_m"] - rect["minor_m"]) / 2 >= 0.008 - 1e-9 and p["fits"]
+    assert (p["opening_m"] - rect["minor_m"]) / 2 >= 0.011 - 1e-3 and p["fits"]
 
 
 @pytest.mark.parametrize("look", [False, True])
@@ -329,3 +330,47 @@ def test_a_pick_flows_home_without_stopping_and_moves_fast_but_gently():
     # 23:55 "much faster, a safe demo space": fast transit, accels well under the 0.8 m/s^2 that thudded
     assert all(leg["acceleration"] <= 0.35 for leg in legs)
     assert max(leg["velocity"] for leg in legs) >= 0.6
+
+
+def test_the_jaws_open_the_full_stroke_every_time():
+    """Nick, 2026-09-28: 'open the jaws the full 50 mm every time to allow for maximum slop'."""
+    for minor in (0.010, 0.024, 0.028, 0.040):
+        rect = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.047, minor, 0.0)))
+        p = pickplan.plan(rect, HOME, tip_m=TIP, pick=True)
+        assert p["opening_m"] == pytest.approx(0.05) and p["gripper_position"] == 0 and p["fits"]
+    wide = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.06, 0.049, 0.0)))
+    assert not pickplan.plan(wide, HOME, tip_m=TIP, pick=True)["fits"]  # no slop left at 49 of 50 mm
+
+
+def _floor(cx, cy, z=-0.30, half=0.08, step=0.004):
+    n = int(2 * half / step)
+    return [[cx - half + i * step, cy - half + j * step, z] for i in range(n) for j in range(n)]
+
+
+def test_clearance_around_the_pick_zone():
+    """Nick, 2026-09-28: 'add logic to ensure there's clearance around the target pick zone before
+    committing'. The fingers come down just outside the block along their travel axis."""
+    rect = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.047, 0.028, 0.0)))
+    scene = _floor(-0.205, 0.242) + block(-0.205, 0.242, -0.27, 0.047, 0.028, 0.0)
+    ok = pickplan.clearance(rect, scene)
+    assert ok["clear"] and ok["worst_mm"] is None
+    # a neighbour 32 mm beside it along the finger travel (theta 0: the minor side runs along y)
+    crowded = pickplan.clearance(rect, scene + block(-0.205, 0.242 + 0.032, -0.27, 0.047, 0.012, 0.0))
+    assert not crowded["clear"] and crowded["side"] in ("+", "-") and crowded["worst_mm"] > 10
+    # the same neighbour 80 mm away, or beside the long ends (not where a finger goes), is fine
+    assert pickplan.clearance(rect, scene + block(-0.205, 0.242 + 0.080, -0.27, 0.047, 0.012, 0.0))["clear"]
+    assert pickplan.clearance(rect, scene + block(-0.205 + 0.060, 0.242, -0.27, 0.030, 0.028, 0.0))["clear"]
+    # a few flying pixels are not an obstacle; a real cluster is
+    speck = [[-0.205, 0.242 + 0.031, -0.26]] * 5
+    assert pickplan.clearance(rect, scene + speck)["clear"]
+
+
+def test_a_wide_block_is_not_its_own_obstacle():
+    """A block that measures ~46 mm still fits the 50 mm jaws (2 mm a side); its own edges sit
+    inside the finger zone's conservative inner bound and must not read as a neighbour."""
+    rect = pickplan.rectangle(pickplan.top_face(block(-0.205, 0.242, -0.27, 0.060, 0.044, 0.0)))
+    assert rect["minor_m"] / 2 > pickplan.STROKE_M / 2 - 0.003  # its edge is past the old bound
+    assert pickplan.plan(rect, HOME, tip_m=TIP, pick=True)["fits"]
+    # as dense as the D435's depth at the close look (~1 mm a sample), so its edge rows count
+    scene = _floor(-0.205, 0.242) + block(-0.205, 0.242, -0.27, 0.060, 0.044, 0.0, n=60)
+    assert pickplan.clearance(rect, scene)["clear"]

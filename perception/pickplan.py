@@ -35,7 +35,12 @@ LIFT_M = 0.05
 DROP_M = 0.06  # the last stretch of the sweep runs straight down the Z axis
 LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2 m blind zone
 LOOK_TILT_DEG = 10.0  # ... from a slight angle (a second viewpoint, and it reads as "taking a look")
-STROKE_M = 0.05  # Hand-E
+STROKE_M = 0.05  # Hand-E — and the jaws open this full stroke every time (Nick, 2026-09-28: "maximum slop")
+MIN_SLOP_M = 0.002  # an object needs at least this much room a side inside the open jaws
+# the finger zones checked for clearance before a grasp: each finger comes down just outside the
+# open jaws — FINGER_T_M thick along its travel, FINGER_W_M wide across it (Hand-E pads + a margin)
+FINGER_T_M = 0.014
+FINGER_W_M = 0.032
 # Motion (Nick, 2026-09-27: "all moves should be extremely fluid and smooth, not abrupt"):
 # gentle accelerations everywhere; the speed only where the arm is clear of the parts.
 # Again, 2026-09-27 23:25: "the jerk or accel settings are really high, the stops thud" — and
@@ -90,6 +95,50 @@ def rectangle(points: Sequence[Sequence[float]]) -> dict | None:
         "minor_m": 2 * math.sqrt(3 * lam2 / n),
         "n": n,
     }
+
+
+def clearance(
+    rect: dict,
+    points_base: Sequence[Sequence[float]],
+    *,
+    grasp_below_m: float = GRASP_BELOW_M,
+    stroke_m: float = STROKE_M,
+    finger_t_m: float = FINGER_T_M,
+    finger_w_m: float = FINGER_W_M,
+    min_points: int = 15,
+    margin_z_m: float = 0.003,
+) -> dict:
+    """Is there room for the open fingers beside ``rect``? Each finger comes down just outside
+    the open jaws, along the travel axis (across the object's short side), to
+    ``grasp_below_m`` under its top. Anything in either finger's zone that stands higher than
+    the fingertips will reach — a neighbouring block, the rail — is a collision; the floor is
+    below them. Fewer than ``min_points`` points in a zone are flying pixels, not an obstacle.
+    ``{clear, side ("+"/"-"/None), count, worst_mm (above the fingertips)}``."""
+    cx, cy, top = rect["centre"]
+    th = rect["theta"]
+    u = (-math.sin(th), math.cos(th))  # the fingers travel along the short side
+    v = (math.cos(th), math.sin(th))
+    bottom = top - grasp_below_m + margin_z_m
+    # never inside the block itself: a wide block's own edge is not a neighbour
+    inner = max(stroke_m / 2 - 0.003, rect["minor_m"] / 2 + 0.002)
+    outer = stroke_m / 2 + finger_t_m
+    worst = {"+": [0, None], "-": [0, None]}
+    for p in points_base:
+        if p[2] <= bottom:
+            continue
+        dx, dy = p[0] - cx, p[1] - cy
+        du, dv = dx * u[0] + dy * u[1], dx * v[0] + dy * v[1]
+        if abs(dv) > finger_w_m / 2 or not inner <= abs(du) <= outer:
+            continue
+        side = "+" if du > 0 else "-"
+        worst[side][0] += 1
+        h = (p[2] - bottom) * 1000
+        worst[side][1] = h if worst[side][1] is None else max(worst[side][1], h)
+    hit = [s for s in ("+", "-") if worst[s][0] >= min_points]
+    if not hit:
+        return {"clear": True, "side": None, "count": 0, "worst_mm": None}
+    side = max(hit, key=lambda s: worst[s][0])
+    return {"clear": False, "side": side, "count": worst[side][0], "worst_mm": round(worst[side][1], 1)}
 
 
 def robotiq_position(width_m: float, stroke_m: float = STROKE_M) -> int:
@@ -246,7 +295,7 @@ def plan(
     else:
         sweep = _legs(start_flange, stops + [("over", over, fast)] + tail, cap)
         final = []
-    opening = min(stroke_m, max(rect["minor_m"] * opening_factor, rect["minor_m"] + 2 * CLEARANCE_M))
+    opening = stroke_m  # full stroke, always: the most slop for the position error
     return {
         "sweep": sweep,
         "final": final,
@@ -258,7 +307,7 @@ def plan(
         "yaw_deg": yaw,
         "opening_m": opening,
         "gripper_position": robotiq_position(opening, stroke_m),
-        "fits": rect["minor_m"] + 2 * CLEARANCE_M <= stroke_m or rect["minor_m"] * opening_factor <= stroke_m,
+        "fits": rect["minor_m"] + 2 * MIN_SLOP_M <= stroke_m,
         "vias": [leg["name"] for leg in sweep + final if leg["name"] not in ("approach", "grasp", "lift")],
     }
 

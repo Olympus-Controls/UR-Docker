@@ -595,6 +595,24 @@ class ViewerApp:
         # top's depth) is the measurement — no second segmentation pass
         return r, f_look, ""
 
+    def _scene_base(self, step: int = 3) -> list[tuple[float, float, float]]:
+        """The newest depth frame as base-frame points (every ``step``-th pixel)."""
+        seq, frame = self.latest()
+        with self._cond:
+            t = self._latest_t
+        flange = self._flange_at(t)
+        if frame is None or flange is None:
+            return []
+        T = Transform.from_pose(flange).compose(Transform.from_pose(self._handeye_fc()))
+        k, d = frame.intrinsics, frame.depth
+        out = []
+        for v in range(0, d.height, step):
+            for u in range(0, d.width, step):
+                z = d.distance_m(u, v)
+                if z and z < 2.0:
+                    out.append(T.apply(((u - k.ppx) * z / k.fx, (v - k.ppy) * z / k.fy, z)))
+        return out
+
     def _unreachable(self, legs: list[dict]) -> list[str]:
         iks = self.robot.robot.inverse_kin([leg["pose"] for leg in legs], tcp=[0.0] * 6)
         return [leg["name"] for leg, a in zip(legs, iks, strict=True) if a.get("reachable") is False]
@@ -763,6 +781,17 @@ class ViewerApp:
                 f"close look: {rect1['major_m'] * 1000:.0f} x {rect1['minor_m'] * 1000:.0f} mm at "
                 f"{[round(v, 3) for v in rect1['centre']]}"
             )
+            # room for the open fingers beside it? checked on the close look's own depth, before committing
+            room = pickplan.clearance(rect, self._scene_base())
+            summary["clearance"] = room
+            if pick and not room["clear"]:
+                side = "+" if room["side"] == "+" else "−"
+                why_blocked = (
+                    f"no room for the {side} finger: {room['count']} points up to "
+                    f"{room['worst_mm']:.0f} mm above the fingertips beside it"
+                )
+                self.events.add("robot", f"pick: {why_blocked}", ok=False)
+                return {"ok": False, "error": why_blocked, "stage": "clearance", **summary}
             p2 = pickplan.plan(rect, f_look, tip_m=tip, pick=pick, fancy=False, home=self._home_pose())
             if pick and not p2["fits"]:
                 return {
