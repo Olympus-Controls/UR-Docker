@@ -157,6 +157,7 @@ def reopen_delay(failures: int) -> float:
 
 
 _WEBUI = Path(__file__).parent / "webui" / "index.html"
+_CLASSIC = Path(__file__).parent / "webui" / "classic.html"  # every control, the pre-2026-09-27 page
 
 
 class ViewPump:
@@ -930,6 +931,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
         qs = parse_qs(url.query)
         if route == "/":
             self._send(_WEBUI.read_bytes(), "text/html; charset=utf-8")
+        elif route == "/classic":
+            self._send(_CLASSIC.read_bytes(), "text/html; charset=utf-8")
         elif route == "/api/info":
             self._guarded(self.app.info)
         elif route == "/api/doctor":
@@ -1223,15 +1226,15 @@ def serve(
     cors: Sequence[str] | None = None,
 ) -> None:
     """Run the cockpit until interrupted (the ``perception gui`` entry point).
-    ``demo`` opens the browser on the demo view (``/?demo=1``: one picture,
-    four buttons, one light; the header's *Developer view* toggles back).
+    ``demo`` opens the browser on the classic page's demo view
+    (``/classic?demo=1``: one picture, four big buttons, one light).
     ``views`` are the extra webcam viewpoints (:mod:`perception.views`)."""
     app = ViewerApp(camera, config=config, robot=robot, views=views, cors=cors)
     server = ThreadingHTTPServer((bind, port), ViewerHandler)
     server.daemon_threads = True
     server.app = app  # type: ignore[attr-defined]
     host = "127.0.0.1" if bind in ("0.0.0.0", "") else bind
-    url = f"http://{host}:{server.server_address[1]}/" + ("?demo=1" if demo else "")
+    url = f"http://{host}:{server.server_address[1]}/" + ("classic?demo=1" if demo else "")
     kind = camera.describe()["kind"]
     if views:
         kind += " + " + ", ".join(f"view {v.name}" for v in views)
@@ -1481,7 +1484,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bind", default="127.0.0.1", help="interface to bind (default: loopback only)")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT})")
     ap.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
-    ap.add_argument("--demo", action="store_true", help="open the demo view: one picture, four big buttons")
+    ap.add_argument(
+        "--demo", action="store_true", help="open the classic page's demo view: one picture, four big buttons"
+    )
     add_cors_arg(ap)
     ap.add_argument(
         "--cell", default=None, help="cell profile (sim|ur3|ur20 or a .env path; default: $UR_CELL)"

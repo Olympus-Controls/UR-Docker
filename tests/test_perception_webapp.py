@@ -5,7 +5,10 @@ browser (or anything else on loopback) could throw at it."""
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import socket
+import subprocess
 import threading
 import time
 import urllib.error
@@ -16,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from perception import webapp
 from perception.config import PerceptionConfig
 from perception.realsense import RealSenseError, SyntheticRgbdCamera
 from perception.rgbd import synthetic_disks, unpack_rgbd
@@ -85,6 +89,30 @@ def test_index_and_info(server):
     assert status == 200 and info["ok"] and info["camera"]["kind"] == "synthetic"
     assert info["segmenter"] == "stub" and info["frame"]["width"] == 64 and info["seq"] >= 1
     assert info["last_error"] is None and not info["has_mask"]
+
+
+def test_classic_page_is_kept(server):
+    base, _, _ = server
+    status, ctype, body = get(base, "/classic")
+    assert status == 200 and "text/html" in ctype and b"RGB-D cockpit (classic)" in body
+    assert b"/api/cal/solve" in body  # the controls the minimal page leaves out live here
+
+
+@pytest.mark.parametrize("page", ["index.html", "classic.html"])
+def test_page_scripts_parse(page, tmp_path):
+    """Every inline <script> must at least parse: a stray `if if (` in the classic page
+    (e242d1a) killed its whole script and nothing caught it."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("needs node for `node --check`")
+    html = (Path(webapp.__file__).parent / "webui" / page).read_text(encoding="utf-8")
+    scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+    assert scripts, "no inline script"
+    for i, src in enumerate(scripts):
+        js = tmp_path / f"{i}.js"
+        js.write_text(src, encoding="utf-8")
+        proc = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
 
 
 def test_frame_container_and_long_poll(server):
