@@ -37,9 +37,10 @@ LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2
 STROKE_M = 0.05  # Hand-E
 # Motion (Nick, 2026-09-27: "all moves should be extremely fluid and smooth, not abrupt"):
 # gentle accelerations everywhere; the speed only where the arm is clear of the parts.
-TRANSIT = {"velocity": 0.15, "acceleration": 0.25}
-SETTLE = {"velocity": 0.08, "acceleration": 0.15}
-DESCEND = {"velocity": 0.03, "acceleration": 0.10}
+# Again, 2026-09-27 23:25: "the jerk or accel settings are really high, the stops thud".
+TRANSIT = {"velocity": 0.12, "acceleration": 0.12}
+SETTLE = {"velocity": 0.06, "acceleration": 0.08}
+DESCEND = {"velocity": 0.02, "acceleration": 0.05}
 
 
 def top_face(

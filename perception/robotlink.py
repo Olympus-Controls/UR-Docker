@@ -44,7 +44,7 @@ from .handeye import (
 )
 
 DEFAULT_APPROACH_VELOCITY = 0.1  # m/s — slow; this move follows a single click
-DEFAULT_APPROACH_ACCELERATION = 0.3  # m/s^2
+DEFAULT_APPROACH_ACCELERATION = 0.1  # m/s^2 — gentle: no thud at the stops (Nick, 2026-09-27)
 # A jog is one button press: cap the step so a mistyped unit can't send the arm
 # across the cell (the safety envelope's own relative cap is 1.0 m).
 MAX_JOG_STEP_M = 0.05
@@ -54,7 +54,7 @@ DEFAULT_JOG_VELOCITY = 0.05
 # clearance, down to the standoff, hold, back up, back to where the picture
 # was taken. Quicker than the single Move — it's a repeatable test loop.
 DEFAULT_CYCLE_VELOCITY = 0.15  # m/s
-DEFAULT_CYCLE_ACCELERATION = 0.5  # m/s^2
+DEFAULT_CYCLE_ACCELERATION = 0.12  # m/s^2 — gentle: no thud at the stops (Nick, 2026-09-27)
 DEFAULT_CYCLE_CLEARANCE_M = 0.10
 DEFAULT_CYCLE_HOLD_S = 1.0
 FLANGE_TCP = [0.0] * 6
@@ -474,7 +474,7 @@ class RobotLink:
             raise ValueError("jog velocity must be within (0, 0.25] m/s")
         return self._tool(
             "move_tcp",
-            {"pose": vals, "relative": True, "velocity": float(velocity), "acceleration": 0.3},
+            {"pose": vals, "relative": True, "velocity": float(velocity), "acceleration": 0.1},
         )
 
     def bring_up(self) -> dict:
