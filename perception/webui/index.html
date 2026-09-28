@@ -493,10 +493,10 @@
     }
     if (S.header && S.header.arm) addArm(add, S.header.arm);
     for (const ob of S.objects) {
-      const col = ob.target ? [1, 0.85, 0.35, 1] : [1, 0.74, 0.26, 0.8], k = rectCorners(ob);
+      const v = verdict(ob), base = v.ok === false ? BADC : (v.ok ? OKC : [1, 0.74, 0.26]), col = [...base, ob.target ? 1 : 0.8], k = rectCorners(ob);
       for (let i = 0; i < 4; i++) add(k[i], k[(i + 1) % 4], col);
       const r = Math.max(ob.ext[0], ob.ext[1]) * 0.75 + 0.012 + (reduced ? 0 : Math.sin(now / 420 + ob.id) * 0.004);
-      for (let i = 0; i < 40; i++) { const a0 = i / 40 * 6.2832, a1 = (i + 1) / 40 * 6.2832; add([ob.c[0] + r * Math.cos(a0), ob.c[1] + r * Math.sin(a0), tz + 0.001], [ob.c[0] + r * Math.cos(a1), ob.c[1] + r * Math.sin(a1), tz + 0.001], [1, 0.74, 0.26, 0.4]); }
+      for (let i = 0; i < 40; i++) { const a0 = i / 40 * 6.2832, a1 = (i + 1) / 40 * 6.2832; add([ob.c[0] + r * Math.cos(a0), ob.c[1] + r * Math.sin(a0), tz + 0.001], [ob.c[0] + r * Math.cos(a1), ob.c[1] + r * Math.sin(a1), tz + 0.001], [...base, 0.45]); }
     }
     if (S.plan && S.plan.legs && S.header && S.header.flange_pose) {   // the planned fingertip path: dashes marching toward the part
       const pts = [tipOf(S.header.flange_pose)].concat(S.plan.legs.map((l) => tipOf(l.pose))), march = reduced ? 0 : (now / 1000 * 0.08) % 0.02;
@@ -605,24 +605,24 @@
     const ctx = $('scanOv').getContext('2d'), d = DPR(); ctx.clearRect(0, 0, W, H);
     const AM = '#FFC247', PHD = 'rgba(124,247,162,.5)', placed = [];
     const obs = S.objects.map((ob) => ({ ob, top: toScreen(vp, [ob.c[0], ob.c[1], ob.c[2] + 0.05], W, H) })).filter((x) => x.top).sort((a, b) => a.top[1] - b.top[1]);
-    for (const { ob, top } of obs) {   // one legible card per object, stacked so they never overlap
-      const lines = [
-        [`${ob.target ? 'TGT' : 'OBJ'} ${String(ob.id).padStart(2, '0')}`, 17, AM],
-        [`${sig2(ob.ext[0] * 1000)} × ${sig2(ob.ext[1] * 1000)} MM   R ${sig2(Math.hypot(ob.c[0], ob.c[1]))} M`, 14, 'rgba(255,212,120,.95)'],
-        [`X ${sig2(ob.c[0], true)}  Y ${sig2(ob.c[1], true)}  Z ${sig2(ob.c[2], true)} M`, 14, 'rgba(255,212,120,.95)'],
-        [`DESC  ${ob.desc || '—'}`, 13, 'rgba(255,194,71,.6)'],
-        [`NOTE  ${ob.note || '—'}`, 13, 'rgba(255,194,71,.6)'],
-      ];
-      const lh = (sz) => sz * 1.35 * d, cardH = lines.reduce((a, [, sz]) => a + lh(sz), 0) + 14 * d, cardW = 270 * d;
-      let x = top[0] + 26 * d, y = top[1] - cardH - 10 * d;
-      if (x + cardW > W - 8 * d) x = top[0] - 26 * d - cardW;
-      for (const p of placed) if (Math.abs(p[0] - x) < cardW && Math.abs(p[1] - y) < p[2] + 6 * d) y = p[1] + p[2] + 8 * d;
+    for (const { ob, top } of obs) {   // a small card per object: who, how big, how far, can we pick it
+      const v = verdict(ob), c1 = vcol(v, 1), c2 = vcol(v, .85);
+      const lines = [[`${ob.target ? 'TGT' : 'OBJ'} ${String(ob.id).padStart(2, '0')}  ${sig2(ob.ext[0] * 1000)}×${sig2(ob.ext[1] * 1000)} MM  R ${sig2(Math.hypot(ob.c[0], ob.c[1]))} M`, 14, c1],
+                     [v.why, 13, c2]];
+      if (ob.desc) lines.push([ob.desc, 12, vcol(v, .7)]);
+      if (ob.note) lines.push([ob.note, 12, vcol(v, .55)]);
+      ctx.font = `14px "Share Tech Mono", ui-monospace, monospace`;
+      const lh = (sz) => sz * 1.3 * d, cardH = lines.reduce((a, [, sz]) => a + lh(sz), 0) + 8 * d;
+      const cardW = Math.max(...lines.map(([t, sz]) => { ctx.font = `${sz * d}px "Share Tech Mono", ui-monospace, monospace`; return ctx.measureText(t).width; })) + 16 * d;
+      let x = top[0] + 18 * d, y = top[1] - cardH - 8 * d;
+      if (x + cardW > W - 8 * d) x = top[0] - 18 * d - cardW;
+      for (const p of placed) if (Math.abs(p[0] - x) < cardW && Math.abs(p[1] - y) < p[2] + 4 * d) y = p[1] + p[2] + 6 * d;
       y = Math.max(8 * d, y); placed.push([x, y, cardH]);
-      ctx.fillStyle = 'rgba(2,7,4,.78)'; ctx.fillRect(x, y, cardW, cardH);
-      ctx.strokeStyle = ob.target ? 'rgba(255,194,71,.9)' : 'rgba(255,194,71,.45)'; ctx.lineWidth = d; ctx.strokeRect(x + .5, y + .5, cardW, cardH);
+      ctx.fillStyle = 'rgba(2,7,4,.72)'; ctx.fillRect(x, y, cardW, cardH);
+      ctx.strokeStyle = vcol(v, ob.target ? .95 : .6); ctx.lineWidth = d; ctx.strokeRect(x + .5, y + .5, cardW, cardH);
       ctx.beginPath(); ctx.moveTo(top[0], top[1]); ctx.lineTo(x < top[0] ? x + cardW : x, y + cardH / 2); ctx.stroke();
-      let yy = y + 8 * d;
-      for (const [txt, sz, col] of lines) { yy += lh(sz) * 0.8; label(ctx, txt, x + 10 * d, yy, col, sz * d); yy += lh(sz) * 0.2; }
+      let yy = y + 4 * d;
+      for (const [txt, sz, col] of lines) { yy += lh(sz) * 0.82; label(ctx, txt, x + 8 * d, yy, col, sz * d); yy += lh(sz) * 0.18; }
     }
     if (S.Tbc) { const b = toScreen(vp, [0, 0, 0], W, H); if (b) label(ctx, 'BASE', b[0] + 10 * d, b[1] - 8 * d, PHD, 11 * d); }
     if (S.plan && S.plan.legs) for (const l of S.plan.legs) { const p = toScreen(vp, tipOf(l.pose), W, H); if (p) label(ctx, l.name.toUpperCase(), p[0] + 8 * d, p[1] - 6 * d, 'rgba(255,194,71,.7)', 10 * d); }
@@ -686,6 +686,19 @@
     const th = 0.5 * Math.atan2(2 * sxy, sxx - syy), root = Math.hypot(sxx - syy, 2 * sxy), l1 = 0.5 * (sxx + syy) + 0.5 * root, l2 = Math.max(0, 0.5 * (sxx + syy) - 0.5 * root);
     return { c: [cx, cy, cz], ax: [[Math.cos(th), Math.sin(th)], [-Math.sin(th), Math.cos(th)]], ext: [2 * Math.sqrt(3 * l1 / n), 2 * Math.sqrt(3 * l2 / n)] };
   }
+  // can the arm pick it? straight down within the UR3e's working band, and narrow enough for the
+  // Hand-E with 8 mm clear a side (pickplan: max(1.2 w, w + 16 mm) <= the 50 mm stroke)
+  const REACH = [0.20, 0.50], MAX_W = 0.034;
+  function verdict(ob) {
+    const r = Math.hypot(ob.c[0], ob.c[1]);
+    if (!S.Tbc) return { ok: null, why: 'NO POSE' };
+    if (r < REACH[0]) return { ok: false, why: 'TOO CLOSE' };
+    if (r > REACH[1]) return { ok: false, why: 'TOO FAR' };
+    if (ob.ext[1] > MAX_W) return { ok: false, why: 'TOO WIDE' };
+    return { ok: true, why: 'PICKABLE' };
+  }
+  const OKC = [0.49, 0.97, 0.64], BADC = [1.0, 0.29, 0.24], OKS = '124,247,162', BADS = '255,74,61';
+  const vcol = (v, a) => `rgba(${v.ok === false ? BADS : (v.ok ? OKS : '255,194,71')},${a})`;
   function rectCorners(ob) { const [a, b] = ob.ext, [u, w] = ob.ax, z = ob.c[2], o = []; for (const [su, sw] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) o.push([ob.c[0] + su * a / 2 * u[0] + sw * b / 2 * w[0], ob.c[1] + su * a / 2 * u[1] + sw * b / 2 * w[1], z]); return o; }
   function frameTbc(h) { return h && h.flange_pose && h.flange_to_color_pose ? M.mul(M.fromPose(h.flange_pose), M.fromPose(h.flange_to_color_pose)) : null; }
   function merge(rect, { target = false } = {}) {
@@ -742,10 +755,11 @@
       const px = rectCorners(ob).map(worldToPixel); if (px.some((p) => !p)) continue;
       const sc = px.map(([u, v]) => feedToScreen(u, v)), a = ob.target ? Math.min(1, (now - S.acquiredAt) / 450) : 1, grow = (1 - a) * 18 * d;
       const cx = sc.reduce((s, p) => s + p[0], 0) / 4, cy = sc.reduce((s, p) => s + p[1], 0) / 4;
-      ctx.strokeStyle = AM; ctx.globalAlpha = ob.target ? 1 : 0.7; ctx.lineWidth = (ob.target ? 1.6 : 1.1) * d; ctx.shadowColor = AM; ctx.shadowBlur = 8 * d;
+      const vc = vcol(verdict(ob), 1);
+      ctx.strokeStyle = vc; ctx.globalAlpha = ob.target ? 1 : 0.75; ctx.lineWidth = (ob.target ? 1.6 : 1.1) * d; ctx.shadowColor = vc; ctx.shadowBlur = 8 * d;
       ctx.beginPath(); sc.forEach(([x, y], i) => { const l = Math.hypot(x - cx, y - cy) || 1, ex = x + (x - cx) / l * grow, ey = y + (y - cy) / l * grow; i ? ctx.lineTo(ex, ey) : ctx.moveTo(ex, ey); }); ctx.closePath(); ctx.stroke();
       ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-      label(ctx, `${ob.target ? 'TGT' : 'OBJ'} ${String(ob.id).padStart(2, '0')}`, Math.max(...sc.map((p) => p[0])) + 7 * d, Math.min(...sc.map((p) => p[1])) + 14 * d, AM, 15 * d);
+      label(ctx, `${ob.target ? 'TGT' : 'OBJ'} ${String(ob.id).padStart(2, '0')}`, Math.max(...sc.map((p) => p[0])) + 7 * d, Math.min(...sc.map((p) => p[1])) + 14 * d, vc, 15 * d);
     }
     if (!S.Tbc && S.feat) { const f = S.feat, a = feedToScreen(f.bbox[0], f.bbox[1]), b = feedToScreen(f.bbox[2], f.bbox[3]); ctx.strokeStyle = AM; ctx.lineWidth = 1.5 * d; ctx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); }
     if (S.drag && S.drag.moved) { const a = feedToScreen(S.drag.u0, S.drag.v0), b = feedToScreen(S.drag.u1, S.drag.v1); ctx.setLineDash([5 * d, 4 * d]); ctx.strokeStyle = PH; ctx.lineWidth = d; ctx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])); ctx.setLineDash([]); }
