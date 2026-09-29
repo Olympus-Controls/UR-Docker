@@ -353,3 +353,44 @@ def test_the_cockpit_scene_route_answers_the_teach_screen_over_http():
         srv.shutdown()
         srv.server_close()
         app.stop()
+
+
+def test_check_approach_gets_the_approach_in_polyscopes_active_tcp():
+    import time
+
+    from perception.config import PerceptionConfig
+    from perception.synthscene import BoxSceneCamera
+    from perception.webapp import ViewerApp
+
+    offset = [0.0, 0.0, 0.10, 0.0, 0.0, 0.0]  # the pendant's active TCP: 100 mm out along the flange Z
+
+    class Eye:
+        def as_dict(self):
+            return {"flange_to_color_pose": EYE}
+
+    class Link:  # the parts of RobotLink the scene route reads
+        handeye = Eye()
+        tip_m = TIP
+
+        def flange_pose(self):
+            return {"ok": True, "flange": FLANGE, "tcp_offset": offset, "tcp_offset_consistent": True}
+
+    app = ViewerApp(BoxSceneCamera(ROW, Transform.from_pose(FLANGE), w=W, h=H), config=PerceptionConfig())
+    app.start()
+    try:
+        deadline = time.monotonic() + 5
+        while app.latest()[1] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        app.robot = Link()  # after the camera loop is up: it needs nothing of the robot
+        out = app.pick_scene(OPTS, 25.0)
+    finally:
+        app.stop()
+    assert out["ok"], out
+    first = out["parts"][0]
+    tips = pose_trans(first["grasp_pose"], [0, 0, TIP, 0, 0, 0])
+    assert tips[:3] == pytest.approx(first["centre"], abs=1e-3)
+    # the active TCP at the approach = the fingertips 25 mm over the top, backed off to where
+    # a 100 mm TCP sits: 163 - 100 + 25 = 88 mm above the top, straight down
+    tcp = first["polyscope_approach_pose"]
+    assert tcp[2] == pytest.approx(first["centre"][2] + TIP - 0.10 + 0.025, abs=1e-3)
+    assert tcp[:2] == pytest.approx(first["centre"][:2], abs=1e-3)

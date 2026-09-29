@@ -1008,16 +1008,30 @@ class ViewerApp:
             part=part,
         )
 
-    def pick_scene(self, opts_text: str) -> dict:
+    def pick_scene(self, opts_text: str, approach_mm: float | None = None) -> dict:
         """The 0.5.0 node's teach screen (:func:`perception.picknode.scene_report`): the same
         FIND the program would make with these options, from the live flange pose (the pose
-        stream, else the robot link; camera-only without either)."""
+        stream, else the robot link; camera-only without either). With ``approach_mm`` each
+        part also carries ``polyscope_approach_pose``: the approach (fingertips that far over
+        its top, along the tool axis) in the controller's **active** TCP — what PolyScope's
+        hold-to-move screen takes."""
+        from urctl.pose import pose_trans
+
         opts = parse_options(opts_text[:1024])
         flange = self.frame_pose().get("flange_pose")
-        if flange is None and self.robot is not None:
+        fp: dict = {}
+        if self.robot is not None and (flange is None or approach_mm is not None):
             fp = self.robot.flange_pose()
-            flange = list(fp["flange"]) if fp.get("ok") and fp.get("flange") else None
-        return scene_report(self.pick_planner(), flange, opts, pick_port=self.pick_port)
+            if flange is None and fp.get("ok") and fp.get("flange"):
+                flange = list(fp["flange"])
+        out = scene_report(self.pick_planner(), flange, opts, pick_port=self.pick_port)
+        offset = fp.get("tcp_offset") if fp.get("tcp_offset_consistent") is not False else None
+        if approach_mm is not None and offset is not None:
+            for part in out.get("parts", []):
+                if "grasp_pose" in part:
+                    hover = pose_trans(part["grasp_pose"], [0.0, 0.0, -approach_mm / 1000.0, 0.0, 0.0, 0.0])
+                    part["polyscope_approach_pose"] = [round(v, 6) for v in pose_trans(hover, offset)]
+        return out
 
     # -- API -------------------------------------------------------------------------
 
@@ -1594,7 +1608,14 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._guarded(lambda: self.app.pick_detect(part))
         elif route == "/api/pick/scene":
             opts = (qs.get("opts") or [""])[0]
-            self._guarded(lambda: self.app.pick_scene(opts))
+            try:
+                approach = float(qs["approach_mm"][0]) if "approach_mm" in qs else None
+                if approach is not None and not 0.0 <= approach <= 300.0:
+                    raise ValueError
+            except ValueError:
+                self._send_json({"ok": False, "error": "approach_mm must be 0..300"}, status=400)
+                return
+            self._guarded(lambda: self.app.pick_scene(opts, approach))
         elif route == "/api/color.png":
             try:
                 after = int(qs["after"][0]) if "after" in qs else None

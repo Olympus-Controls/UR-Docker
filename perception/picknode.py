@@ -729,6 +729,11 @@ def scene_report(
         return {"ok": False, "status": ok, "error": STATUS.get(ok, "?")}
     seq, w, h = frame[0], frame[1], frame[2]
     out = scene.as_dict()
+    if flange is not None:
+        # the grasp for each part (fingertips on its top centre, flange pose): the teach screen's
+        # "Check approach" backs it off along the tool axis for PolyScope's move screen
+        for d, p in zip(out["parts"], scene.parts, strict=True):
+            d["grasp_pose"] = [round(v, 6) for v in planner._grasp(p, flange, 0.0)]
     out.update(
         ok=True,
         seq=seq,
