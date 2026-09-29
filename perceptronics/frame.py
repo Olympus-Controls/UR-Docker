@@ -134,8 +134,7 @@ def _require_numpy():
         import numpy as np
     except ImportError as exc:  # pragma: no cover - exercised only without numpy
         raise ImportError(
-            "numpy is required for Frame numpy/OpenCV interop. "
-            "Install it with `pip install -e .[perceptronics]`."
+            "numpy is required for Frame numpy/OpenCV interop. Install it with `pip install -e .[vision]`."
         ) from exc
     return np
 

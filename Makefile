@@ -204,4 +204,4 @@ regen-urps:  ## Rebuild every <name>.urp from its build.py (node tree) or siblin
 # ---- One-time setup ---------------------------------------------------------
 
 install-dev:  ## Create/refresh the uv venv with dev + optional extras.
-	$(UV) sync --extra perceptronics
+	$(UV) sync --extra vision

@@ -835,7 +835,7 @@ Environment + deps are managed with **`uv`** (the repo's `pyproject.toml`
 declares the `urctl`/`perceptronics` packages and a `dev` group). `uv sync` builds
 `.venv`; prefix commands with `uv run`. The core (`urctl` + perceptronics core) is
 pure stdlib — numpy/OpenCV/torch/the MCP SDK are optional extras
-(`uv sync --extra perceptronics`).
+(`uv sync --extra vision`).
 
 ```bash
 uv sync                                   # create .venv with dev deps

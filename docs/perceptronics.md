@@ -55,7 +55,7 @@ tested) on a box with no numpy, no OpenCV, no GPU. Selecting a real backend is a
 
 ```bash
 pip install -e .                      # core only (stubs)
-pip install -e .[perceptronics]          # + numpy + OpenCV (webcam, blob_cv)
+pip install -e .[vision]          # + numpy + OpenCV (webcam, blob_cv)
 pip install -e .[perceptronics-torch]    # + Depth Anything V2
 ```
 

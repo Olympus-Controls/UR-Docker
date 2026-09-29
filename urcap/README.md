@@ -125,7 +125,7 @@ Get this repository and its environment:
 
 ```bash
 git clone https://github.com/Olympus-Controls/UR-utils.git && cd UR-utils
-uv sync --extra perceptronics
+uv sync --extra vision
 ```
 
 Describe your cell in one small file (copy [`perceptronics/cells/ur20.env`](../perceptronics/cells/ur20.env), the

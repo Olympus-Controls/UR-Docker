@@ -22,7 +22,7 @@ jobs:
         with:
           enable-cache: true
       - name: install deps
-        run: uv sync --locked --extra perceptronics
+        run: uv sync --locked --extra vision
       - name: ruff check
         run: uv run ruff check urctl perceptronics scripts urcap tests
       - name: ruff format
@@ -57,7 +57,7 @@ jobs:
         # Core is stdlib-only; the extras exercise the optional integrations.
         # opencv/numpy wheels can lag new CPython releases, so extras are
         # best-effort off the oldest/newest edges: fall back to core deps.
-        run: uv sync --locked --extra perceptronics || uv sync --locked
+        run: uv sync --locked --extra vision || uv sync --locked
       - name: unit tests
         run: uv run pytest -m "not integration and not sam" -q
 
@@ -113,7 +113,7 @@ jobs:
         with:
           enable-cache: true
       - name: install deps
-        run: uv sync --locked --extra perceptronics
+        run: uv sync --locked --extra vision
       - name: start URSim
         run: |
           docker compose up -d

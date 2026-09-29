@@ -57,7 +57,7 @@ def load_png(path: str) -> tuple[int, int, int, bytes]:
     else:
         raise ValueError(
             f"{path}: unsupported color type {color_type} (need 2=RGB or 6=RGBA); "
-            "install Pillow via `.[perceptronics]` and use a converter for others"
+            "install Pillow via `.[vision]` and use a converter for others"
         )
 
     raw = zlib.decompress(bytes(idat))

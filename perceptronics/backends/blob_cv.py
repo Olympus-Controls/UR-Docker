@@ -87,7 +87,6 @@ def _require_cv2():
         import cv2
     except ImportError as exc:  # pragma: no cover - needs the extra installed
         raise ImportError(
-            "OpenCV (cv2) is required for the blob_cv backend. "
-            "Install with `pip install -e .[perceptronics]`."
+            "OpenCV (cv2) is required for the blob_cv backend. Install with `pip install -e .[vision]`."
         ) from exc
     return cv2
