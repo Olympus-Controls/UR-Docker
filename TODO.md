@@ -29,6 +29,11 @@
 - 2026-09-27 — Delete the stale pre-rebase `feature/urcap5-pick-node` on the fork? Everything in it is in `refactor/prune-2026-09-25` (4df4259).
 - 2026-09-28 — Draft PR JimothyJohn/universal-perceptronics#3 (`ci/urcap5-release`): `urcap5-v<version>` tags publish the committed `.urcap` as a GitHub Release. After it merges, cut the first one: `git tag urcap5-v0.3.0 <merge> && git push fork urcap5-v0.3.0`.
 
+- 2026-09-28 — PS5 pick product (`feature/ps5-pick-product`): **reach** read as *min* = the base's outer radius + 150 mm (UR3e Ø128 → 214 mm from the base axis), *max* = the rated reach − 150 mm (UR3e 350 mm); both margins editable in the Installation screen. Right?
+- 2026-09-28 — **Pick order** directions are the picture's, as the pendant shows it: Left/Right = the screen's, **Front → Back = bottom of the picture → top**. The numbers drawn on the parts make it visible either way — or should it be the robot base frame?
+- 2026-09-28 — One **RealSense Pick node run = one part**: it goes to the picture points in turn until one shows a part, picks the first in the chosen order, runs its children (the after-pick routine), and the next run goes straight to the close look over the next part it already saw (no trip back to the picture point) — faster cycle. OK, or should one run clear every location?
+- 2026-09-28 — The node now drives the **Robotiq Hand-E itself** (fully open before the approach, close at the grip, object-detected check) through the controller-local Robotiq socket `urctl gripper` uses; "my own gripper nodes" stays an option. Right default?
+
 ## After the demo (2026-09-28)
 
 - 2026-09-25 — (held until after the demo, Nick 09-27) Four pick-cycle faults could not be injected from the desk and are untested claims until someone does them once: pendant flipped to **Local** mid-run, a webcam or the D435 **unplugged** mid-run, the cockpit **restarted** while the routine is on a block, robot **power cut**. Note what the routine did in the field log.
