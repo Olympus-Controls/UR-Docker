@@ -782,3 +782,57 @@ def test_e2e_boot_wait_fails_fast_when_the_sim_exits():
     with pytest.raises(e2e.E2EError, match="exited"):
         e2e.wait_for("the web UI", lambda: False, 600, 0.01, alive=lambda: False)
     assert __import__("time").monotonic() - t0 < 5
+
+
+# -- e2e.py: install only once the simulator says it is ready -------------------------------------
+
+# the web-bootstrapper's last lines in a CI run where installing earlier broke PolyScope X's start
+# (run 36523255181, 2026-09-29)
+_BOOT_MIDWAY = """\
+web-bootstrapper-1  | 2026/09/29 04:50:48 [      INFO] Installed URCapX urconnect-main
+web-bootstrapper-1  | 2026/09/29 04:50:48 [      INFO] Installing URCapX urconnect
+web-bootstrapper-1  | 2026/09/29 04:50:48 [     ERROR] Failed finding URCapX urconnect in urcaps folder
+"""
+_BOOT_DONE = (
+    _BOOT_MIDWAY
+    + """\
+web-bootstrapper-1  | 2026/09/29 04:50:48 [      INFO] URService replies 404 to deleting urcapID:java-backend
+web-bootstrapper-1  | 2026/09/29 04:50:48 [      INFO] Done, time to sleep forever
+"""
+)
+
+
+def test_the_simulator_is_ready_only_when_its_bootstrapper_has_finished():
+    import e2e
+
+    assert not e2e.bootstrapped(_BOOT_MIDWAY)
+    assert e2e.bootstrapped(_BOOT_DONE)
+
+
+def test_the_urcap_is_installed_only_after_the_simulator_is_ready(monkeypatch, tmp_path):
+    import e2e
+
+    events: list[str] = []
+    polls = {"n": 0}
+
+    def ready():
+        polls["n"] += 1
+        events.append(f"ready?{polls['n']}")
+        return polls["n"] >= 3  # the bootstrapper finishes on the third look
+
+    monkeypatch.setattr(e2e, "http", lambda url, timeout=10: (200, b'{"state":"done"}'))
+    monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
+
+    class Installed(Exception):
+        """the fake stops the run at the install: what follows needs a real simulator"""
+
+    def install(*a, **k):
+        events.append("install")
+        raise Installed
+
+    monkeypatch.setattr(e2e.urcapx, "install", install)
+    checks = e2e.Checks()
+    with pytest.raises(Installed):
+        e2e.install_checks(checks, tmp_path / "x.urcapx", 8000, 30, ready=ready)
+    assert events.index("install") > events.index("ready?3"), events
+    assert any(c["check"] == "simulator ready" and c["ok"] for c in checks.items)
