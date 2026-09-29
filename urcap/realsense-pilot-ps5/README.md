@@ -20,11 +20,11 @@ Download: [`../dist/realsense-pilot-ps5-0.5.0.urcap`](../dist/realsense-pilot-ps
 
 ## The cockpit it talks to
 
-The node is a client of the RealSense cockpit (`perception gui`) running on the computer
+The node is a client of the RealSense cockpit (`perceptronics gui`) running on the computer
 the camera is plugged into. The controller reaches it over the cell network, so start it
 listening on the network:
 
-    perception --cell ur3 gui --bind 0.0.0.0
+    perceptronics --cell ur3 gui --bind 0.0.0.0
 
 and type `http://<that-computer's-ip>:7621` into **Cockpit** (the pendant keyboard opens
 when you tap the field), then **Save** — it is kept in the installation. No `--cors` is
@@ -117,7 +117,7 @@ and the node's **children run — the routine after the pick** (place it…) wit
 back. With **A routine per picture point** on, the node holds one **After picture N** child
 per point, each run only for parts from that point.
 
-**The detector** (`perception/volume.py`) is depth only — no colour threshold: a part is
+**The detector** (`perceptronics/volume.py`) is depth only — no colour threshold: a part is
 what stands the part's height above the surface, with a top face the part's length ×
 width. The surface is the picture point's **taught pick area** (its plane, nudged ≤ 15 mm to
 the live table) or, without one, the table found live (level in the base frame). Each
@@ -149,7 +149,7 @@ One line per request, one parenthesised list per answer (URScript's
 `socket_read_ascii_float`). Every request carries the node's options:
 `part=50x30x30 tol=25 order=LR,FB grip=15 stroke=50 [reach=0.214,0.350]
 [plane=p[…] area=300x200] node=<id> loc=<i> locs=<n> proto=2`
-(`perception/picknode.py` `parse_options`; the Java `PickScript.tokens` writes it, and a test
+(`perceptronics/picknode.py` `parse_options`; the Java `PickScript.tokens` writes it, and a test
 reads the Java's tokens back with the Python parser). Verbs: `NEXT` (the queue), `FIND`,
 `LOOK`, `REFINE`, `LOG`. Answers: `(status, centre xyz, flange pose ×6, loc, order,
 remaining, L, W, H)`. The teach screen asks `GET /api/pick/scene?opts=<the same tokens>`
@@ -158,23 +158,38 @@ active TCP for its hold-to-move screen).
 
 ## Build it
 
-A JDK (11+; it builds Java 8 bytecode with `--release 8`) and Docker:
+A JDK (11+; it builds Java 8 bytecode with `--release 8`) and a network — no Docker:
 
-    make urcap5-sdk        # copy the URCap API jars out of the URSim e-Series image into target/
+    make urcap5-sdk        # the URCap API jars of the oldest supported PolyScope (+ 5.8's) into target/
     make urcap5-package    # compile, write the manifest, zip → ../dist/*.urcap (commit it)
 
 `urcap/urcap5.py` does what UR's Maven SDK would: `Import-Package` comes from the classes
 (`jdeps`), the manifest carries the `URCapCompatibility-CB3` / `-eSeries` flags PolyScope
 5's loader requires, and `META-INF/maven/**/pom.xml` names the `com.ur.urcap:api`
-version (where PolyScope reads it). The API jars are UR's and are never committed. The
-jar is reproducible, and carries a digest of its sources so a test flags a stale
-`dist/` without a JDK.
+version (where PolyScope reads it). The API jars are UR's and are never committed: `sdk`
+reads them out of the `universalrobots/ursim_e-series` image's layer straight from Docker
+Hub's registry. The jar is reproducible, and carries a digest of its sources so a test
+flags a stale `dist/` without a JDK.
+
+**Backwards compatible by construction** (`bundle.properties`): the code is compiled against
+the URCap API of the **oldest supported PolyScope, 5.4** (`compat.floor`; its
+`polyscope-urcap/api-1.7.0.jar`, so `urcap.api.version=1.7.0` — PolyScope 5.10+ refuse a
+URCap whose pom names a newer API than they carry). A call 5.4 lacks is a compile error,
+not a `NoSuchMethodError` when an operator taps it on an old pendant. The one newer API the
+node uses — `RobotPositionCallback2`, which says which TCP offset a taught pose is under,
+first in 5.8 — lives in `TeachPosition2` (`compat.since.5.8`), compiled against 5.8's jars
+and loaded by name only when the PolyScope has that class; its package is imported
+`resolution:=optional`. Before 5.8 a pick-area touch takes the flange from the joints
+through the arm's nominal geometry (UR3e/5e/10e/16e; `PoseMath.flange`, the rows of
+`perceptronics/armfk.py`). `python3 urcap/urcap5.py check --sdk <dir>` holds the URCap to any
+version's jars (`urcap5.py sdk --image 5.12.8 --dir <dir>`).
 
 ## Status (2026-09-28, 0.5.0)
 
-- Compiles against PolyScope 5.26's own URCap API bundles with `-Xlint:all -Werror`; the
-  script, the option tokens, the order tiles, the plane and pose maths, the reach table
-  and the scene parsing are tested against the Python they stand for, under a JDK
+- Compiles against PolyScope 5.4's URCap API (and each version's own, in the matrix) with
+  `-Xlint:all -Werror`; the script, the option tokens, the order tiles, the plane and pose
+  maths, the reach table and the scene parsing are tested against the Python they stand
+  for, under a JDK
   (`tests/test_urcap5_pick.py`).
 - The screens are pure Swing (no UR API) and render in a harness; **not yet seen on a
   pendant** — PolyScope's JVM crashes under emulation on the Mac, and CI checks the
@@ -187,24 +202,89 @@ jar is reproducible, and carries a digest of its sources so a test flags a stale
 
 ## Tested PolyScope versions
 
-Every change to the URCap runs on the newest patch of each of the newest three PolyScope 5
-minors, in URSim on GitHub's amd64 runners (`.github/workflows/urcap5-matrix.yml`;
-`docker-compose.ps5-matrix.yml`, `urcap/ps5_matrix.py`):
+**Every PolyScope 5 release UR publishes a URSim image for — 5.4 through 5.26, the newest
+image of each minor — runs every change to the URCap**, in URSim on GitHub's amd64 runners
+(`.github/workflows/urcap5-matrix.yml`; the version list is `urcap/ps5_matrix.py`'s MATRIX,
+`docker-compose.ps5-matrix.yml` is generated from it). No version is excluded. Docker Hub has
+nothing older than 5.4 (`universalrobots/ursim_e-series`, 2026-09-28).
 
-| PolyScope | URSim image | Result (2026-09-28) |
-| --------- | ----------- | -------------------------------- |
-| 5.24 | `ursim_e-series:5.24.0` | bundle Active, both node services registered, pick e2e PASS |
-| 5.25 | `ursim_e-series:5.25.2` | bundle Active, both node services registered, pick e2e PASS |
-| 5.26 | `ursim_e-series:5.26.1` | bundle Active, both node services registered, pick e2e PASS |
+| PolyScope | URSim image | Runs (Dashboard `PolyscopeVersion`) | URCap API it reports | Result |
+| --------- | ----------- | ---------------------------------- | -------------------- | ------ |
+| 5.4 | `ursim_e-series:5.4` | 5.4.3 | 1.7.0 | PASS |
+| 5.5 | `ursim_e-series:5.5` | 5.5.1 | — | PASS |
+| 5.6 | `ursim_e-series:5.6` | 5.6.0 | — | PASS |
+| 5.7 | `ursim_e-series:5.7` | 5.7.0 | — | PASS |
+| 5.8 | `ursim_e-series:5.8` | 5.8.2 | — | PASS |
+| 5.9 | `ursim_e-series:5.9.4` | 5.9.4 | — | PASS |
+| 5.10 | `ursim_e-series:5.10.2` | 5.10.2 | 1.12.0 | PASS |
+| 5.11 | `ursim_e-series:5.11.11` | 5.11.11 | 1.13.0 | PASS |
+| 5.12 | `ursim_e-series:5.12.8` | 5.12.8 | 1.14.0 | PASS |
+| 5.13 | `ursim_e-series:5.13.1` | 5.13.1 | 1.14.0 | PASS |
+| 5.14 | `ursim_e-series:5.14.6` | 5.14.6 | 1.14.0 | PASS |
+| 5.15 | `ursim_e-series:5.15.2` | 5.15.2 | 1.14.0 | PASS |
+| 5.16 | `ursim_e-series:5.16.1` | 5.16.1 | 1.15.0 | PASS |
+| 5.17 | `ursim_e-series:5.17.3` | 5.17.3 | 1.15.0 | PASS |
+| 5.18 | `ursim_e-series:5.18.1` | 5.18.1 | 1.15.0 | PASS |
+| 5.19 | `ursim_e-series:5.19.0` | 5.19.0 | 1.16.0 | PASS |
+| 5.20 | `ursim_e-series:5.20.0` | 5.20.0 | 1.16.0 | PASS |
+| 5.21 | `ursim_e-series:5.21.3` | 5.21.3 | 1.17.0 | PASS |
+| 5.22 | `ursim_e-series:5.22.2` | 5.22.2 | 1.17.0 | PASS |
+| 5.23 | `ursim_e-series:5.23.0` | 5.23.0 | 1.17.0 | PASS |
+| 5.24 | `ursim_e-series:5.24.0` | 5.24.0 | 1.19.0 | PASS |
+| 5.25 | `ursim_e-series:5.25.2` | 5.25.2 | 1.19.0 | PASS |
+| 5.26 | `ursim_e-series:5.26.1` | 5.26.1 | 1.19.0 | PASS |
 
-Per version: the committed `dist/` jar goes in `/urcaps`; the check asks PolyScope's own
-Felix shell (`127.0.0.1:6666` inside the container) for the bundle's state and the
-services its activator registered, since polyscope.log never says a URCap started; any
-polyscope.log line or stack frame naming the URCap with a failure fails the run. Then the
-arm is brought up and the Pick node's own URScript runs on that controller against a pick
-server on the runner (`urcap/pick5_e2e.py`: FIND → closer look → REFINE → grip → child
-nodes → lift). What this does not cover: the node's screens rendering on a pendant.
+All PASS in [run 36521908487](https://github.com/JimothyJohn/perceptronics/actions/runs/36521908487)
+(2026-09-29): bundle Active with both node services, the API check, the pick e2e, the
+compile probe and the timeout probe. "—": PolyScope 5.5-5.9 record no URCap API version and
+read no pom (only 5.10+ gate on it).
 
-A weekly job fails when Docker Hub has a newer 5.x minor or patch than the matrix
-(`python3 urcap/ps5_matrix.py check-tags`: "PolyScope 5.27 exists: add it and drop 5.24").
-On an amd64 Linux host: `make urcap5-matrix PS5_VERSION=5.26` (or `all`).
+Per version:
+
+1. **API** — `urcap5.py check` against that image's own API jars: the sources it loads
+   compile with `-Xlint:all -Werror`, and every package the committed jar imports (optional
+   ones aside) is one it exports. A separate job rebuilds the committed jar against 5.4's
+   jars (and 5.8's for `TeachPosition2`) with a *different* JDK (21; the committed jar is 25's)
+   and holds it to the committed one with `urcap5.py compare` — the same entries, every
+   non-class file byte-identical, every class declaring the same members; the sources digest
+   holds the method bodies. The jar that ships is the floor build, whatever JDK built it.
+2. **Load** — the committed `dist/` jar goes in `/urcaps`; PolyScope's own Felix shell (port
+   6666 inside the container) must report the bundle Active with both node services, since
+   polyscope.log never says a URCap started; any polyscope.log line or stack frame naming the
+   URCap with a failure fails the run.
+3. **Run** — the arm is brought up and the Pick node's own URScript, generated for that
+   controller's PolyScope, runs twice against a pick server on the runner
+   (`urcap/pick5_e2e.py`: FIND → closer look → REFINE → grip → child nodes → lift, then the
+   second part from the queue).
+4. **Compile probe** — the script with the Robotiq gripper and the failure popup (which a
+   sim can't run) inside `if False:` must compile on the controller; the control, a dead
+   branch naming an undefined function, must not (it doesn't, on every version).
+5. **Timeout probe** — a timed-out `socket_read_ascii_float` into a 17-element list must
+   leave the program running (the node's "no answer" path).
+
+What the older controllers needed (found by this matrix):
+
+- **5.4-5.7**: no `RobotPositionCallback2` (first in 5.8's API). A pick-area touch takes
+  the flange from the joints through the arm's nominal DH table (UR3e/5e/10e/16e) instead of
+  PolyScope's TCP offset — nominal, not the robot's calibration (0.84 mm on the UR3e cell);
+  an arm outside the table can't teach areas there (the table is then found live).
+- **5.4-5.8.2**: no `get_inverse_kin_has_solution` (`compile_error_name_not_found`; 5.9.4
+  has it, 5.9.0-5.9.3 have no image and count as without). The node reads its PolyScope and
+  writes the close look and the straight-down approach unchecked: no lean ladder, and an
+  unreachable pose stops the program with PolyScope's own IK error.
+- **5.9.4-5.14.6**: a list keeps its first size ("Resizing of 'List' is not supported") —
+  the close look's answer has its own variable; a test holds every read to one size.
+- **5.5**: PolyScope answers `DISCONNECTED` for a moment after its Dashboard comes up and
+  drops a `power on` sent then (a matrix-harness fix, not the URCap's).
+
+What this does not cover: the node's screens rendering on a pendant, and the Installation
+node's touch-to-teach on a pendant (TeachPosition's two paths are tested under a JDK
+against stub APIs shaped like 5.4's and 5.8's).
+
+The weekly job also reads the version each matrix image carries (its `VERSION` env, from the
+registry) against `IMAGE_VERSIONS`: a tag re-pushed with other contents (the bare 5.4–5.8
+tags say no patch) is drift. A weekly job fails when Docker Hub has a PolyScope 5 minor the matrix lacks, or a newer
+image of one it has (`python3 urcap/ps5_matrix.py check-tags`: "PolyScope 5.27 exists
+(...): add it"); the matrix only ever grows — a minor leaves it only through
+`ps5_matrix.py`'s EXCLUDED, with its reason, and this table. On an amd64 Linux host:
+`make urcap5-matrix PS5_VERSION=5.4` (or `all`).

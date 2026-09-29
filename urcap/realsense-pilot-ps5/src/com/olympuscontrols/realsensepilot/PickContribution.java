@@ -10,7 +10,6 @@ import com.ur.urcap.api.domain.program.nodes.contributable.URCapProgramNode;
 import com.ur.urcap.api.domain.program.structure.TreeNode;
 import com.ur.urcap.api.domain.script.ScriptWriter;
 import com.ur.urcap.api.domain.undoredo.UndoableChanges;
-import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback2;
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardInputCallback;
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardNumberInput;
 import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementCancelEvent;
@@ -20,7 +19,6 @@ import com.ur.urcap.api.domain.userinteraction.robot.movement.RobotMovementCallb
 import com.ur.urcap.api.domain.value.Pose;
 import com.ur.urcap.api.domain.value.jointposition.JointPosition;
 import com.ur.urcap.api.domain.value.jointposition.JointPositions;
-import com.ur.urcap.api.domain.value.robotposition.PositionParameters;
 import com.ur.urcap.api.domain.value.simple.Angle;
 import com.ur.urcap.api.domain.value.simple.Length;
 import com.ur.urcap.api.domain.variable.Variable;
@@ -91,6 +89,25 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         return api.getProgramAPI().getInstallationNode(PilotContribution.class);
     }
 
+    /** This PolyScope's {major, minor, bugfix}, or null when it won't say (the script then assumes the newest). */
+    int[] polyscopeVersion() {
+        try {
+            com.ur.urcap.api.domain.SoftwareVersion v = api.getSystemAPI().getSoftwareVersion();
+            return new int[] {v.getMajorVersion(), v.getMinorVersion(), v.getBugfixVersion()};
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** PolyScope's name for this arm ("UR3", ...), or "?" when it won't say. */
+    String robotType() {
+        try {
+            return api.getSystemAPI().getRobotModel().getRobotType().name();
+        } catch (RuntimeException e) {
+            return "?";
+        }
+    }
+
     Cockpit cockpit() {
         PilotContribution i = installation();
         return new Cockpit(i == null ? "" : i.savedUrl());
@@ -130,6 +147,7 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         s.orderRows = model.get(KEY_ORDER_ROWS, "FB");
         s.gripper = model.get(KEY_GRIPPER, "robotiq");
         s.popupOnFail = model.get(KEY_POPUP, true);
+        s.polyscope = polyscopeVersion();
         if (inst != null) {
             double[] reach = inst.reachLimits();
             if (reach != null) {
@@ -312,11 +330,11 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
 
     /** PolyScope's own move screen: the operator puts the arm where the camera sees the parts, then OK. */
     private void teachPosition(final int i, final boolean adding) {
-        api.getUserInterfaceAPI().getUserInteraction().getUserDefinedRobotPosition(new RobotPositionCallback2() {
+        TeachPosition.teacher(robotType()).teach(api.getUserInterfaceAPI().getUserInteraction(), new TeachPosition.Done() {
             @Override
-            public void onOk(final PositionParameters position) {
+            public void taught(final JointPositions joints, double[] flange) {
                 change(() -> {
-                    model.set("point." + i + ".q", position.getJointPositions());
+                    model.set("point." + i + ".q", joints);
                     if (adding) {
                         PilotContribution inst = installation();
                         // a new point looks at the area the last one did, or the first taught one

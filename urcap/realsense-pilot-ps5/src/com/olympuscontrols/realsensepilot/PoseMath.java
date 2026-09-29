@@ -4,7 +4,7 @@ package com.olympuscontrols.realsensepilot;
  * UR pose math with no UR API — rotation vectors, {@code pose_trans}, {@code pose_inv} — and
  * the pick area a Pick location is taught as: three points touched with the fingertips
  * (the area's corner, a point along its X edge, a point on its far side), the same
- * construction as {@code perception.volume.Surface.from_points}.
+ * construction as {@code perceptronics.volume.Surface.from_points}.
  */
 final class PoseMath {
     private PoseMath() {
@@ -49,9 +49,66 @@ final class PoseMath {
      * fingertips {@code tipM} along the flange's +Z.
      */
     static double[] fingertip(double[] tcpPose, double[] tcpOffset, double tipM) {
-        double[] flange = trans(tcpPose, inv(tcpOffset));
+        return tipOf(trans(tcpPose, inv(tcpOffset)), tipM);
+    }
+
+    /** The fingertips' position, {@code tipM} along the flange's +Z. */
+    static double[] tipOf(double[] flange, double tipM) {
         double[] tip = trans(flange, new double[] {0, 0, tipM, 0, 0, 0});
         return new double[] {tip[0], tip[1], tip[2]};
+    }
+
+    // -- the arm's nominal geometry ----------------------------------------------------------
+
+    /**
+     * UR's published nominal DH table {d[6], a[6]} (m) of each e-Series arm by PolyScope's robot
+     * type name — the same rows as {@code perceptronics.armfk.DH} (the UR3e row checked on the
+     * cell at 0.84 mm); alpha is {π/2, 0, 0, π/2, −π/2, 0} for all. Null when not in the table.
+     */
+    static double[][] dh(String robotType) {
+        String t = robotType == null ? "" : robotType.toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        if (t.endsWith("E")) t = t.substring(0, t.length() - 1);
+        if ("UR3".equals(t)) {
+            return new double[][] {{0.15185, 0, 0, 0.13105, 0.08535, 0.0921}, {0, -0.24355, -0.2132, 0, 0, 0}};
+        }
+        if ("UR5".equals(t)) {
+            return new double[][] {{0.1625, 0, 0, 0.1333, 0.0997, 0.0996}, {0, -0.425, -0.3922, 0, 0, 0}};
+        }
+        if ("UR10".equals(t)) {
+            return new double[][] {{0.1807, 0, 0, 0.17415, 0.11985, 0.11655}, {0, -0.6127, -0.57155, 0, 0, 0}};
+        }
+        if ("UR16".equals(t)) {
+            return new double[][] {{0.1807, 0, 0, 0.17415, 0.11985, 0.11655}, {0, -0.4784, -0.36, 0, 0, 0}};
+        }
+        return null;
+    }
+
+    private static final double[] ALPHA = {Math.PI / 2, 0, 0, Math.PI / 2, -Math.PI / 2, 0};
+
+    /**
+     * The flange pose (base frame) at joints {@code q} (rad) through the nominal DH table — for
+     * a PolyScope too old to report the TCP offset with a taught position. Null when the arm
+     * isn't in the table or {@code q} isn't six finite numbers.
+     */
+    static double[] flange(String robotType, double[] q) {
+        double[][] t = dh(robotType);
+        if (t == null || q == null || q.length != 6) return null;
+        for (double x : q) {
+            if (Double.isNaN(x) || Double.isInfinite(x)) return null;
+        }
+        double[][] m = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}};
+        for (int i = 0; i < 6; i++) {
+            double ct = Math.cos(q[i]), st = Math.sin(q[i]), ca = Math.cos(ALPHA[i]), sa = Math.sin(ALPHA[i]);
+            double d = t[0][i], a = t[1][i];
+            double[][] link = {
+                {ct, -st * ca, st * sa, a * ct},
+                {st, ct * ca, -ct * sa, a * st},
+                {0, sa, ca, d},
+                {0, 0, 0, 1},
+            };
+            m = mul(m, link);
+        }
+        return pose(m);
     }
 
     /**

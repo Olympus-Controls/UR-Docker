@@ -31,7 +31,7 @@ final class Diagrams {
     /**
      * The pick number of each cell of a {@code cols × rows} grid (row 0 = the top of the
      * picture) for order {@code first} within a row and {@code rowsDir} from row to row —
-     * the same rule as {@code perception.volume.order_parts}.
+     * the same rule as {@code perceptronics.volume.order_parts}.
      */
     static int[][] orderGrid(final String first, final String rowsDir, int cols, int rows) {
         List<int[]> cells = new ArrayList<int[]>();
