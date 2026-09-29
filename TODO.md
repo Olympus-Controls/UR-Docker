@@ -7,6 +7,9 @@
 - 2026-09-25 — Mac Studio + D435: `--rs-lean` streams (first open errors once, the back-off re-open holds). Open: why the *first* open still loses — shave one more reset, or accept the one retry. Ruled out: software drift, headless-vs-desktop, a fresh daemon, the webcams, Spotify. The Mac is a dev box, not a camera host; Windows laptop (WSL2, verified 09-23) and Jetson are.
 - 2026-09-12 — The native Windows path (`scripts/setup-windows.ps1`, `scripts/cockpit.ps1`, `REALSENSE_LIB` at the SDK's default `bin\x64\realsense2.dll`) has not been run on a Windows box. First run on the work laptop is the verification; paste the doctor output (`uv run perception --cell ur20 doctor --stream --json`) if anything fails.
 
+- 2026-09-28 — **PS5 pick kit 0.5.0, first time on the cell** (all verified only in CI/URSim so far): (1) install `urcap/dist/realsense-pilot-ps5-0.5.0.urcap`, look at both screens on the pendant (`urcap/realsense-pilot-ps5/screens/` are harness renders); (2) teach one pick area by three fingertip touches — the tilt it reports should be < 1°; (3) one Pick node, Robotiq gripper mode: does it activate/open/close the Hand-E and read OBJ right (never run on hardware); (4) deploy the camera computer to real Pi-class hardware with `scripts/deploy-pi.sh` and read the doctor.
+- 2026-09-28 — The finger-room check uses pickplan's Hand-E finger zone (14 × 32 mm beside the open jaws). Measure the real pads once; a wrong zone either blocks good picks or lets a finger land on a neighbour.
+
 ## PolyScope X URCap (2026-09-26, `urcap/DEVELOPING.md`)
 
 - Installed in the sim and verified headless (node loads, feed/hover/click against `make urcap-cockpit` on :7622). **Still owed:** a cockpit with a robot behind it — restart your live one with `--cors http://localhost:8000` (`scripts/cockpit-mac.sh` + that flag), set the node's cockpit URL to `http://localhost:7621`, click a block: base point + approach + reach, then **Move (cockpit)** on the UR3e. **Move (PolyScope)** (IK + auto-move; is `Pose.orientation` a rotation vector?) needs the sim's arm powered + Remote, or the real PolyScope X cell.
@@ -15,6 +18,10 @@
 ## Code (no robot needed)
 
 - 2026-09-26 — `perception calibrate` (orbit hand-eye) is built and tested on the fake cell; **run it once on the UR3e** (`--dry-run` first), then delete `scripts/pilot/orbit_cal*.py` + `wiggle.py`. `record.py`/`show.py`/`assemble.py` stay as the timelapse tooling. `place.py`'s lesson carries: a place spot needs the same clearance check as a pick.
+- 2026-09-28 — **Pick node: segment by depth above the table**, not white-by-colour (Nick: "obvious if we know where the table is"). Fit the table plane, keep what stands ~H above it, then the footprint gate. Builds on the part-size work in `feature/urcap5-part-dims` (0.4.0, local worktree `../UR-utils-part-dims`, unpushed). Fixes the evening-light `WHITE_MIN` misses above.
+- 2026-09-28 — **Pick node teach screen: redesign to ≤ 3 simple stages** with minimal clicks and input and plenty of visual feedback (Nick's UX rule, see Decisions). 0.4.0's seven-button part-size row is the opposite; don't ship it as is.
+- 2026-09-28 — Rename the Python package `ur-docker` → **`universal-perceptronics`** (`pyproject.toml` `name`, the PyPI trusted publisher, README install lines) before the first `v*` tag publishes it.
+- 2026-09-28 — CI hygiene (Nick OK'd the fix): `ci.yml` syncs with `uv sync --extra perception` — add `--locked` so a drifted `uv.lock` fails CI instead of being silently re-resolved; pin `codeql.yml` and `dependabot-auto-merge.yml` actions to SHAs like the rest.
 
 ## Open questions for Nick
 
@@ -23,19 +30,34 @@
 - 2026-09-27 — First PolyScope 5 install of `realsense-pilot-ps5-0.1.0.urcap`: the first try on the UR3e was refused (no `Bundle-Category: URCap`, fixed 1892a21). The fixed build is on the "URE MODELS" stick (sha256 6e0318817a1e…): Settings → System → URCaps → + → Restart. Past the file checks the installer still runs a compatibility check and a trial OSGi install, and the node has never rendered on a PolyScope 5 pendant.
 - 2026-09-27 — PS5 **RealSense Pick** node 0.3.0 (auto survey = first look from where the arm is, then halfway toward the block, centred; every stage logged; popup on failure) is on the "URE MODELS" stick. Its URScript has **not run on a controller yet**: did it install and pick? The first run's trace is in `~/Library/Logs/perception/pick-server.log` (or `GET http://192.168.3.10:7631/api/pick/log`).
 - 2026-09-27 — Delete the stale pre-rebase `feature/urcap5-pick-node` on the fork? Everything in it is in `refactor/prune-2026-09-25` (4df4259).
-- 2026-09-28 — The Python package is still named `ur-docker` (pyproject) — pick the PyPI name before the first `v*` tag publishes it (names can't be taken back): `universal-perceptronics`? Also `ci.yml` runs `uv sync` without `--locked` and `codeql.yml` / `dependabot-auto-merge.yml` use floating action tags.
+- 2026-09-28 — Draft PR JimothyJohn/universal-perceptronics#3 (`ci/urcap5-release`): `urcap5-v<version>` tags publish the committed `.urcap` as a GitHub Release. After it merges, cut the first one: `git tag urcap5-v0.3.0 <merge> && git push fork urcap5-v0.3.0`.
+
+- 2026-09-28 — One **RealSense Pick node run = one part**: it goes to the picture points in turn until one shows a part, picks the first in the chosen order, runs its children (the after-pick routine), and the next run goes straight to the close look over the next part it already saw (no trip back to the picture point) — faster cycle. OK, or should one run clear every location?
+
+- 2026-09-28 — Pick PC (`deploy/pi/`, never run on a board yet): bookworm's systemd 252 ignores the unit's restart back-off (trixie only) — OK, or target trixie? Leave the hand-eye line out of the PC's `cell.env` by default (else a fresh on-PC calibration loses to it)?
+- 2026-09-28 — The librealsense build fetches nlohmann/json, fastcdr, yaml-cpp and sqlite at configure time (first install needs internet). Turn off rosbag support to cut that, or ship a prebuilt `.deb` per board?
+- 2026-09-28 — Bracket tool bolts: the BOM lists M6 × 16 low-head (plate 6 mm + Hand-E's M6 × 10 → the README's "+8 mm" gives only 2 mm more engagement vs the flange's 8 mm limit). Measure before ordering.
 
 ## After the demo (2026-09-28)
 
 - 2026-09-25 — (held until after the demo, Nick 09-27) Four pick-cycle faults could not be injected from the desk and are untested claims until someone does them once: pendant flipped to **Local** mid-run, a webcam or the D435 **unplugged** mid-run, the cockpit **restarted** while the routine is on a block, robot **power cut**. Note what the routine did in the field log.
 - 2026-09-27 — Fix the flaky URCap e2e (2 of 4 fork runs + PR #16 red: PolyScope's "An error occurred while starting the application" boot dialog). Fix or delete, never retry.
 - 2026-09-27 — Reminder for Nick: `sudo chown -R nick captures` (sudo cockpit runs leave it root-owned).
-- 2026-09-27 — Repo automation baseline: no `dev` branch; PRs go straight to `main`. Add `dev` + auto-merge + protection per ~/.claude/templates/github/.
+- 2026-09-27 — Repo automation baseline: no `dev` branch; PRs go straight to `main`. Add `dev` + auto-merge + protection per ~/.claude/templates/github/. **Decided 2026-09-28: the repo needs a `dev` branch, cut from `refactor/prune-2026-09-25`** (main is 165 commits behind and has no URCap code; main catches up by Nick's manual merge).
 - 2026-09-27 — `pick-cycle --dry-run` without `--via-cockpit` builds a dry-run `Robot` whose flange is a stand-in pose, so the survey's base-frame block positions are fiction. Use `--via-cockpit --dry-run` until fixed.
 - 2026-09-27 — Retire the `perception pick-server` sidecar (192.168.3.10:7631) once the cockpit runs the merged code: `pkill -f "pick-server --bind"` **before** relaunching the cockpit (both bind :7622), then point the pick node's URL back at `:7621`.
 - 2026-09-27 — `tests/test_handeye.py`: `test_robotlink_locate_then_move_goes_through_the_tool_registry` and `test_robotlink_approach_defaults_come_from_the_cell_env` have failed since b41d795 halved the accelerations: they expect `a=0.3`, the code sends 0.1.
 
 ## Decisions (so they don't get re-asked)
+
+- 2026-09-28 — Pick kit (Nick's answers): **reach** = base outer radius + 150 mm .. rated reach − 150 mm (as built); **pick order is FPV** — the directions of the camera's picture as the pendant shows it (as built); the Pick node **drives the Robotiq Hand-E itself** by default (as built); the camera computer's OS is **Debian** (arm64; the RevPi Connect 5 gets a Debian image, not RevPi OS); the PolyScope 5.x matrix jobs **must not block unrelated PRs** — they stay out of `dev`'s required checks (path-filtered, informational).
+- 2026-09-28 — With no camera, every view shows an unmistakable **NO CAMERA CONNECTED** test card (Nick); a simulated picture is stamped the same way.
+
+- 2026-09-28 — **Operator UI rule (Nick):** extremely user friendly — minimal clicks and input; the user is prompted through **at most 3 simple stages** with plenty of visual feedback. Applies to the URCap nodes' screens.
+- 2026-09-28 — Pick segmentation goes **depth-above-the-table**, the table **fitted live in every frame** (no setup step; follows a pedestal/table change); part size stays as the filter.
+- 2026-09-28 — Pick node setup = **3 stages: Show → Check → Test.** 1) tap one part in the live picture — the node **measures its size from that tap** (no typing); 2) watch the arm go above it (hold-to-move); 3) one test pick with a clear pass/fail.
+- 2026-09-28 — The repo gets a `dev` branch cut from `refactor/prune-2026-09-25` (automation baseline); PRs land there, `dev` → release line stays Nick's manual merge.
+- 2026-09-28 — PyPI / package name: **`universal-perceptronics`**.
 
 - 2026-09-27 — Demo: Nick drives the cockpit in the browser and the room watches the UR3e (e-Series) move; heuristic pick first, then a semantic object. Host: the Windows work laptop (trial tonight). The URCap and everything after target PolyScope X.
 - 2026-09-27 — Keep the 09-25 orbit hand-eye solve (nothing moved). `pick-cycle --min-radius-m` defaults to 0.2 m.

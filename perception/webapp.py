@@ -87,12 +87,15 @@ from urctl.pose import Transform
 from .cell import describe_cell
 from .config import PerceptionConfig
 from .factory import SEGMENT_BACKENDS, make_segmenter
+from .partspec import PartSpec, from_payload, from_query
 from .picknode import (
     DEFAULT_PICK_PORT,
     PickPlanner,
     PickServer,
     detect_report,
+    parse_options,
     parse_preview_request,
+    scene_report,
 )
 from .picknode import preview as pick_preview
 from .pngio import encode_png
@@ -968,7 +971,12 @@ class ViewerApp:
         )
 
     def pick_preview(
-        self, pixel: tuple[int, int] | None, *, grip_below_mm: float = 15.0, hover_mm: float = 40.0
+        self,
+        pixel: tuple[int, int] | None,
+        *,
+        grip_below_mm: float = 15.0,
+        hover_mm: float = 40.0,
+        part: PartSpec | None = None,
     ) -> dict:
         """The node's teach-time check (:func:`perception.picknode.preview`): the
         flange from the robot link (the state broadcast: no script, Local mode works).
@@ -981,9 +989,10 @@ class ViewerApp:
             pixel,
             grip_below_mm=grip_below_mm,
             hover_mm=hover_mm,
+            part=part,
         )
 
-    def pick_detect(self) -> dict:
+    def pick_detect(self, part: PartSpec | None = None) -> dict:
         """What the program node's teach screen draws (:func:`perception.picknode.detect_report`)."""
         seq, frame = self.latest()
         if frame is None:
@@ -996,7 +1005,33 @@ class ViewerApp:
             pick_port=self.pick_port,
             handeye=self._handeye_pose() is not None,
             tip_m=self.robot.tip_m if self.robot is not None else None,
+            part=part,
         )
+
+    def pick_scene(self, opts_text: str, approach_mm: float | None = None) -> dict:
+        """The 0.5.0 node's teach screen (:func:`perception.picknode.scene_report`): the same
+        FIND the program would make with these options, from the live flange pose (the pose
+        stream, else the robot link; camera-only without either). With ``approach_mm`` each
+        part also carries ``polyscope_approach_pose``: the approach (fingertips that far over
+        its top, along the tool axis) in the controller's **active** TCP — what PolyScope's
+        hold-to-move screen takes."""
+        from urctl.pose import pose_trans
+
+        opts = parse_options(opts_text[:1024])
+        flange = self.frame_pose().get("flange_pose")
+        fp: dict = {}
+        if self.robot is not None and (flange is None or approach_mm is not None):
+            fp = self.robot.flange_pose()
+            if flange is None and fp.get("ok") and fp.get("flange"):
+                flange = list(fp["flange"])
+        out = scene_report(self.pick_planner(), flange, opts, pick_port=self.pick_port)
+        offset = fp.get("tcp_offset") if fp.get("tcp_offset_consistent") is not False else None
+        if approach_mm is not None and offset is not None:
+            for part in out.get("parts", []):
+                if "grasp_pose" in part:
+                    hover = pose_trans(part["grasp_pose"], [0.0, 0.0, -approach_mm / 1000.0, 0.0, 0.0, 0.0])
+                    part["polyscope_approach_pose"] = [round(v, 6) for v in pose_trans(hover, offset)]
+        return out
 
     # -- API -------------------------------------------------------------------------
 
@@ -1565,7 +1600,22 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
         elif route == "/api/pick/detect":
-            self._guarded(self.app.pick_detect)
+            try:
+                part = from_query(qs)
+            except ValueError as exc:
+                self._send_json({"ok": False, "error": f"bad request: {exc}"}, status=400)
+                return
+            self._guarded(lambda: self.app.pick_detect(part))
+        elif route == "/api/pick/scene":
+            opts = (qs.get("opts") or [""])[0]
+            try:
+                approach = float(qs["approach_mm"][0]) if "approach_mm" in qs else None
+                if approach is not None and not 0.0 <= approach <= 300.0:
+                    raise ValueError
+            except ValueError:
+                self._send_json({"ok": False, "error": "approach_mm must be 0..300"}, status=400)
+                return
+            self._guarded(lambda: self.app.pick_scene(opts, approach))
         elif route == "/api/color.png":
             try:
                 after = int(qs["after"][0]) if "after" in qs else None
@@ -1618,10 +1668,11 @@ class ViewerHandler(BaseHTTPRequestHandler):
         elif route == "/api/pick/preview":
             try:
                 pixel, grip, hover = parse_preview_request(payload)
+                part = from_payload(payload)
             except ValueError as exc:
                 self._send_json({"ok": False, "error": f"bad request: {exc}"}, status=400)
                 return
-            self._guarded(lambda: self.app.pick_preview(pixel, grip_below_mm=grip, hover_mm=hover))
+            self._guarded(lambda: self.app.pick_preview(pixel, grip_below_mm=grip, hover_mm=hover, part=part))
         elif route == "/api/clear":
             self._guarded(self.app.clear)
         elif route == "/api/robot/state":

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -32,8 +31,18 @@ import urcap5  # noqa: E402
 
 SRC = ROOT / "urcap" / "realsense-pilot-ps5"
 JAVA = SRC / "src" / "com" / "olympuscontrols" / "realsensepilot"
-DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.3.0.urcap"
+DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.5.0.urcap"
 JAVAC = shutil.which("javac")
+# the pure-Java classes the harness compiles (no UR API)
+PURE_JAVA = (
+    "Json.java",
+    "Cockpit.java",
+    "PickScript.java",
+    "PoseMath.java",
+    "Diagrams.java",
+    "Ui.java",
+    "Scene.java",
+)
 HAS_SDK = all(any(urcap5.SDK_DIR.glob(p + "*.jar")) for p in urcap5.SDK_JARS)
 
 
@@ -160,6 +169,7 @@ package com.olympuscontrols.realsensepilot;
 
 import java.util.*;
 
+@SuppressWarnings("unchecked")
 public class Harness {
     public static void main(String[] a) throws Exception {
         Object out;
@@ -182,16 +192,120 @@ public class Harness {
                 PickScript s = new PickScript();
                 if (o.containsKey("host")) s.host = (String) o.get("host");
                 if (o.containsKey("port")) s.port = ((Number) o.get("port")).intValue();
-                if (o.containsKey("q")) s.surveyJoints = Cockpit.six(o.get("q"));
-                if (o.containsKey("u")) s.tapU = ((Number) o.get("u")).intValue();
-                if (o.containsKey("v")) s.tapV = ((Number) o.get("v")).intValue();
-                if (o.containsKey("grip")) s.gripBelowTopMm = ((Number) o.get("grip")).doubleValue();
-                if (o.containsKey("lift")) s.liftMm = ((Number) o.get("lift")).doubleValue();
+                if (o.containsKey("node")) s.nodeId = (String) o.get("node");
+                if (o.containsKey("points")) {
+                    for (Object pt : (List<?>) o.get("points")) {
+                        Map<?, ?> m = (Map<?, ?>) pt;
+                        double[] plane = m.get("plane") == null ? null : Cockpit.six(m.get("plane"));
+                        List<?> area = (List<?>) m.get("area");
+                        s.points.add(new PickScript.Point(Cockpit.six(m.get("q")), plane,
+                                area == null ? 0 : ((Number) area.get(0)).doubleValue(),
+                                area == null ? 0 : ((Number) area.get(1)).doubleValue()));
+                    }
+                }
+                if (o.containsKey("values")) {
+                    for (Map.Entry<String, Object> e : ((Map<String, Object>) o.get("values")).entrySet()) {
+                        s.values.put(e.getKey(), ((Number) e.getValue()).doubleValue());
+                    }
+                }
+                if (o.containsKey("order")) {
+                    s.orderFirst = (String) ((List<?>) o.get("order")).get(0);
+                    s.orderRows = (String) ((List<?>) o.get("order")).get(1);
+                }
+                if (o.containsKey("gripper")) s.gripper = (String) o.get("gripper");
+                if (o.containsKey("reach")) {
+                    s.reachMinM = ((Number) ((List<?>) o.get("reach")).get(0)).doubleValue();
+                    s.reachMaxM = ((Number) ((List<?>) o.get("reach")).get(1)).doubleValue();
+                }
+                if (o.containsKey("popup")) s.popupOnFail = (Boolean) o.get("popup");
                 if (o.containsKey("var")) s.foundVariable = (String) o.get("var");
                 Map<String, Object> m = new LinkedHashMap<String, Object>();
                 m.put("problem", s.problem());
                 m.put("script", s.problem() == null ? s.render((String) o.get("children")) : null);
+                List<Object> toks = new ArrayList<Object>();
+                for (int i = -1; i < s.points.size(); i++) toks.add(s.tokens(i));
+                m.put("tokens", toks);
                 out = m;
+                break;
+            }
+            case "set": {
+                PickScript s = new PickScript();
+                out = s.set(a[1], Double.parseDouble(a[2]));
+                break;
+            }
+            case "numbers": {
+                List<Object> r = new ArrayList<Object>();
+                for (PickScript.Num n : PickScript.NUMBERS) {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("key", n.key); m.put("def", n.def); m.put("min", n.min); m.put("max", n.max);
+                    m.put("section", n.section);
+                    r.add(m);
+                }
+                out = r;
+                break;
+            }
+            case "reasons": {
+                List<Object> r = new ArrayList<Object>();
+                for (String[] x : PickScript.REASONS) r.add(Integer.parseInt(x[0]));
+                out = r;
+                break;
+            }
+            case "grid": {
+                int[][] g = Diagrams.orderGrid(a[1], a[2], Integer.parseInt(a[3]), Integer.parseInt(a[4]));
+                List<Object> r = new ArrayList<Object>();
+                for (int[] row : g) {
+                    List<Object> rr = new ArrayList<Object>();
+                    for (int v : row) rr.add(v);
+                    r.add(rr);
+                }
+                out = r;
+                break;
+            }
+            case "plane": {
+                List<?> q = (List<?>) Json.parse(a[1]);
+                double[][] p = new double[3][];
+                for (int i = 0; i < 3; i++) {
+                    List<?> xyz = (List<?>) q.get(i);
+                    p[i] = new double[3];
+                    for (int k = 0; k < 3; k++) p[i][k] = ((Number) xyz.get(k)).doubleValue();
+                }
+                double[] r = PoseMath.plane(p[0], p[1], p[2]);
+                if (r == null) { out = null; break; }
+                List<Object> rr = new ArrayList<Object>();
+                for (double v : r) rr.add(v);
+                rr.add(PoseMath.tiltDeg(r));
+                out = rr;
+                break;
+            }
+            case "fingertip": {
+                double[] tcp = Cockpit.six(Json.parse(a[1]));
+                double[] off = Cockpit.six(Json.parse(a[2]));
+                double[] r = PoseMath.fingertip(tcp, off, Double.parseDouble(a[3]));
+                out = Arrays.asList(r[0], r[1], r[2]);
+                break;
+            }
+            case "trans": {
+                double[] r = PoseMath.trans(Cockpit.six(Json.parse(a[1])), Cockpit.six(Json.parse(a[2])));
+                List<Object> rr = new ArrayList<Object>();
+                for (double v : r) rr.add(v);
+                out = rr;
+                break;
+            }
+            case "scene": {
+                Scene sc = Scene.parse(Json.parseObject(a[1]));
+                Map<String, Object> m = new LinkedHashMap<String, Object>();
+                List<Object> orders = new ArrayList<Object>();
+                for (Scene.Part p : sc.parts) orders.add(p.order);
+                List<Object> whys = new ArrayList<Object>();
+                for (Scene.Part p : sc.rejected) whys.add(p.why);
+                m.put("orders", orders); m.put("whys", whys); m.put("surface", sc.surface);
+                m.put("width", sc.width); m.put("base", sc.baseFrame);
+                out = m;
+                break;
+            }
+            case "reach": {
+                double[] r = PickScript.modelReach(a[1]);
+                out = r == null ? null : Arrays.asList(r[0], r[1]);
                 break;
             }
             case "hostof": out = PickScript.hostOf(a[1]); break;
@@ -238,7 +352,7 @@ def java_client(tmp_path_factory):
     pkg = root / "src" / "com" / "olympuscontrols" / "realsensepilot"
     pkg.mkdir(parents=True)
     (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
-    for name in ("Json.java", "Cockpit.java", "PickScript.java"):
+    for name in PURE_JAVA:
         shutil.copy(JAVA / name, pkg / name)
     classes = root / "classes"
     subprocess.run(
@@ -395,132 +509,6 @@ def test_segment_and_errors_round_trip_as_json(java_client, cockpit):
     assert loc["ok"] is False
     point = java_client("get", cockpit, "/api/point?x=10&y=10")
     assert "ok" in point
-
-
-# -- the RealSense Pick node's URScript (PickScript), under a JDK ---------------------------
-
-PICK = {"host": "192.168.3.10", "q": [-1.37, -0.49, 1.61, -2.69, -1.57, 0.61], "u": 412, "v": 233}
-
-
-def _pick(java_client, **kw):
-    return java_client("pick", json.dumps({**PICK, **kw}))
-
-
-def test_pick_script_is_ascii_balanced_and_calls_the_children_at_the_grip(java_client):
-    out = _pick(java_client, children="  CHILDREN_HERE()")
-    assert out["problem"] is None
-    text = out["script"]
-    assert text.isascii()  # the controller's parser, a USB stick's codepage: ASCII only
-    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
-    opens = sum(1 for line in lines if line.endswith(":") and line.split()[0] in ("if", "while"))
-    assert opens == sum(1 for line in lines if line == "end")
-    # the order the program runs in: survey, FIND, look, REFINE ladder, hover, grip, children, lift
-    order = [
-        "set_tcp(p[0, 0, 0, 0, 0, 0])",
-        "movej([-1.370000, -0.490000, 1.610000, -2.690000, -1.570000, 0.610000]",
-        'socket_open("192.168.3.10", 7622, "rs_pick")',
-        '"FIND "',
-        " u=412 v=233",
-        '"LOOK "',
-        "rs_leans = [0, 12, 24]",
-        '"REFINE "',
-        "movel(rs_hover",
-        "movel(rs_grip, a=0.3, v=0.05)",
-        "set_tcp(rs_tcp0)",
-        "CHILDREN_HERE()",
-        "movel(rs_lift",
-        "rs_pick_found = True",
-        'socket_close("rs_pick")',
-    ]
-    at = [text.index(s) for s in order]
-    assert at == sorted(at), order
-    # nothing moves before the controller's own IK has solved hover, grip and lift
-    ik = text.index("get_inverse_kin_has_solution(rs_hover")
-    assert ik < text.index("movel(rs_hover")
-    # the grip is the configured depth below the top, the lift the configured height above it
-    assert "pose_trans(rs_top, p[0, 0, 0.0150, 0, 0, 0])" in text
-    assert "pose_trans(rs_top, p[0, 0, -0.0600, 0, 0, 0])" in text
-    assert text.rstrip().endswith("set_tcp(rs_tcp0)")  # the operator's TCP back, whatever happened
-
-
-def test_pick_script_without_a_tap_asks_for_any_block(java_client):
-    assert " u=-1 v=-1" in _pick(java_client, u=-1, v=-1)["script"]
-
-
-@pytest.mark.parametrize(
-    ("kw", "problem"),
-    [
-        ({"host": ""}, "cockpit address"),
-        ({"host": 'x"); popup("pwned'}, "not an address"),  # a saved field can't inject URScript
-        ({"port": 0}, "port"),
-        ({"grip": 61}, "grip depth"),
-        ({"lift": 2}, "lift"),
-        ({"var": "1bad name"}, "variable"),
-    ],
-)
-def test_pick_script_refuses_what_it_cannot_generate_safely(java_client, kw, problem):
-    kw = {k: v for k, v in kw.items()}
-    if kw.get("q", 0) is None:
-        body = {k: v for k, v in PICK.items() if k != "q"}
-        out = java_client("pick", json.dumps(body))
-    else:
-        out = _pick(java_client, **kw)
-    assert out["script"] is None and problem in out["problem"]
-
-
-def test_without_a_survey_position_the_first_look_is_from_where_the_arm_is(java_client):
-    body = {k: v for k, v in PICK.items() if k != "q"}
-    out = java_client("pick", json.dumps({**body, "children": "  CHILD()"}))
-    assert out["problem"] is None
-    text = out["script"]
-    assert "first look from where the arm is" in text
-    # no motion at all before the first FIND: the arm stays where the operator left it
-    before = text[: text.index('"FIND "')]
-    assert "movej(" not in before and "movel(" not in before
-
-
-def test_every_stage_is_logged_to_the_server_and_the_log_tab(java_client):
-    text = _pick(java_client, children="  CHILD()")["script"]
-    for stage in (
-        "start",
-        "FIND status",
-        "LOOK",
-        "at the look pose",
-        "REFINE status",
-        "hover",
-        "down to the grip",
-        "gripper nodes",
-        "lift",
-        "picked",
-        "no pick - ",
-    ):
-        assert f'"LOG {stage}' in text, stage
-        assert f'textmsg("RealSense Pick: {stage}' in text, stage
-    # a reply's fields are read only after the read came back whole (rs_r[0] == 10): a timed-out
-    # read must end as "no answer", not as an index error that stops the operator's program
-    lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if "rs_r[1]" in line:
-            guard = next(lines[j] for j in range(i - 1, -1, -1) if lines[j].strip().startswith("if "))
-            assert guard.strip() == "if rs_r[0] == 10:", (line, guard)
-    # LOG is only ever sent on the open socket, never before socket_open
-    assert text.index("socket_send_line(") > text.index("socket_open(")
-
-
-def test_a_failed_pick_says_why_in_a_popup_for_every_status_the_server_sends(java_client):
-    from perception.picknode import STATUS
-
-    text = _pick(java_client, children="  CHILD()")["script"]
-    handled = {int(m) for m in re.findall(r"rs_st == (-?\d+):", text)}
-    # 1 is a pick; -6 (no look pose) never reaches rs_st - the program looks from over the block
-    assert handled - {1} == (set(STATUS) - {1, -6}) | {-8}  # `if rs_st == 1:` is the success branch
-    assert 'popup(str_cat("RealSense Pick: no pick - ", rs_why)' in text
-    assert text.index("if rs_pick_found == False:") < text.index('popup(str_cat("RealSense Pick: no pick')
-
-
-def test_pick_host_comes_from_the_installation_nodes_url(java_client):
-    assert java_client("hostof", "http://192.168.3.10:7621") == "192.168.3.10"
-    assert java_client("hostof", "not a url at all") == ""
 
 
 # -- the urcap5-v<version> release ---------------------------------------------------------

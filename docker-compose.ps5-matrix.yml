@@ -1,0 +1,96 @@
+# The PolyScope 5 (e-Series) URCap's version matrix: one URSim per supported PolyScope 5
+# minor (the newest patch of each of the newest three), for urcap/ps5_matrix.py and
+# .github/workflows/urcap5-matrix.yml. Separate from docker-compose.yml so the default
+# dev flow (`make sim-up`, the `ur-docker` project) is untouched; every port below is
+# offset so all three and the default sim can run side by side.
+#
+#   python3 urcap/ps5_matrix.py run --version 5.26     # up, URCap check, pick e2e, down -v
+#   python3 urcap/ps5_matrix.py run --version all
+#   docker compose -f docker-compose.ps5-matrix.yml up -d ursim-5-26   # by hand
+#
+# Host ports (container port + 100 x (minor - 23)); urcap/ps5_matrix.py's MATRIX is the
+# source of truth and tests/test_ps5_matrix.py holds this file to it:
+#
+#   service      image tag   Dashboard  Primary  RTDE   noVNC   pick server (host)
+#   ursim-5-24   5.24.0      30099      30101    30104  6180    7641
+#   ursim-5-25   5.25.2      30199      30201    30204  6280    7642
+#   ursim-5-26   5.26.1      30299      30301    30304  6380    7643
+#   (default docker-compose.yml: 29999, 30000-30004, 30020, 502, 6080, 15900, 8000,
+#    31001, 31004; the cockpit 7621/7622, the pick-server sidecar 7631)
+#
+# Can one container host all three versions on different ports? No, not sensibly. Read
+# from the images' own config and layers (registry API, 2026-09-28; the three tags carry a
+# byte-identical /entrypoint.sh): each image is ONE PolyScope + URControl install rooted
+# at /ursim (HOME=/ursim, JAVA_HOME=/usr/lib/jvm/jdk1.8.0_371, VERSION=<tag>), started
+# by /entrypoint.sh on a fixed X display (`Xvfb :1`, /tmp/.X1-lock removed at start),
+# x11vnc on 5900, noVNC on 6080, a single runit service dir (/etc/service/runsvdir*),
+# /ursim/start-ursim.sh <MODEL>, and fixed log paths /ursim/polyscope.log and
+# /ursim/URControl.log. The controller's ports (29999, 30001-30004, 30020, 502, 50001-3)
+# are URControl's own, not configurable per install. Three versions in one container
+# would mean three /ursim trees, three X displays and three network namespaces — i.e.
+# three containers. Docker's port mapping is the supported way to offset them.
+#
+# URCaps: the entrypoint runs `cp -r /urcaps/*.jar /ursim/GUI/bundle/` at every start, so
+# /urcaps must hold *.jar files. The committed urcap/dist/realsense-pilot-ps5-<ver>.urcap
+# is a jar under another suffix; ps5_matrix.py stages it as
+# target/ps5-matrix/urcaps/realsense-pilot-ps5.jar (PS5_URCAPS_DIR overrides) — that
+# keeps this file free of the version number.
+#
+# The images declare no VOLUME, but teardown is `docker compose down -v` anyway (the
+# PolyScope X sim leaked ~9 GB of anonymous volumes per run without -v).
+name: ur-ps5-matrix
+
+x-ursim: &ursim
+  stdin_open: true
+  tty: true
+  environment:
+    # UR3 → the entrypoint picks UR3e (programs.UR3e exists): the cell the node ships to.
+    - ROBOT_MODEL=${PS5_ROBOT_MODEL:-UR3}
+  # Same reasons as docker-compose.yml's ursim: URControl's socket() gets ENOSYS under
+  # Docker's default seccomp profile on modern kernels; Modbus 502 needs NET_BIND_SERVICE.
+  security_opt:
+    - seccomp:unconfined
+  cap_add:
+    - NET_BIND_SERVICE
+  volumes:
+    - ${PS5_URCAPS_DIR:-./target/ps5-matrix/urcaps}:/urcaps:ro
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "python3",
+        "-c",
+        "import socket,sys,time; s=socket.create_connection(('localhost',29999),3); s.sendall(('robotmode'+chr(10)+'quit'+chr(10)).encode()); time.sleep(0.3); d=s.recv(256).decode(); sys.exit(0 if 'Robotmode:' in d and 'NO_CONTROLLER' not in d else 1)",
+      ]
+    interval: 15s
+    timeout: 10s
+    retries: 20
+    start_period: 90s
+
+services:
+  ursim-5-24:
+    <<: *ursim
+    image: universalrobots/ursim_e-series:5.24.0
+    ports:
+      - "30099:29999" # Dashboard
+      - "30101:30001" # Primary
+      - "30104:30004" # RTDE
+      - "6180:6080" # noVNC
+
+  ursim-5-25:
+    <<: *ursim
+    image: universalrobots/ursim_e-series:5.25.2
+    ports:
+      - "30199:29999" # Dashboard
+      - "30201:30001" # Primary
+      - "30204:30004" # RTDE
+      - "6280:6080" # noVNC
+
+  ursim-5-26:
+    <<: *ursim
+    image: universalrobots/ursim_e-series:5.26.1
+    ports:
+      - "30299:29999" # Dashboard
+      - "30301:30001" # Primary
+      - "30304:30004" # RTDE
+      - "6380:6080" # noVNC

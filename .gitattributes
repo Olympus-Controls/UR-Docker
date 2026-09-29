@@ -6,3 +6,5 @@ urcap/realsense-pilot/** text eol=lf
 urcap/realsense-pilot-ps5/** text eol=lf
 LICENSE text eol=lf
 urcap/dist/** binary
+# screenshots of the node, not sources: never line-ending converted
+urcap/realsense-pilot-ps5/screens/** binary

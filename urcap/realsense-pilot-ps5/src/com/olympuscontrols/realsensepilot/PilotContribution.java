@@ -13,9 +13,17 @@ import com.ur.urcap.api.domain.value.ValueFactoryProvider;
 import com.ur.urcap.api.domain.value.jointposition.JointPositions;
 import com.ur.urcap.api.domain.value.simple.Angle;
 import com.ur.urcap.api.domain.value.simple.Length;
+import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback2;
+import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardInputCallback;
+import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardNumberInput;
+import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardTextInput;
+import com.ur.urcap.api.domain.value.robotposition.PositionParameters;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import javax.swing.JLabel;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -27,7 +35,7 @@ import javax.swing.SwingUtilities;
  * five buttons. Network calls run off the Swing thread; results come back through
  * {@link PilotView}'s setters, which marshal onto it.
  */
-public class PilotContribution implements InstallationNodeContribution {
+public class PilotContribution implements InstallationNodeContribution, LocationsScreen.Actions {
     static final String KEY_COCKPIT_URL = "cockpitUrl";
     private static final int POLL_TIMEOUT_MS = 1500;
     private static final int HOVER_MS = 150;
@@ -66,6 +74,7 @@ public class PilotContribution implements InstallationNodeContribution {
     public void openView() {
         open = true;
         view.showUrl(savedUrl());
+        showAreas();
         view.setStatus("connecting to " + cockpit.base + "…", PilotView.Kind.INFO);
         startPolling();
     }
@@ -384,6 +393,184 @@ public class PilotContribution implements InstallationNodeContribution {
         view.setTarget("");
         view.setMoveEnabled(false, false);
         view.setStatus("cleared", PilotView.Kind.INFO);
+    }
+
+    // -- pick areas: patches of the table taught with the fingertips ---------------------------
+
+    static final String KEY_AREAS = "areas";
+    static final String KEY_AREA_SELECTED = "areaSelected";
+    static final String KEY_TIP_MM = "tipMm";
+    static final String KEY_REACH_INNER = "reachInnerMm";
+    static final String KEY_REACH_OUTER = "reachOuterMm";
+    static final int MAX_AREAS = 8;
+    static final double DEFAULT_TIP_MM = 163; // Hand-E 157 mm + the 6 mm adapter (the UR3e cell)
+
+    int areaCount() {
+        return Math.max(0, Math.min(MAX_AREAS, model.get(KEY_AREAS, 0)));
+    }
+
+    String areaName(int i) {
+        return i < 0 || i >= areaCount() ? null : model.get("area." + i + ".name", "Area " + (i + 1));
+    }
+
+    /** Area {@code i} as {@code [pose(6), sizeX, sizeY]} (m) once its three points are taught, else null. */
+    double[] areaPlane(int i) {
+        if (i < 0 || i >= areaCount()) return null;
+        double[][] p = new double[3][];
+        for (int k = 0; k < 3; k++) {
+            p[k] = model.get("area." + i + ".p" + k, (double[]) null);
+            if (p[k] == null || p[k].length != 3) return null;
+        }
+        return PoseMath.plane(p[0], p[1], p[2]);
+    }
+
+    int firstTaughtArea() {
+        for (int i = 0; i < areaCount(); i++) {
+            if (areaPlane(i) != null) return i;
+        }
+        return -1;
+    }
+
+    /** {base radius, rated reach} (m) of this robot, or null when the model isn't in the table. */
+    double[] robotReach() {
+        try {
+            return PickScript.modelReach(api.getSystemAPI().getRobotModel().getRobotType().name());
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    String modelName() {
+        try {
+            return api.getSystemAPI().getRobotModel().getRobotType().name();
+        } catch (RuntimeException e) {
+            return "?";
+        }
+    }
+
+    /** {min, max} radial reach (m) for the program, or null when the robot model is unknown. */
+    double[] reachLimits() {
+        double[] m = robotReach();
+        if (m == null) return null;
+        double min = m[0] + model.get(KEY_REACH_INNER, 150.0) / 1000.0;
+        double max = Math.max(0, m[1] - model.get(KEY_REACH_OUTER, 150.0) / 1000.0);
+        return max > min ? new double[] {min, max} : new double[] {min, 0};
+    }
+
+    private void showAreas() {
+        List<LocationsScreen.Area> out = new ArrayList<LocationsScreen.Area>();
+        for (int i = 0; i < areaCount(); i++) {
+            boolean[] t = new boolean[3];
+            for (int k = 0; k < 3; k++) t[k] = model.get("area." + i + ".p" + k, (double[]) null) != null;
+            out.add(new LocationsScreen.Area(areaName(i), t, areaPlane(i)));
+        }
+        double[] m = robotReach();
+        view.areas().show(out, model.get(KEY_AREA_SELECTED, 0), modelName(), m == null ? 0.064 : m[0],
+                m == null ? 0 : m[1], model.get(KEY_REACH_INNER, 150.0), model.get(KEY_REACH_OUTER, 150.0),
+                model.get(KEY_TIP_MM, DEFAULT_TIP_MM));
+    }
+
+    @Override
+    public void addArea() {
+        int n = areaCount();
+        if (n >= MAX_AREAS) return;
+        model.set("area." + n + ".name", "Area " + (n + 1));
+        model.set(KEY_AREAS, n + 1);
+        model.set(KEY_AREA_SELECTED, n);
+        showAreas();
+        view.setStatus("new pick area: teach its corner, a point along one edge and one on the far side",
+                PilotView.Kind.INFO);
+    }
+
+    /** PolyScope's move screen: touch the table with the fingertips, then OK. */
+    @Override
+    public void teach(final int area, final int point) {
+        api.getUserInterfaceAPI().getUserInteraction().getUserDefinedRobotPosition(new RobotPositionCallback2() {
+            @Override
+            public void onOk(PositionParameters position) {
+                double[] tcp = position.getPose().toArray(Length.Unit.M, Angle.Unit.RAD);
+                double[] off = position.getTCPOffset().toArray(Length.Unit.M, Angle.Unit.RAD);
+                double[] tip = PoseMath.fingertip(tcp, off, model.get(KEY_TIP_MM, DEFAULT_TIP_MM) / 1000.0);
+                model.set("area." + area + ".p" + point, tip);
+                model.set(KEY_AREA_SELECTED, area);
+                showAreas();
+                double[] plane = areaPlane(area);
+                view.setStatus(plane != null ? areaName(area) + " is taught" : LocationsScreen.POINTS[point]
+                        + " taught — " + (point < 2 ? LocationsScreen.POINT_HELP[point + 1] : "check the other points"),
+                        PilotView.Kind.OK);
+            }
+        });
+    }
+
+    @Override
+    public void rename(final int area, JLabel anchor) {
+        KeyboardTextInput kb = api.getUserInterfaceAPI().getUserInteraction().getKeyboardInputFactory()
+                .createStringKeyboardInput();
+        kb.setInitialValue(areaName(area));
+        kb.show(anchor, new KeyboardInputCallback<String>() {
+            @Override
+            public void onOk(String value) {
+                String v = value == null ? "" : value.replaceAll("[^A-Za-z0-9 ._-]", "").trim();
+                if (v.isEmpty()) return;
+                model.set("area." + area + ".name", v.length() > 24 ? v.substring(0, 24) : v);
+                showAreas();
+            }
+        });
+    }
+
+    @Override
+    public void remove(int area) {
+        int n = areaCount();
+        if (area < 0 || area >= n) return;
+        for (int i = area; i < n - 1; i++) {
+            model.set("area." + i + ".name", model.get("area." + (i + 1) + ".name", "Area " + (i + 1)));
+            for (int k = 0; k < 3; k++) {
+                double[] p = model.get("area." + (i + 1) + ".p" + k, (double[]) null);
+                if (p != null) model.set("area." + i + ".p" + k, p);
+                else model.remove("area." + i + ".p" + k);
+            }
+        }
+        model.remove("area." + (n - 1) + ".name");
+        for (int k = 0; k < 3; k++) model.remove("area." + (n - 1) + ".p" + k);
+        model.set(KEY_AREAS, n - 1);
+        model.set(KEY_AREA_SELECTED, Math.max(0, area - 1));
+        showAreas();
+        view.setStatus("pick area removed — picture points that looked at it now find the table live, or the next"
+                + " area; check them", PilotView.Kind.WARN);
+    }
+
+    @Override
+    public void select(int area) {
+        model.set(KEY_AREA_SELECTED, area);
+        showAreas();
+    }
+
+    @Override
+    public void setReach(String key, double delta) {
+        double def = KEY_TIP_MM.equals(key) ? DEFAULT_TIP_MM : 150.0;
+        double v = clampReach(key, model.get(key, def) + delta);
+        model.set(key, v);
+        showAreas();
+    }
+
+    @Override
+    public void askReach(final String key, JLabel anchor) {
+        KeyboardNumberInput<Double> kb = api.getUserInterfaceAPI().getUserInteraction().getKeyboardInputFactory()
+                .createPositiveDoubleKeypadInput();
+        kb.setInitialValue(model.get(key, KEY_TIP_MM.equals(key) ? DEFAULT_TIP_MM : 150.0));
+        kb.show(anchor, new KeyboardInputCallback<Double>() {
+            @Override
+            public void onOk(Double value) {
+                if (value == null) return;
+                model.set(key, clampReach(key, value));
+                showAreas();
+            }
+        });
+    }
+
+    static double clampReach(String key, double v) {
+        if (KEY_TIP_MM.equals(key)) return Math.max(0, Math.min(500, Math.round(v)));
+        return Math.max(0, Math.min(1000, Math.round(v)));
     }
 
     private static String orElse(Object v, String fallback) {
