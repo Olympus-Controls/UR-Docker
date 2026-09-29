@@ -670,3 +670,75 @@ def test_the_pre_5_8_table_is_armfks_rows():
         for v in (*d, *a):
             if v:
                 assert f"{v:g}" in text, (key, v)
+
+
+# -- a rebuilt jar is the committed one whatever JDK built it (Nick, 2026-09-29) --------------------
+
+JAVAC_OK = shutil.which("javac") is not None and shutil.which("javap") is not None
+
+
+def _built_jar(tmp: Path, name: str, source: str, *flags: str, extra: dict[str, bytes] | None = None) -> Path:
+    src = tmp / name / "src" / "p"
+    src.mkdir(parents=True)
+    (src / "A.java").write_text(source, encoding="utf-8")
+    out = tmp / name / "classes"
+    cmd = ["javac", "--release", "8", "-Xlint:-options", *flags, "-d", str(out), str(src / "A.java")]
+    subprocess.run(cmd, check=True, capture_output=True)
+    jar = tmp / f"{name}.jar"
+    with zipfile.ZipFile(jar, "w") as z:
+        z.writestr("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\r\n")
+        for f in sorted(out.rglob("*.class")):
+            z.writestr(f.relative_to(out).as_posix(), f.read_bytes())
+        for k, v in (extra or {}).items():
+            z.writestr(k, v)
+    return jar
+
+
+A_SRC = (
+    "package p;\npublic class A {\n  static final int K = 7;\n  int x;\n"
+    "  public int twice(int v) { return 2 * v + x; }\n}\n"
+)
+
+
+@pytest.mark.skipif(not JAVAC_OK, reason="needs a JDK")
+def test_the_same_classes_built_differently_compare_equal(tmp_path):
+    # -g vs -g:none: different class bytes (debug tables), the same members — what two JDK
+    # majors building the same sources look like
+    a = _built_jar(tmp_path, "a", A_SRC, "-g")
+    b = _built_jar(tmp_path, "b", A_SRC, "-g:none")
+    with zipfile.ZipFile(a) as za, zipfile.ZipFile(b) as zb:
+        assert za.read("p/A.class") != zb.read("p/A.class")
+    assert urcap5.compare_jars(a, b) == []
+
+
+@pytest.mark.skipif(not JAVAC_OK, reason="needs a JDK")
+@pytest.mark.parametrize(
+    ("other", "extra", "why"),
+    [
+        (A_SRC.replace("public int twice", "public long twice"), None, "p.A: its members differ"),
+        (A_SRC.replace("  int x;\n", "  int x;\n  int y;\n"), None, "p.A: its members differ"),
+        (A_SRC.replace("K = 7", "K = 8"), None, "p.A: its members differ"),  # a constant is a member
+        (A_SRC, {"META-INF/urcap5-sources.sha256": b"other"}, "in the rebuild, not in the committed jar"),
+    ],
+)
+def test_a_real_difference_is_caught(tmp_path, other, extra, why):
+    committed = _built_jar(tmp_path, "committed", A_SRC, "-g")
+    rebuilt = _built_jar(tmp_path, "rebuilt", other, "-g:none", extra=extra)
+    problems = urcap5.compare_jars(rebuilt, committed)
+    assert any(why in p for p in problems), problems
+
+
+@pytest.mark.skipif(not JAVAC_OK, reason="needs a JDK")
+def test_a_changed_non_class_entry_is_caught_byte_for_byte(tmp_path):
+    a = _built_jar(tmp_path, "a", A_SRC, extra={"META-INF/pom.xml": b"<version>1.7.0</version>"})
+    b = _built_jar(tmp_path, "b", A_SRC, extra={"META-INF/pom.xml": b"<version>1.9.0</version>"})
+    assert urcap5.compare_jars(a, b) == ["META-INF/pom.xml: differs"]
+
+
+@pytest.mark.skipif(not JAVAC_OK, reason="needs a JDK")
+def test_the_committed_jar_compares_equal_to_itself(tmp_path):
+    dist = next((ROOT / "urcap" / "dist").glob("realsense-pilot-ps5-*.urcap"))
+    copy = tmp_path / dist.name
+    shutil.copy(dist, copy)
+    assert urcap5.compare_jars(copy, dist) == []
+    assert len(urcap5.class_signatures(dist)) > 10

@@ -244,7 +244,10 @@ Per version:
 1. **API** — `urcap5.py check` against that image's own API jars: the sources it loads
    compile with `-Xlint:all -Werror`, and every package the committed jar imports (optional
    ones aside) is one it exports. A separate job rebuilds the committed jar against 5.4's
-   jars (and 5.8's for `TeachPosition2`) and `cmp`s it — the jar that ships is the floor build.
+   jars (and 5.8's for `TeachPosition2`) with a *different* JDK (21; the committed jar is 25's)
+   and holds it to the committed one with `urcap5.py compare` — the same entries, every
+   non-class file byte-identical, every class declaring the same members; the sources digest
+   holds the method bodies. The jar that ships is the floor build, whatever JDK built it.
 2. **Load** — the committed `dist/` jar goes in `/urcaps`; PolyScope's own Felix shell (port
    6666 inside the container) must report the bundle Active with both node services, since
    polyscope.log never says a URCap started; any polyscope.log line or stack frame naming the
@@ -278,7 +281,9 @@ What this does not cover: the node's screens rendering on a pendant, and the Ins
 node's touch-to-teach on a pendant (TeachPosition's two paths are tested under a JDK
 against stub APIs shaped like 5.4's and 5.8's).
 
-A weekly job fails when Docker Hub has a PolyScope 5 minor the matrix lacks, or a newer
+The weekly job also reads the version each matrix image carries (its `VERSION` env, from the
+registry) against `IMAGE_VERSIONS`: a tag re-pushed with other contents (the bare 5.4–5.8
+tags say no patch) is drift. A weekly job fails when Docker Hub has a PolyScope 5 minor the matrix lacks, or a newer
 image of one it has (`python3 urcap/ps5_matrix.py check-tags`: "PolyScope 5.27 exists
 (...): add it"); the matrix only ever grows — a minor leaves it only through
 `ps5_matrix.py`'s EXCLUDED, with its reason, and this table. On an amd64 Linux host:

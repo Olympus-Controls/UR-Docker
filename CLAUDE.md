@@ -281,7 +281,9 @@ ever adds): `urcap5.py check` against the image's own API jars, Felix shell (por
 the container) proves the bundle Active — polyscope.log never says so — then
 `urcap/pick5_e2e.py` runs the node's own script, two picks, the second from the queue, plus
 a compile probe (Robotiq + popup inside `if False:`) and a socket-timeout probe. A `build`
-job rebuilds the committed jar against 5.4's jars and `cmp`s it.
+job rebuilds the committed jar against 5.4's jars with JDK 21 and `urcap5.py compare`s it
+(entries, non-class bytes, class members — JDK-independent; the committed jar is JDK 25's).
+`check-tags` also compares each image's `VERSION` with `IMAGE_VERSIONS` (bare tags re-pushed).
 
 **Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before

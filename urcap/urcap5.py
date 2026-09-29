@@ -388,10 +388,9 @@ def _http(url: str, headers: dict[str, str] | None = None):
     return urllib.request.urlopen(req, timeout=120)  # noqa: S310 — fixed https registry URLs
 
 
-def registry_bundle_files(image: str):
-    """Every jar under ``/ursim/GUI/bundle`` of ``image``, straight from Docker Hub's registry
-    (no Docker needed; the image is amd64-only and needs not run): the layer the image's
-    history says ``COPY ursim_<version> /ursim`` made, streamed, nothing else downloaded."""
+def registry_image(image: str) -> tuple[str, str, dict, dict, dict]:
+    """``(repo, tag, auth headers, manifest, config)`` of ``image``'s amd64 image, from Docker
+    Hub's registry — the config holds its history and its environment (``VERSION``)."""
     repo, tag = split_image(image)
     with _http(_TOKEN.format(repo=repo)) as r:
         token = json.load(r)["token"]
@@ -406,6 +405,21 @@ def registry_bundle_files(image: str):
             manifest = json.load(r)
     with _http(f"{_REGISTRY}{repo}/blobs/{manifest['config']['digest']}", auth) as r:
         config = json.load(r)
+    return repo, tag, auth, manifest, config
+
+
+def image_version(image: str) -> str | None:
+    """The PolyScope version ``image`` carries: its ``VERSION`` environment variable (URSim
+    images set it to the full ``5.x.y`` even when the tag is a bare ``5.x``), or None."""
+    env = registry_image(image)[4].get("config", {}).get("Env") or []
+    return next((e.split("=", 1)[1] for e in env if e.startswith("VERSION=")), None)
+
+
+def registry_bundle_files(image: str):
+    """Every jar under ``/ursim/GUI/bundle`` of ``image``, straight from Docker Hub's registry
+    (no Docker needed; the image is amd64-only and needs not run): the layer the image's
+    history says ``COPY ursim_<version> /ursim`` made, streamed, nothing else downloaded."""
+    repo, tag, auth, manifest, config = registry_image(image)
     history = [h for h in config.get("history", []) if not h.get("empty_layer")]
     layers = manifest["layers"]
     picks = [i for i, h in enumerate(history) if "COPY ursim_" in h.get("created_by", "")]
@@ -750,6 +764,66 @@ def install(path: str | Path, container: str) -> dict:
     return {"ok": True, "container": container, "jar": f"/urcaps/{path.stem}.jar", "restarted": True}
 
 
+# -- is a rebuilt jar the committed one? ------------------------------------------------------
+
+
+def class_signatures(jar: Path, javap: str | None = None) -> dict[str, str]:
+    """Each class in ``jar`` as ``javap -p -s -constants`` prints it — every field, method and
+    constant with its JVM signature — minus the ``Compiled from`` line. Independent of which
+    javac built it: two JDK majors order a constant pool or name a synthetic differently, but
+    they declare the same members."""
+    javap = javap or shutil.which("javap")
+    if not javap:
+        raise Urcap5Error("javap is not on PATH (it ships with the JDK)")
+    with zipfile.ZipFile(jar) as z:
+        names = sorted(n[: -len(".class")].replace("/", ".") for n in z.namelist() if n.endswith(".class"))
+    if not names:
+        return {}
+    out = subprocess.run(
+        [javap, "-p", "-s", "-constants", "-cp", str(jar), *names], capture_output=True, text=True, check=True
+    ).stdout
+    sigs: dict[str, str] = {}
+    current, lines = None, []
+    for line in out.splitlines():
+        if line.startswith("Compiled from"):
+            if current is not None:
+                sigs[current] = "\n".join(lines)
+            current, lines = None, []
+            continue
+        if current is None:
+            m = re.search(r"(?:class|interface|enum)\s+([\w.$]+)", line)
+            if m:
+                current = m.group(1)
+        lines.append(line.rstrip())
+    if current is not None:
+        sigs[current] = "\n".join(lines)
+    return sigs
+
+
+def compare_jars(built: Path, committed: Path, javap: str | None = None) -> list[str]:
+    """Why ``built`` is not ``committed``, one line each; ``[]`` when it is. The same entries;
+    every entry that is not a class (the manifest, the embedded pom, the sources digest)
+    byte-identical; every class declaring the same members (:func:`class_signatures`). Method
+    bodies are held by the sources digest — any edited ``.java`` changes it."""
+    problems: list[str] = []
+    with zipfile.ZipFile(built) as a, zipfile.ZipFile(committed) as b:
+        na, nb = set(a.namelist()), set(b.namelist())
+        for n in sorted(na - nb):
+            problems.append(f"{n}: in the rebuild, not in the committed jar")
+        for n in sorted(nb - na):
+            problems.append(f"{n}: in the committed jar, not in the rebuild")
+        for n in sorted(na & nb):
+            if not n.endswith(".class") and a.read(n) != b.read(n):
+                problems.append(f"{n}: differs")
+    if problems:
+        return problems
+    sa, sb = class_signatures(built, javap), class_signatures(committed, javap)
+    for cls in sorted(set(sa) | set(sb)):
+        if sa.get(cls) != sb.get(cls):
+            problems.append(f"{cls}: its members differ")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="urcap5", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -768,6 +842,9 @@ def main(argv: list[str] | None = None) -> int:
     ck.add_argument("--src", default="urcap/realsense-pilot-ps5")
     ck.add_argument("--dist", help="the built jar (default: the committed one for this version)")
     ck.add_argument("--version", help="the PolyScope version (default: the image tag)")
+    cj = sub.add_parser("compare", help="is a rebuilt jar the committed one (entries, bytes, class members)")
+    cj.add_argument("built", type=Path)
+    cj.add_argument("committed", type=Path)
     rc = sub.add_parser("release-check", help="check a urcap5-v<version> tag against the committed jar")
     rc.add_argument("tag")
     rc.add_argument("--src", default="urcap/realsense-pilot-ps5")
@@ -796,6 +873,11 @@ def main(argv: list[str] | None = None) -> int:
             props = read_properties((src / "bundle.properties").read_text(encoding="utf-8"))
             dist = Path(args.dist) if args.dist else REPO_ROOT / "urcap" / "dist" / dist_name(props)
             print(json.dumps(check(src, Path(args.sdk), dist, args.version)))
+        elif args.cmd == "compare":
+            problems = compare_jars(args.built, args.committed)
+            for p in problems:
+                print(p, file=sys.stderr)
+            return 1 if problems else 0
         elif args.cmd == "release-check":
             print(json.dumps(release_check(args.tag, args.src, args.dist)))
         else:

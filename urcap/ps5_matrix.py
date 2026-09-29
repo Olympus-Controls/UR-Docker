@@ -136,6 +136,35 @@ TAGS = (
     "5.25.2",
     "5.26.1",
 )
+
+# What each image carries: its ``VERSION`` environment variable, read from the registry
+# (``urcap5.image_version``, 2026-09-29). A bare tag (5.4 - 5.8) says nothing about its patch,
+# so ``check-tags`` compares these too: a tag re-pushed with other contents is drift, not news.
+IMAGE_VERSIONS: dict[str, str] = {
+    "5.4": "5.4.3",
+    "5.5": "5.5.1",
+    "5.6": "5.6.0",
+    "5.7": "5.7.0",
+    "5.8": "5.8.2",
+    "5.9.4": "5.9.4",
+    "5.10.2": "5.10.2",
+    "5.11.11": "5.11.11",
+    "5.12.8": "5.12.8",
+    "5.13.1": "5.13.1",
+    "5.14.6": "5.14.6",
+    "5.15.2": "5.15.2",
+    "5.16.1": "5.16.1",
+    "5.17.3": "5.17.3",
+    "5.18.1": "5.18.1",
+    "5.19.0": "5.19.0",
+    "5.20.0": "5.20.0",
+    "5.21.3": "5.21.3",
+    "5.22.2": "5.22.2",
+    "5.23.0": "5.23.0",
+    "5.24.0": "5.24.0",
+    "5.25.2": "5.25.2",
+    "5.26.1": "5.26.1",
+}
 MATRIX: dict[str, Version] = {v.minor: v for v in map(_version, TAGS)}
 
 # Minors on Docker Hub the URCap does not support, each with the specific reason (README table).
@@ -329,6 +358,29 @@ def tag_drift(tags: list[str], matrix: list[str], excluded: dict[str, str] | Non
         if t not in tags:
             problems.append(f"{IMAGE}:{t} is not on Docker Hub (the matrix can't pull it)")
     return problems
+
+
+def version_drift(recorded: dict[str, str], actual: dict[str, str | None]) -> list[str]:
+    """Images whose contents changed under the same tag, one sentence each: ``actual`` maps a
+    matrix tag to the ``VERSION`` its image carries now (None: none readable)."""
+    problems = []
+    for tag, want in recorded.items():
+        got = actual.get(tag)
+        if got is None:
+            problems.append(f"{IMAGE}:{tag} has no readable VERSION (was {want}) — check the image by hand")
+        elif got != want:
+            problems.append(
+                f"{IMAGE}:{tag} now carries PolyScope {got} (was {want}): the tag was re-pushed — "
+                "re-run the matrix on it and update IMAGE_VERSIONS"
+            )
+    return problems
+
+
+def fetch_versions(tags) -> dict[str, str | None]:
+    """The ``VERSION`` each tag's image carries now, from Docker Hub's registry."""
+    from urcap5 import image_version
+
+    return {t: image_version(f"{IMAGE}:{t}") for t in tags}
 
 
 def fetch_tags(url: str = HUB_TAGS) -> list[str]:
@@ -750,6 +802,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "check-tags":
         tags = fetch_tags()
         problems = tag_drift(tags, [v.tag for v in MATRIX.values()])
+        problems += version_drift(IMAGE_VERSIONS, fetch_versions(IMAGE_VERSIONS))
         print(
             json.dumps(
                 {

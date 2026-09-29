@@ -50,6 +50,8 @@
 
 ## Decisions (so they don't get re-asked)
 
+- 2026-09-29 — PS5 backwards compatibility (Nick): on 5.4–5.7 a pick area taught by touch uses the **nominal DH** (no calibration) — **accurate enough**; 5.9.0–5.9.3 (no image) are treated as **lacking the IK check** — fine; `check-tags` **compares the version inside each image** (`IMAGE_VERSIONS`); the committed jar is checked by **comparing compiled classes** (`urcap5.py compare`), not bytes, and CI rebuilds it with a different JDK to prove it.
+
 - 2026-09-28 — Pick kit (Nick's answers): **reach** = base outer radius + 150 mm .. rated reach − 150 mm (as built); **pick order is FPV** — the directions of the camera's picture as the pendant shows it (as built); the Pick node **drives the Robotiq Hand-E itself** by default (as built); the camera computer's OS is **Debian** (arm64; the RevPi Connect 5 gets a Debian image, not RevPi OS); the PolyScope 5.x matrix jobs **must not block unrelated PRs** — they stay out of `dev`'s required checks (path-filtered, informational).
 - 2026-09-28 — With no camera, every view shows an unmistakable **NO CAMERA CONNECTED** test card (Nick); a simulated picture is stamped the same way.
 

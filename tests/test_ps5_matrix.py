@@ -390,3 +390,40 @@ def test_missing_services_on_real_listings(fixture):
 )
 def test_the_controller_is_ready_only_once_polyscope_is_connected_to_it(reply, ready):
     assert m.controller_ready(reply) is ready
+
+
+# -- a tag re-pushed with other contents is drift (Nick, 2026-09-29) --------------------------------
+
+
+def test_every_matrix_image_has_its_recorded_version():
+    assert list(m.IMAGE_VERSIONS) == list(m.TAGS)
+    for tag, version in m.IMAGE_VERSIONS.items():
+        assert version.startswith(tag if tag.count(".") == 1 else tag), (tag, version)
+        if tag.count(".") == 2:  # a patch tag carries exactly that patch
+            assert version == tag
+        else:  # a bare minor tag carries some patch of that minor
+            assert re.fullmatch(re.escape(tag) + r"\.[0-9]+", version), (tag, version)
+
+
+def test_unchanged_images_are_no_drift():
+    assert m.version_drift(m.IMAGE_VERSIONS, dict(m.IMAGE_VERSIONS)) == []
+
+
+def test_a_bare_tag_re_pushed_with_a_new_patch_is_drift():
+    actual = dict(m.IMAGE_VERSIONS, **{"5.4": "5.4.4"})
+    (p,) = m.version_drift(m.IMAGE_VERSIONS, actual)
+    assert "5.4" in p and "5.4.4" in p and "was 5.4.3" in p and "re-pushed" in p
+
+
+def test_an_image_with_no_readable_version_is_reported_not_ignored():
+    actual = dict(m.IMAGE_VERSIONS, **{"5.26.1": None})
+    (p,) = m.version_drift(m.IMAGE_VERSIONS, actual)
+    assert "5.26.1" in p and "no readable VERSION" in p
+
+
+def test_check_tags_reports_a_re_pushed_image(monkeypatch, capsys):
+    newest = list(m.TAGS)
+    monkeypatch.setattr(m, "fetch_tags", lambda *a, **k: newest)
+    monkeypatch.setattr(m, "fetch_versions", lambda tags: dict(m.IMAGE_VERSIONS, **{"5.8": "5.8.3"}))
+    assert m.main(["check-tags"]) == 1
+    assert "5.8.3" in capsys.readouterr().err

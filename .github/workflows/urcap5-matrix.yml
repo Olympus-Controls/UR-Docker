@@ -76,21 +76,22 @@ jobs:
         with:
           persist-credentials: false
 
-      # javac --release 8 (Java 8 bytecode, what PolyScope 5's JRE 1.8.0_371 runs). The same
-      # major as the machine that built the committed jar, so the rebuild is byte-comparable.
+      # javac --release 8 (Java 8 bytecode, what PolyScope 5's JRE 1.8.0_371 runs). Deliberately
+      # NOT the JDK the committed jar was built with (25): the rebuild is compared by entries,
+      # non-class bytes and class members (`urcap5.py compare`), so any JDK major must pass.
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: "21"
 
       - name: the URCap API jars of compat.floor and every compat.since version (registry)
         run: python3 urcap/urcap5.py sdk
 
-      - name: rebuild the URCap against them; it must equal the committed jar
+      - name: rebuild the URCap against them; it must be the committed jar (JDK-independent)
         run: |
           python3 urcap/urcap5.py package urcap/realsense-pilot-ps5 --out target/rebuilt
           for jar in target/rebuilt/*.urcap; do
-            cmp "$jar" "urcap/dist/$(basename "$jar")" || {
+            python3 urcap/urcap5.py compare "$jar" "urcap/dist/$(basename "$jar")" || {
               echo "::error::urcap/dist/$(basename "$jar") is not what the floor build makes — run \`make urcap5-package\` and commit it"
               exit 1
             }
