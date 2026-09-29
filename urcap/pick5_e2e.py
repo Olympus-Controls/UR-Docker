@@ -40,23 +40,13 @@ sys.path.insert(0, str(REPO))
 
 from perception.picknode import PickPlanner, PickServer, parse_request  # noqa: E402
 from perception.synthscene import Box, render_depth  # noqa: E402
-from tests.test_urcap5 import HARNESS, JAVA  # noqa: E402
+from tests.test_urcap5 import HARNESS, JAVA, PURE_JAVA  # noqa: E402
 from urctl import Robot, RobotConfig  # noqa: E402
 from urctl.pose import Transform  # noqa: E402
 
 W, H = 320, 180
 K = {"fx": 230.0, "fy": 230.0, "ppx": W / 2, "ppy": H / 2}
 READY = [0.0, -1.0, 1.2, -1.8, -1.5708, 0.0]  # elbow bent, tool down: no singular movel
-# the pure-Java classes the node's script and its maths need (no UR API)
-PURE = (
-    "Json.java",
-    "Cockpit.java",
-    "PickScript.java",
-    "PoseMath.java",
-    "Diagrams.java",
-    "Ui.java",
-    "Scene.java",
-)
 
 
 class World:
@@ -100,7 +90,7 @@ def generate(spec: dict) -> str:
     pkg = root / "src" / "com" / "olympuscontrols" / "realsensepilot"
     pkg.mkdir(parents=True)
     (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
-    for name in PURE:
+    for name in PURE_JAVA:
         shutil.copy(JAVA / name, pkg / name)
     subprocess.run(
         [

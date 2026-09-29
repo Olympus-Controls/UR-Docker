@@ -18,8 +18,8 @@ import time
 import pytest
 
 from perception.picknode import (
-    PickOptions,
     MAX_LINE,
+    PickOptions,
     PickPlanner,
     PickServer,
     RequestError,

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +33,16 @@ SRC = ROOT / "urcap" / "realsense-pilot-ps5"
 JAVA = SRC / "src" / "com" / "olympuscontrols" / "realsensepilot"
 DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.5.0.urcap"
 JAVAC = shutil.which("javac")
+# the pure-Java classes the harness compiles (no UR API)
+PURE_JAVA = (
+    "Json.java",
+    "Cockpit.java",
+    "PickScript.java",
+    "PoseMath.java",
+    "Diagrams.java",
+    "Ui.java",
+    "Scene.java",
+)
 HAS_SDK = all(any(urcap5.SDK_DIR.glob(p + "*.jar")) for p in urcap5.SDK_JARS)
 
 
@@ -257,8 +266,8 @@ public class Harness {
                 double[][] p = new double[3][];
                 for (int i = 0; i < 3; i++) {
                     List<?> xyz = (List<?>) q.get(i);
-                    p[i] = new double[] {((Number) xyz.get(0)).doubleValue(), ((Number) xyz.get(1)).doubleValue(),
-                        ((Number) xyz.get(2)).doubleValue()};
+                    p[i] = new double[3];
+                    for (int k = 0; k < 3; k++) p[i][k] = ((Number) xyz.get(k)).doubleValue();
                 }
                 double[] r = PoseMath.plane(p[0], p[1], p[2]);
                 if (r == null) { out = null; break; }
@@ -343,7 +352,7 @@ def java_client(tmp_path_factory):
     pkg = root / "src" / "com" / "olympuscontrols" / "realsensepilot"
     pkg.mkdir(parents=True)
     (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
-    for name in ("Json.java", "Cockpit.java", "PickScript.java", "PoseMath.java", "Diagrams.java", "Ui.java", "Scene.java"):
+    for name in PURE_JAVA:
         shutil.copy(JAVA / name, pkg / name)
     classes = root / "classes"
     subprocess.run(

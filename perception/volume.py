@@ -389,7 +389,9 @@ def find_parts(
         if not occ[start] or seen[start]:
             continue
         blob = _flood(occ, seen, start, gw, gh)
-        part = _measure(blob, pts, hs, zc, gw, gh, stride, surf, T_cb, K)
+        part = _measure(
+            blob, pts, hs, zc, gw, gh, stride, surf, T_cb, K, fine=(w, h, depth, depth_scale_m, T)
+        )
         if part is None:
             continue
         part.why = _why_not(part, spec, surf, reach, level_ok)
@@ -527,6 +529,7 @@ def _measure(
     surf: Surface,
     T_cb: Transform,
     K: dict,
+    fine: tuple | None = None,
 ) -> Part | None:
     heights = sorted(hs[k] for k in blob if hs[k] is not None)
     if len(heights) < MIN_TOP_CELLS:
@@ -544,12 +547,20 @@ def _measure(
             near_edge = True
             break
     uv = [surf.local(pts[k]) for k in face]
-    cu, cv, ang, length, width = min_area_rect(uv)
     zmed = sorted(zc[k] for k in face)[len(face) // 2]
-    pad = 0.5 * stride * zmed / K["fx"]  # the outermost samples sit ~half a cell inside the edges
-    length, width = length + pad, width + pad
+    step = stride
     hface = sorted(hs[k] for k in face)
     height = hface[len(hface) // 2]
+    if fine is not None and stride > 1:
+        # the coarse cells found the part; its edges come from every pixel of its top face — a
+        # 60 mm part spans ~17 cells of 3 mm, and a rectangle through so few quantises its angle
+        # by a few degrees at some wrist headings (hypothesis found 4.1°)
+        got = _fine_face(face, gw, stride, surf, K, fine, top)
+        if len(got) >= 4 * len(face):
+            uv, step = got, 1
+    cu, cv, ang, length, width = min_area_rect(uv)
+    pad = 0.5 * step * zmed / K["fx"]  # the outermost samples sit ~half a sample inside the edges
+    length, width = length + pad, width + pad
     centre = surf.point(cu, cv, height)
     ax = tuple(math.cos(ang) * surf.x_axis[i] + math.sin(ang) * surf.y_axis[i] for i in range(3))
     theta = math.atan2(ax[1], ax[0])
@@ -570,6 +581,35 @@ def _measure(
         cells=len(face),
         near_edge=near_edge,
     )
+
+
+def _fine_face(
+    face: set[int], gw: int, stride: int, surf: Surface, K: dict, fine: tuple, top: float
+) -> list[tuple[float, float]]:
+    """The top face at full resolution: every pixel whose coarse cell is on the face (or next to
+    it, for the edges) and whose height is within :data:`TOP_BAND_M` of the top — in the
+    surface's plane coordinates."""
+    w, h, depth, scale, T = fine
+    fx, fy, ppx, ppy = K["fx"], K["fy"], K["ppx"], K["ppy"]
+    near = set()
+    for k in face:
+        for d in (-gw - 1, -gw, -gw + 1, -1, 0, 1, gw - 1, gw, gw + 1):
+            near.add(k + d)
+    out = []
+    half = stride // 2
+    for k in near:
+        j, i = divmod(k, gw)
+        for y in range(max(0, j * stride - half), min(h, j * stride - half + stride)):
+            row = y * w
+            for x in range(max(0, i * stride - half), min(w, i * stride - half + stride)):
+                d = depth[2 * (row + x)] | (depth[2 * (row + x) + 1] << 8)
+                if not d:
+                    continue
+                z = d * scale
+                p = T.apply(((x - ppx) * z / fx, (y - ppy) * z / fy, z))
+                if abs(surf.height(p) - top) <= TOP_BAND_M:
+                    out.append(surf.local(p))
+    return out
 
 
 def _why_not(

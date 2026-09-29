@@ -199,7 +199,8 @@ def test_without_the_popup_a_failed_run_just_leaves_the_result_false(java_client
 
 def test_speed_scales_the_nodes_own_travel(java_client):  # noqa: F811
     slow = pick(java_client, values={"speedPct": 10})["script"]
-    assert re.search(r"movej\(\[[^]]*\], a=0\.14, v=0\.1[01]\)", slow)  # movej 1.4 rad/s^2, 1.05 rad/s at 10 %
+    # movej: 1.4 rad/s^2 and 1.05 rad/s at 10 %
+    assert re.search(r"movej\(\[[^]]*\], a=0\.14, v=0\.1[01]\)", slow)
     assert "movel(rs_grip, a=0.3, v=0.05)" in slow  # the last stretch into the part never speeds up
 
 
@@ -333,9 +334,9 @@ def test_a_touch_measures_the_fingertips_whatever_tcp_polyscope_has(java_client)
 
 
 def test_the_screen_parses_what_the_cockpit_sends(java_client):  # noqa: F811
-    from tests.test_picknode2 import FLANGE, OPTS, ROW, Frames, planner
     from perception.picknode import scene_report
     from perception.synthscene import Box
+    from tests.test_picknode2 import FLANGE, OPTS, ROW, Frames, planner
 
     out = scene_report(
         planner(Frames(ROW + [Box(0.35, 0.05, 0.068, 0.035, 0.03)])), FLANGE, parse_options(OPTS)
