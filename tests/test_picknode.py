@@ -18,6 +18,7 @@ import time
 import pytest
 
 from perception.picknode import (
+    PickOptions,
     MAX_LINE,
     PickPlanner,
     PickServer,
@@ -151,6 +152,7 @@ def test_urscripts_to_str_pose_parses():
         "lean": 0.0,
         "pixel": (412, 233),
         "part": None,
+        "options": PickOptions(),  # protocol 1: every protocol-2 option at its default
     }
     assert "pixel" not in parse_request("FIND p[0,0,0,0,0,0] u=-1 v=-1")  # "any object"
 
