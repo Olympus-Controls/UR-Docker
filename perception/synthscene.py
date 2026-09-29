@@ -1,0 +1,104 @@
+"""Ray-cast depth of boxes standing on a plane — a ground truth for :mod:`perception.volume`.
+
+Every box stands on the table (``z = table_z`` in the base frame, the table level), its
+footprint ``length × width`` centred on ``(x, y)`` with the long side at heading
+``theta``, ``height`` tall. A pixel's depth is the camera-frame Z of the nearest hit
+(box faces — tops *and* sides — or the table), exactly what an aligned D435 depth frame
+holds. Stdlib; a 160×120 frame of a few boxes takes a fraction of a second.
+
+    from perception.synthscene import Box, render_depth
+    depth = render_depth(W, H, K, T_bc, [Box(0.35, 0.0, 0.06, 0.04, 0.03, 0.3)], table_z=-0.27)
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from urctl.pose import Transform
+
+
+@dataclass(frozen=True)
+class Box:
+    x: float
+    y: float
+    length: float
+    width: float
+    height: float
+    theta: float = 0.0  # heading of the long side in base XY, rad
+
+
+def camera_looking_down(x: float, y: float, z: float, yaw: float = 0.0) -> Transform:
+    """A camera at ``(x, y, z)`` looking straight down; image right = base heading ``yaw``,
+    image down = 90° clockwise from it seen from above (the camera's Y)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    x_axis = (c, s, 0.0)
+    z_axis = (0.0, 0.0, -1.0)
+    y_axis = (
+        z_axis[1] * x_axis[2] - z_axis[2] * x_axis[1],
+        z_axis[2] * x_axis[0] - z_axis[0] * x_axis[2],
+        0.0,
+    )
+    return Transform.from_axes(x_axis, y_axis, z_axis, (x, y, z))
+
+
+def render_depth(
+    w: int,
+    h: int,
+    K: dict,
+    T_bc: Transform,
+    boxes: Sequence[Box],
+    *,
+    table_z: float,
+    scale_m: float = 0.001,
+    holes: Sequence[tuple[int, int, int, int]] = (),
+) -> bytes:
+    """uint16 little-endian depth, ``scale_m`` per unit. ``holes``: pixel rectangles
+    ``(x0, y0, x1, y1)`` read as 0 (no depth), the way white foam drops out."""
+    out = bytearray(w * h * 2)
+    o = T_bc.translation
+    locals_ = [_box_frame(b, table_z) for b in boxes]
+    for v in range(h):
+        for u in range(w):
+            if any(x0 <= u < x1 and y0 <= v < y1 for x0, y0, x1, y1 in holes):
+                continue
+            dc = ((u - K["ppx"]) / K["fx"], (v - K["ppy"]) / K["fy"], 1.0)  # camera Z = 1
+            d = T_bc.rotate(dc)
+            best = math.inf
+            if d[2] < -1e-9:
+                t = (table_z - o[2]) / d[2]
+                if t > 0:
+                    best = t
+            for T_inv, half in locals_:
+                t = _slab(T_inv.apply(o), T_inv.rotate(d), half)
+                if t is not None and t < best:
+                    best = t
+            if math.isfinite(best):
+                q = int(round(best / scale_m))  # t is the camera-frame Z: dc's Z is 1
+                if 0 < q < 65536:
+                    out[2 * (v * w + u)] = q & 0xFF
+                    out[2 * (v * w + u) + 1] = q >> 8
+    return bytes(out)
+
+
+def _box_frame(b: Box, table_z: float) -> tuple[Transform, tuple[float, float, float]]:
+    c, s = math.cos(b.theta), math.sin(b.theta)
+    T = Transform.from_axes((c, s, 0.0), (-s, c, 0.0), (0.0, 0.0, 1.0), (b.x, b.y, table_z + b.height / 2))
+    return T.inverse(), (b.length / 2, b.width / 2, b.height / 2)
+
+
+def _slab(o: Sequence[float], d: Sequence[float], half: Sequence[float]) -> float | None:
+    t0, t1 = -math.inf, math.inf
+    for i in range(3):
+        if abs(d[i]) < 1e-12:
+            if abs(o[i]) > half[i]:
+                return None
+            continue
+        a, b = (-half[i] - o[i]) / d[i], (half[i] - o[i]) / d[i]
+        if a > b:
+            a, b = b, a
+        t0, t1 = max(t0, a), min(t1, b)
+        if t0 > t1:
+            return None
+    return t0 if t0 > 0 else None
