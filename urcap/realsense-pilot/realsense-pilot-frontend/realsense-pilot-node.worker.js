@@ -15,7 +15,7 @@ const NODE_TYPE = "olympus-realsense-pilot";
 const NODE_VERSION = "1.0.0";
 
 // The node's saved state. `cockpitUrl` is where the RealSense cockpit
-// (`perception gui --cors …`) answers; empty = the page's own host on :7621.
+// (`perceptronics gui --cors …`) answers; empty = the page's own host on :7621.
 const behaviors = {
   factory: async () => ({ type: NODE_TYPE, version: NODE_VERSION, cockpitUrl: "" }),
   upgradeNode: async (loadedNode, defaultNode) => ({ ...defaultNode, ...(loadedNode || {}), version: NODE_VERSION }),

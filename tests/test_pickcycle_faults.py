@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from perception.pickcycle import Block, CockpitError, PickCycle, add_pick_cycle_args
+from perceptronics.pickcycle import Block, CockpitError, PickCycle, add_pick_cycle_args
 from tests.test_pickcycle import H, K, W, scene
 from tests.test_urctl import FakeController
 from urctl.config import RobotConfig
@@ -180,7 +180,7 @@ def test_bail_out_stops_the_program_first_then_opens_then_backs_off(rig):
 
 
 def test_interrupt_during_the_run_reaches_the_bail_out(monkeypatch, tmp_path):
-    from perception import pickcycle as pc
+    from perceptronics import pickcycle as pc
 
     calls = []
     monkeypatch.setattr(pc.PickCycle, "run", lambda self, **kw: (_ for _ in ()).throw(KeyboardInterrupt()))

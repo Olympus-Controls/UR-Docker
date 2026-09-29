@@ -31,7 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from perception.picknode import PickPlanner, PickServer  # noqa: E402
+from perceptronics.picknode import PickPlanner, PickServer  # noqa: E402
 from tests.test_pickcycle import H, K, W, scene  # noqa: E402
 from tests.test_urcap5 import HARNESS, JAVA  # noqa: E402
 from urctl import Robot, RobotConfig  # noqa: E402

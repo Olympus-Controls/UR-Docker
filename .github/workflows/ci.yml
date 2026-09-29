@@ -22,11 +22,11 @@ jobs:
         with:
           enable-cache: true
       - name: install deps
-        run: uv sync --extra perception
+        run: uv sync --extra perceptronics
       - name: ruff check
-        run: uv run ruff check urctl perception scripts urcap tests
+        run: uv run ruff check urctl perceptronics scripts urcap tests
       - name: ruff format
-        run: uv run ruff format --check urctl perception scripts urcap tests
+        run: uv run ruff format --check urctl perceptronics scripts urcap tests
       - name: shellcheck
         run: |
           sudo apt-get update -qq
@@ -57,12 +57,12 @@ jobs:
         # Core is stdlib-only; the extras exercise the optional integrations.
         # opencv/numpy wheels can lag new CPython releases, so extras are
         # best-effort off the oldest/newest edges: fall back to core deps.
-        run: uv sync --extra perception || uv sync
+        run: uv sync --extra perceptronics || uv sync
       - name: unit tests
         run: uv run pytest -m "not integration and not sam" -q
 
   package:
-    # The wheel must carry the cockpit's static assets (perception/webui/) and the
+    # The wheel must carry the cockpit's static assets (perceptronics/webui/) and the
     # console scripts — this catches packaging regressions before a release.
     runs-on: ubuntu-latest
     steps:
@@ -79,8 +79,8 @@ jobs:
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
           required = [
-              "perception/webui/index.html",  # the RGB-D cockpit's page
-              "perception/realsense.py",
+              "perceptronics/webui/index.html",  # the RGB-D cockpit's page
+              "perceptronics/realsense.py",
               "urctl/sysinfo.py",
               "urctl/_urp_convert.py",    # build-time copy of scripts/urp_convert.py
           ]
@@ -94,8 +94,8 @@ jobs:
           uv venv /tmp/smoke
           uv pip install --python /tmp/smoke/bin/python dist/*.whl
           /tmp/smoke/bin/urctl --help > /dev/null
-          /tmp/smoke/bin/perception-gui --help > /dev/null
-          /tmp/smoke/bin/perception rs-info > /dev/null 2>&1 || true   # no SDK on the runner: must fail cleanly, not crash
+          /tmp/smoke/bin/perceptronics-gui --help > /dev/null
+          /tmp/smoke/bin/perceptronics rs-info > /dev/null 2>&1 || true   # no SDK on the runner: must fail cleanly, not crash
           /tmp/smoke/bin/urctl tools | python3 -c "import json,sys; assert len(json.load(sys.stdin)) >= 20"
       - uses: actions/upload-artifact@v7
         with:
@@ -113,7 +113,7 @@ jobs:
         with:
           enable-cache: true
       - name: install deps
-        run: uv sync --extra perception
+        run: uv sync --extra perceptronics
       - name: start URSim
         run: |
           docker compose up -d

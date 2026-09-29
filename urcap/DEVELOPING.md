@@ -72,8 +72,8 @@ targets 10.14):
 - **The page is same-origin with PolyScope** (nginx serves web archives from
   `/var/urcaps`; no CSP on the 10.13 sim), so `fetch` to another host works
   the way any page's does: the **cockpit must send CORS headers** for
-  PolyScope's origin — `perception gui --cors http://<pendant-or-sim-host>:<port>`
-  (`PERCEPTION_CORS`). The docs allow direct REST from a frontend on a real
+  PolyScope's origin — `perceptronics gui --cors http://<pendant-or-sim-host>:<port>`
+  (`PERCEPTRONICS_CORS`). The docs allow direct REST from a frontend on a real
   robot; the sim itself cannot reach external devices, but the *browser* can.
 - **No frontend API runs URScript.** `ApplicationPresenterAPI` offers
   `robotPositionService.getInverseKinematics(pose, qNear)` and
@@ -99,7 +99,7 @@ the Move buttons need a cockpit with a robot link (below).
 For the real camera: restart your cockpit with CORS, e.g.
 
 ```bash
-sudo .venv/bin/perception --cell ur3 gui --rs-lean --cors http://localhost:8000
+sudo .venv/bin/perceptronics --cell ur3 gui --rs-lean --cors http://localhost:8000
 ```
 
 (same port as the fake one, so the node's URL doesn't change; stop `make
@@ -184,4 +184,4 @@ URCap, CORS for the pendant's origin. The alternative the SDK offers is a
 `devices: [{type: video}]` hot-plug hooks and `services: [urcontrol-primary]`),
 which would put the cockpit inside PolyScope's Docker and reach the controller
 on `urcontrol-primary:30001`; that is a packaging step on top of
-`Dockerfile.perception`, not a rewrite.
+`Dockerfile.perceptronics`, not a rewrite.

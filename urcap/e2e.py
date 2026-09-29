@@ -8,8 +8,8 @@ files that were packaged, then drives PolyScope's own UI headlessly:
 
 * Application → RealSense Pilot: the node's element renders with its i18n title,
   the behavior worker and presenter load without a page error from our files;
-* the node goes live against a synthetic cockpit (``perception gui --fake --no-robot``,
-  with none of the shell's ``UR_*`` / ``PERCEPTION_*``: it never reaches a robot);
+* the node goes live against a synthetic cockpit (``perceptronics gui --fake --no-robot``,
+  with none of the shell's ``UR_*`` / ``PERCEPTRONICS_*``: it never reaches a robot);
   hover reads depth, a click segments (``POST /api/segment`` ok) and asks to locate;
 * the PolyScope services Move (PolyScope) relies on answer on this release:
   ``getKinematicInfo`` (6 DH rows), ``getJointPositions``,
@@ -19,7 +19,7 @@ files that were packaged, then drives PolyScope's own UI headlessly:
 * the cockpit URL saved through ``applicationNodeService.updateNode`` survives a reload.
 
 The browser half needs Playwright (``uv run --with playwright==1.63.0 python
-urcap/e2e.py``; ``playwright install chromium`` once) and the ``perception``
+urcap/e2e.py``; ``playwright install chromium`` once) and the ``perceptronics``
 package; ``--no-browser`` stops after the install checks. Needs Docker, and the
 simulator needs ``--privileged``.
 
@@ -174,7 +174,7 @@ def cockpit_command(port: int, origin: str) -> list[str]:
     click on a linked cockpit sends a Primary script (locate) to whatever robot it
     points at."""
     return [
-        sys.executable, "-m", "perception", "gui", "--fake", "--no-robot", "--no-browser",
+        sys.executable, "-m", "perceptronics", "gui", "--fake", "--no-robot", "--no-browser",
         "--port", str(port), "--cors", origin,
     ]  # fmt: skip
 
@@ -182,7 +182,7 @@ def cockpit_command(port: int, origin: str) -> list[str]:
 def cockpit_env(environ: dict[str, str]) -> dict[str, str]:
     """The caller's environment without the robot / cell / camera settings a
     developer's shell may export (UR_CELL=ur3 names a real arm)."""
-    return {k: v for k, v in environ.items() if not k.startswith(("UR_", "PERCEPTION_"))}
+    return {k: v for k, v in environ.items() if not k.startswith(("UR_", "PERCEPTRONICS_"))}
 
 
 @contextlib.contextmanager

@@ -758,10 +758,10 @@ def test_e2e_cockpit_has_no_robot_link_whatever_the_shell_exports():
     assert "--no-robot" in cmd and "--fake" in cmd
     env = e2e.cockpit_env(
         {"PATH": "/bin", "HOME": "/h", "UR_CELL": "ur3", "UR_HOST": "192.168.3.3", "UR_PRIMARY_PORT": "30001",
-         "PERCEPTION_T_FLANGE_CAMERA": "1,2,3", "PERCEPTION_CORS": "*"}
+         "PERCEPTRONICS_T_FLANGE_CAMERA": "1,2,3", "PERCEPTRONICS_CORS": "*"}
     )  # fmt: skip
     assert env["PATH"] == "/bin" and env["HOME"] == "/h"
-    assert not any(k.startswith(("UR_", "PERCEPTION_")) for k in env)
+    assert not any(k.startswith(("UR_", "PERCEPTRONICS_")) for k in env)
 
 
 def test_e2e_teardown_removes_the_sims_anonymous_volume():

@@ -1,4 +1,4 @@
-"""The stand-alone pick server beside a running cockpit (``perception pick-server``).
+"""The stand-alone pick server beside a running cockpit (``perceptronics pick-server``).
 
 Contract: against a real cockpit HTTP server on the synthetic block scene, the
 sidecar's pick socket answers exactly what the cockpit's own planner answers, its
@@ -23,11 +23,11 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from perception.config import PerceptionConfig
-from perception.picknode import PickServer, parse_preview_request
-from perception.picksidecar import CockpitFrames, Sidecar, SidecarServer, _say
-from perception.robotlink import RobotLink
-from perception.webapp import ViewerApp, ViewerHandler
+from perceptronics.config import PerceptionConfig
+from perceptronics.picknode import PickServer, parse_preview_request
+from perceptronics.picksidecar import CockpitFrames, Sidecar, SidecarServer, _say
+from perceptronics.robotlink import RobotLink
+from perceptronics.webapp import ViewerApp, ViewerHandler
 from tests.test_pickcycle import SceneCamera
 from urctl import Robot, RobotConfig
 from urctl.pose import pose_trans
@@ -277,7 +277,7 @@ def test_the_preview_flange_never_falls_back_to_a_primary_script():
 
 
 def test_an_unwritable_log_falls_back_to_the_user_log_dir(tmp_path, monkeypatch):
-    import perception.picksidecar as sidecar
+    import perceptronics.picksidecar as sidecar
 
     locked = tmp_path / "captures"
     locked.mkdir()
