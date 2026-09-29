@@ -9,8 +9,9 @@ import com.ur.urcap.api.domain.data.DataModel;
 import java.util.Locale;
 
 /**
- * Program tab → URCaps → RealSense Pick: survey, choose the block, pick it. The
- * operator's gripper nodes go inside it as children and run at the grip.
+ * Program tab → URCaps → RealSense Pick: look from the picture points, find the part by its
+ * size, pick the next one in order. Its children are the routine after the pick (or, with
+ * the gripper set to "my own nodes", the gripper's Close, run at the grip).
  */
 public class PickService implements SwingProgramNodeService<PickContribution, PickView> {
     @Override
