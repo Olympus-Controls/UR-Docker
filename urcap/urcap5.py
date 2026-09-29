@@ -31,7 +31,7 @@ maven-bundle-plugin; this does the same steps with ``javac`` / ``jdeps`` and
 
     python3 urcap/urcap5.py sdk
     python3 urcap/urcap5.py package urcap/realsense-pilot-ps5 --out urcap/dist
-    python3 urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-0.4.0.urcap \
+    python3 urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-0.5.0.urcap \
         --container ur-utils-ursim-e-ur3e
 """
 
@@ -318,7 +318,7 @@ def package(src: str | Path, out_dir: str | Path, *, sdk_dir: Path = SDK_DIR) ->
 
 
 def dist_name(props: dict[str, str]) -> str:
-    """The jar's file name for these bundle properties: ``realsense-pilot-ps5-0.4.0.urcap``."""
+    """The jar's file name for these bundle properties: ``realsense-pilot-ps5-0.5.0.urcap``."""
     artifact = props["Bundle-SymbolicName"].rpartition(".")[2]
     name = "realsense-pilot-ps5" if artifact == "realsensepilot" else artifact
     return f"{name}-{props['Bundle-Version']}.urcap"

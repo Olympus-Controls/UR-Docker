@@ -1,15 +1,19 @@
 # RealSense Pilot for PolyScope 5 (e-Series)
 
-The same operator tool as the PolyScope X node in `../realsense-pilot/`, for an e-Series
-robot on PolyScope 5: the wrist RealSense feed inside PolyScope, tap a point, and send
-the arm there. It is an **Installation node** (Installation tab → URCaps → RealSense
-Pilot), the PolyScope 5 counterpart of PolyScope X's Application node.
+Vision-guided picking for an e-Series robot on PolyScope 5, with a RealSense D435 on the
+wrist and a small camera computer beside the robot (`deploy/pi/`). Two nodes:
 
-Download: [`../dist/realsense-pilot-ps5-0.4.0.urcap`](../dist/realsense-pilot-ps5-0.4.0.urcap)
+- **RealSense Pick** (Program tab → URCaps): finds the part by its size in the picture from
+  any number of picture points and picks the next one in the order you choose.
+- **RealSense Pilot** (Installation tab → URCaps): the camera computer's address, the live
+  feed (tap a point, send the arm there), the **pick areas** taught with the fingertips,
+  and the **reach**.
+
+Download: [`../dist/realsense-pilot-ps5-0.5.0.urcap`](../dist/realsense-pilot-ps5-0.5.0.urcap)
 
 ## Install on the robot
 
-1. Copy `realsense-pilot-ps5-0.4.0.urcap` to a USB stick and plug it into the pendant.
+1. Copy `realsense-pilot-ps5-0.5.0.urcap` to a USB stick and plug it into the pendant.
 2. Settings (☰ top right) → System → URCaps → **+** → pick the file → Open, then
    **Restart** when PolyScope asks.
 3. Installation tab → URCaps → **RealSense Pilot**.
@@ -50,31 +54,92 @@ jar — the URCap API jars are UR's and live only in the URSim image — it runs
 committed jar of that version exists, carries the current sources' digest, and passes
 PolyScope 5's install checks; then the URCap tests. So: bump `Bundle-Version`, `make
 urcap5-package`, commit `dist/`, then tag. The Python package's `v*` tags are a separate line.
-## RealSense Pick: tell it the part's size
+## RealSense Pick (0.5.0): find the part by its size, pick in order
 
-The **RealSense Pick** program node (Program tab → URCaps) finds white blocks by colour and
-depth. Without a part size it takes anything block-sized (the foam blocks' fixed gate:
-at most 70 × 60 mm). Give it the part's rough size **as it lies on the table** — **Length**
-and **Width** (the footprint, either way round), optionally **Height** (how far its top
-stands above the table), and a **Tolerance** (default ±25 %, never tighter than ±5 mm) —
-and it considers only candidates that size, both on the teach screen and when the program
-runs:
+![The Pick node's main screen](screens/pick-main.png)
 
-- the feed rings the matching parts green and the rest grey and dashed, labelled with what
-  they measured and why they are out (`43×43 mm too short`, `2 parts touching?`, `too flat`);
-- tapping a ruled-out one says so; the program picks the matching part nearest the tap;
-- the height tells a block from a flat look-alike of the same footprint (a sticker, a
-  label, a sheet) and is measured from the surface around the part — when no surface is
-  visible there the height is simply not checked;
-- with a height set, a grip depth that would put the fingertips on the table is refused
-  before the program can run;
-- a run that sees white things but none the part's size stops with its own reason
-  (status −7, "nothing the size of the part"), not "no block in view".
+*Rendered off-pendant from the same Swing classes (`PickScreen`), 1000 × 560, with a
+ray-cast scene through the real detector. The first look at it on a pendant is still owed.*
 
-On the wire the node adds `part=60x40x30 tol=25` to its `FIND` / `REFINE` lines
-(`perception/partspec.py`; the cockpit's `/api/pick/detect?part=…&tol=…` and
-`/api/pick/preview` `{"part", "tol"}` take the same). Larger parts than a foam block are
-fine — the size replaces the fixed gate — but the part must still be white to the camera.
+**Program tab → URCaps → RealSense Pick.** One run of the node picks **one part**; put it in
+a loop. The screen is the live picture — most of it — with every part the program will
+pick outlined in green and **numbered in pick order**, the jaws (yellow) where the fingers
+close across the short side, and everything else it saw dashed grey with why not
+(`too long`, `2 parts touching?`, `out of reach`, `cut off by the edge of the picture`).
+The numbers are the pick server's own order, asked with exactly the options the program
+will send, so what you see is what it does.
+
+Beside the picture, all an operator does day to day:
+
+1. **Picture points** — as many as you like (up to 12). Move the arm to where the camera
+   sees the parts (≥ 0.25 m away: the D435 is blind closer) and tap **Add picture point
+   here**; PolyScope's own move screen confirms the position. **Go** moves back there,
+   **Here** retakes it, **✕** removes it. Tap a point's second line to choose the **pick
+   area** it looks at (taught in the Installation, below) or the live table. The program
+   visits the points in turn: an empty one sends the arm on to the next.
+2. **Pick order** — eight tiles: left→right or right→left, rows front→back or back→front,
+   or by columns. Front is the **bottom of the picture** as the pendant shows it. Tapping a
+   tile renumbers the parts on the picture at once.
+3. **Options** — every default, with a drawing that follows each change:
+
+![The Options view](screens/pick-options.png)
+
+| Group | Settings (default) |
+| ----- | ------------------ |
+| The part | length × width × height as it lies (50 × 30 × 30 mm), tolerance (±25 %, never tighter than ±5 mm) |
+| Approach and grip | **approach: fingertips 25 mm over the top, fingers fully open**; grip depth 15 mm; lift 60 mm; close look 90 mm |
+| Gripper | **Robotiq Hand-E** driven by the node (activated if it lost activation, opened fully while the arm travels, closed at the grip, object-detected check), a **digital output** (close = on), or **my own nodes** (0.4.0's contract: your Close nodes inside the node run at the grip); open width 50 mm, force, speed |
+| Motion and behaviour | speed (60 %), settle before the picture (0.2 s — shorter is a faster cycle), grasps per run (3), popup when nothing is picked, a routine per picture point |
+
+**What a run does:** force the TCP to the flange; open the gripper; ask the camera computer
+`NEXT` — a part it already saw sends the arm **straight to the close look** over it (no trip
+back to the picture point); otherwise `movej` to the picture point, settle, `FIND`. The close
+look re-measures the part from nearer (`LOOK` → `REFINE`, leaning 12° / 24° only if the
+controller's IK can't solve it straight down), then the approach (fingertips 25 mm over the
+top, fully open), down to the grip, close, lift. A close on nothing opens, lifts and tries
+the next part. Then `rs_pick_found = True`, `rs_pick_loc` = the picture point it came from,
+and the node's **children run — the routine after the pick** (place it…) with your TCP
+back. With **A routine per picture point** on, the node holds one **After picture N** child
+per point, each run only for parts from that point.
+
+**The detector** (`perception/volume.py`) is depth only — no colour threshold: a part is
+what stands the part's height above the surface, with a top face the part's length ×
+width. The surface is the picture point's **taught pick area** (its plane, nudged ≤ 15 mm to
+the live table) or, without one, the table found live (level in the base frame). Each
+part's minimum-area rectangle gives its centre and axes; the grasp is straight down, wrist
+turned so the fingers close across the short side. Parts outside the reach ring, outside
+the area, cut off by the picture's edge, wider than the open fingers or with no room for a
+finger beside them are reported, not picked.
+
+## Installation: pick areas and reach
+
+![The Installation's pick areas](screens/installation-areas.png)
+
+**Installation → URCaps → RealSense Pilot → Pick areas + reach.** A pick area is a patch of
+the work surface taught by **touching the table with the fingertips** at three points —
+its corner, a point along one edge (that edge is the area's X), a point on the far side —
+each through PolyScope's move screen. The node measures the fingertips from the flange
+(**Fingertip length**, 163 mm for the UR3e's Hand-E + adapter) whatever TCP PolyScope has
+active. An area tilted more than 2° from level is flagged: the table is flat, so tilt is a
+teaching error (a touch on a part, not the table).
+
+The **reach** ring: parts are picked only between the base's outer radius + the inner
+margin and the arm's rated reach − the outer margin (both 150 mm by default; UR3e: 214 to
+350 mm from the base axis). The map draws the base, the ring and every taught area, so an
+area out of reach shows at a glance.
+
+## The wire (pick server protocol 2)
+
+One line per request, one parenthesised list per answer (URScript's
+`socket_read_ascii_float`). Every request carries the node's options:
+`part=50x30x30 tol=25 order=LR,FB grip=15 stroke=50 [reach=0.214,0.350]
+[plane=p[…] area=300x200] node=<id> loc=<i> locs=<n> proto=2`
+(`perception/picknode.py` `parse_options`; the Java `PickScript.tokens` writes it, and a test
+reads the Java's tokens back with the Python parser). Verbs: `NEXT` (the queue), `FIND`,
+`LOOK`, `REFINE`, `LOG`. Answers: `(status, centre xyz, flange pose ×6, loc, order,
+remaining, L, W, H)`. The teach screen asks `GET /api/pick/scene?opts=<the same tokens>`
+(and `&approach_mm=` for **Check approach**, which answers the approach in PolyScope's
+active TCP for its hold-to-move screen).
 
 ## Build it
 
@@ -90,21 +155,20 @@ version (where PolyScope reads it). The API jars are UR's and are never committe
 jar is reproducible, and carries a digest of its sources so a test flags a stale
 `dist/` without a JDK.
 
-## Status (2026-09-27)
+## Status (2026-09-28, 0.5.0)
 
-- Compiles against PolyScope 5.26's own URCap API bundles; the bundle's manifest, pom and
-  imports are tested; the client's URL rules, JSON, target text, error messages, and its
-  HTTP against the real cockpit server are tested under a JDK.
-- `get_inverse_kin_has_solution` / `get_inverse_kin` with `tcp=` verified on the UR3e
-  (PolyScope 5.25.1).
-- **Loaded in URSim 5.26** (2026-09-27, `scripts/ursim-e-vm.sh`: the amd64 image in an x86_64
-  QEMU VM on the Mac): the bundle resolves and PolyScope registers the URCap, so the
-  manifest, the embedded pom's API version (1.9.0) and the `[1.0.0,2.0.0)` import ranges are
-  accepted. That load caught the one PolyScope-5-only bug so far: its own panel refuses
-  `setBorder` (`AuthorizationException: Method not supported from URCaps`); the node now
-  builds inside a panel it owns. **The node's screen has not been seen rendering yet** —
-  PolyScope's JVM crashes in JIT-compiled code under emulation — so the first look at it is
-  on the robot (`scripts/urcap5-usb.sh`, then the install steps above).
+- Compiles against PolyScope 5.26's own URCap API bundles with `-Xlint:all -Werror`; the
+  script, the option tokens, the order tiles, the plane and pose maths, the reach table
+  and the scene parsing are tested against the Python they stand for, under a JDK
+  (`tests/test_urcap5_pick.py`).
+- The screens are pure Swing (no UR API) and render in a harness; **not yet seen on a
+  pendant** — PolyScope's JVM crashes under emulation on the Mac, and CI checks the
+  bundle and the script, not pixels.
+- 0.4.0 nodes open in 0.5.0 with their survey position as picture point 1 and their
+  gripper nodes kept (gripper "my own nodes").
+- `get_inverse_kin_has_solution` / `get_inverse_kin` verified on the UR3e (PolyScope
+  5.25.1). The Robotiq socket commands are `urctl gripper`'s, verified on the UR3e +
+  Hand-E (2026-09-25); the node's own gripper sequence has not run on the robot yet.
 
 ## Tested PolyScope versions
 
@@ -112,7 +176,7 @@ Every change to the URCap runs on the newest patch of each of the newest three P
 minors, in URSim on GitHub's amd64 runners (`.github/workflows/urcap5-matrix.yml`;
 `docker-compose.ps5-matrix.yml`, `urcap/ps5_matrix.py`):
 
-| PolyScope | URSim image | Result (2026-09-28, URCap 0.4.0) |
+| PolyScope | URSim image | Result (2026-09-28) |
 | --------- | ----------- | -------------------------------- |
 | 5.24 | `ursim_e-series:5.24.0` | bundle Active, both node services registered, pick e2e PASS |
 | 5.25 | `ursim_e-series:5.25.2` | bundle Active, both node services registered, pick e2e PASS |

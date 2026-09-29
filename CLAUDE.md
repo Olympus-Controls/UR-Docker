@@ -247,6 +247,30 @@ non-white depth in a ring around the blob (unseen → not checked). Status −7 
 none that size; the teach screen draws the rejects grey with why. Still colour-segmented: the part
 must read white. Verified on synthetic scenes only.
 
+**The pick kit, 0.5.0 (`docs/pick-kit.md`, 2026-09-28).** The product line for a PolyScope 5
+cell: `hardware/BOM.md` (sourced, dated prices), the bracket, `deploy/pi/` (a Pi-class arm64
+camera computer on minimal Debian: librealsense built pinned, the cockpit as the
+`perception-cockpit` service on :7621/:7622, nftables; `scripts/deploy-pi.sh`, the
+`deploy-pick-pc` skill), and the URCap 0.5.0. **Detection is by volume**
+(`perception/volume.py`, depth only, no colour): what stands the part's height above the
+surface with a top face its length × width; the surface is a taught pick area (three
+fingertip touches in the Installation node, nudged ≤ 15 mm to the live table) or the table
+found live; each part's min-area rectangle gives the axes, the fingers close across the short
+side. `order_parts` numbers parts in the **picture's** directions (front = bottom of the
+picture). Reach = base outer radius + 150 mm .. rated reach − 150 mm (`Reach.for_model`).
+**Pick server protocol 2** (`picknode.parse_options`): every request carries
+`part= tol= order= grip= stroke= [reach=] [plane= area=] node= loc= locs= proto=2`, answers
+are 16 numbers; `NEXT` serves the per-node queue (the next part already seen: no trip to the
+picture point), `FIND` refills it. The Java `PickScript.tokens` writes the same line, and
+`tests/test_urcap5_pick.py` reads the Java's tokens back with the Python parser — change
+one, the test tells you about the other. The node's screens (`PickScreen`, `LocationsScreen`,
+`LiveView`, `Diagrams`, `Ui`) are pure Swing: render them off-pendant with a harness (the
+README's `screens/` came from one). The teach screen asks `GET /api/pick/scene?opts=<tokens>`.
+**PolyScope 5.24/5.25/5.26** run every URCap change in CI (`urcap5-matrix.yml`,
+`urcap/ps5_matrix.py`, offset ports in `docker-compose.ps5-matrix.yml`): Felix shell
+(`127.0.0.1:6666` in the container) proves the bundle Active — polyscope.log never says so —
+then `urcap/pick5_e2e.py` runs the node's own script, two picks, the second from the queue.
+
 **Monocular scan** (`perception scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
 that commit if the idea comes back.
