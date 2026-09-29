@@ -355,3 +355,59 @@ def test_the_reach_table_is_the_pythons(java_client, model):  # noqa: F811
         assert got is None
     else:
         assert got == pytest.approx([want.min_m, want.max_m])
+
+
+# -- older controllers (the PolyScope 5 matrix, 2026-09-29) ---------------------------------------
+
+
+def _reads(script: str) -> dict[str, set[int]]:
+    """Each variable a socket_read_ascii_float result is assigned to -> the counts it reads."""
+    out: dict[str, set[int]] = {}
+    for var, n in re.findall(r"(\w+) = socket_read_ascii_float\((\d+),", script):
+        out.setdefault(var, set()).add(int(n))
+    return out
+
+
+@pytest.mark.parametrize("polyscope", [None, [5, 4, 3], [5, 9, 4], [5, 26, 1]])
+@pytest.mark.parametrize("gripper", ["robotiq", "digital", "children"])
+def test_every_list_keeps_one_size(java_client, polyscope, gripper):  # noqa: F811
+    """PolyScope 5.9.4-5.14.6 stopped the node with "Resizing of 'List' is not supported" when rs_r
+    took the close look's 10 numbers after the 16 of FIND: every variable a read lands in
+    reads one count, always."""
+    spec = {"gripper": gripper} | ({"polyscope": polyscope} if polyscope else {})
+    script = pick(java_client, **spec)["script"]
+    reads = _reads(script)
+    assert reads and all(len(ns) == 1 for ns in reads.values()), reads
+    assert reads["rs_r"] == {16} and reads["rs_lk"] == {10}
+
+
+@pytest.mark.parametrize(
+    "polyscope, checked",
+    [
+        (None, True),  # unknown: the newest
+        ([5, 4, 3], False),
+        ([5, 8, 2], False),  # compile_error_name_not_found:get_inverse_kin_has_solution
+        ([5, 9, 0], False),  # no image to prove it: counted without
+        ([5, 9, 3], False),
+        ([5, 9, 4], True),  # the oldest image that compiles it
+        ([5, 10, 0], True),
+        ([5, 26, 1], True),
+        ([6, 0, 0], True),
+    ],
+)
+def test_the_ik_check_only_where_the_controller_has_it(java_client, polyscope, checked):  # noqa: F811
+    spec = {"polyscope": polyscope} if polyscope else {}
+    out = pick(java_client, **spec)
+    assert out["problem"] is None and balanced(out["script"])
+    assert ("get_inverse_kin_has_solution" in "\n".join(body(out["script"]))) is checked
+    # the close look and the approach still happen either way
+    assert out["script"].count("movej(get_inverse_kin(rs_look, get_actual_joint_positions())") == 1
+    assert "rs_go = True" in out["script"] and "movel(rs_hover" in out["script"]
+    if not checked:
+        assert (
+            f"# PolyScope {polyscope[0]}.{polyscope[1]}.{polyscope[2]}: no get_inverse_kin_has_solution"
+            in (out["script"])
+        )
+        assert (
+            "no IK for approach" not in out["script"] and "out of reach - looking again" not in out["script"]
+        )

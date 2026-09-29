@@ -89,6 +89,16 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         return api.getProgramAPI().getInstallationNode(PilotContribution.class);
     }
 
+    /** This PolyScope's {major, minor, bugfix}, or null when it won't say (the script then assumes the newest). */
+    int[] polyscopeVersion() {
+        try {
+            com.ur.urcap.api.domain.SoftwareVersion v = api.getSystemAPI().getSoftwareVersion();
+            return new int[] {v.getMajorVersion(), v.getMinorVersion(), v.getBugfixVersion()};
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** PolyScope's name for this arm ("UR3", ...), or "?" when it won't say. */
     String robotType() {
         try {
@@ -137,6 +147,7 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         s.orderRows = model.get(KEY_ORDER_ROWS, "FB");
         s.gripper = model.get(KEY_GRIPPER, "robotiq");
         s.popupOnFail = model.get(KEY_POPUP, true);
+        s.polyscope = polyscopeVersion();
         if (inst != null) {
             double[] reach = inst.reachLimits();
             if (reach != null) {

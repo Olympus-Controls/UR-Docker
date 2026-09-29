@@ -220,6 +220,11 @@ public class Harness {
                     s.reachMaxM = ((Number) ((List<?>) o.get("reach")).get(1)).doubleValue();
                 }
                 if (o.containsKey("popup")) s.popupOnFail = (Boolean) o.get("popup");
+                if (o.containsKey("polyscope")) {
+                    List<?> v = (List<?>) o.get("polyscope");
+                    s.polyscope = new int[v.size()];
+                    for (int i = 0; i < v.size(); i++) s.polyscope[i] = ((Number) v.get(i)).intValue();
+                }
                 if (o.containsKey("var")) s.foundVariable = (String) o.get("var");
                 Map<String, Object> m = new LinkedHashMap<String, Object>();
                 m.put("problem", s.problem());

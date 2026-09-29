@@ -146,6 +146,8 @@ final class PickScript {
     double reachMinM = 0; // 0 and 0: no reach limit sent (the Installation screen sets it)
     double reachMaxM = 0;
     boolean popupOnFail = true;
+    /** The PolyScope the script runs on ({major, minor, bugfix}), or null: the newest. */
+    int[] polyscope = null;
     String foundVariable = "rs_pick_found";
     String locVariable = "rs_pick_loc";
 
@@ -291,6 +293,31 @@ final class PickScript {
         return "children".equals(gripper);
     }
 
+    /**
+     * The oldest PolyScope known to have {@code get_inverse_kin_has_solution}: 5.8.2 does not
+     * compile it ({@code compile_error_name_not_found}), 5.9.4 does — the matrix's images,
+     * 2026-09-29; 5.9.0-5.9.3 have no image to try, so they count as without it.
+     */
+    static final int[] IK_CHECK_SINCE = {5, 9, 4};
+
+    /**
+     * Does the controller's own IK get asked before the close look and each lean of the
+     * approach? Before {@link #IK_CHECK_SINCE} it can't be: the arm takes the close look and
+     * the straight-down approach unchecked, and an unreachable one stops the program with
+     * PolyScope's own IK error instead of leaning.
+     */
+    boolean ikCheck() {
+        return polyscope == null || atLeast(polyscope, IK_CHECK_SINCE);
+    }
+
+    static boolean atLeast(int[] version, int[] since) {
+        for (int i = 0; i < since.length; i++) {
+            int v = i < version.length ? version[i] : 0;
+            if (v != since[i]) return v > since[i];
+        }
+        return true;
+    }
+
     // -- the script ----------------------------------------------------------------------
 
     /** The lines before the child nodes. */
@@ -307,6 +334,10 @@ final class PickScript {
         String la = f2(0.6 * k);
         s.add("# RealSense Pick " + VERSION + " - camera computer " + host + ":" + port + " - part " + partText()
                 + " - " + orderText(orderFirst, orderRows) + " - " + np + " picture point" + (np == 1 ? "" : "s"));
+        if (!ikCheck()) {
+            s.add("# PolyScope " + polyscope[0] + "." + polyscope[1] + "." + polyscope[2]
+                    + ": no get_inverse_kin_has_solution - the close look and the approach go unchecked");
+        }
         s.add(foundVariable + " = False");
         s.add(locVariable + " = 0");
         s.add("rs_tcp0 = get_tcp_offset()");
@@ -361,19 +392,28 @@ final class PickScript {
         s.add("      rs_look = pose_trans(rs_top, p[0, 0, " + m(-n("lookMm")) + ", 0, 0, 0])");
         s.add("      socket_send_line(str_cat(\"LOOK \", str_cat(to_str(get_actual_tcp_pose()), str_cat(\" \","
                 + " to_str(rs_c)))), \"" + SOCKET + "\")");
-        s.add("      rs_r = socket_read_ascii_float(10, \"" + SOCKET + "\", 10)");
-        s.add("      if rs_r[0] == 10:");
-        s.add("        if rs_r[1] == 1:");
-        s.add("          rs_look = p[rs_r[5], rs_r[6], rs_r[7], rs_r[8], rs_r[9], rs_r[10]]");
+        // its own list: up to PolyScope 5.14 a list keeps its first size ("Resizing of 'List' is
+        // not supported" when rs_r took 10 numbers after 16 — URControl.log of 5.9.4 .. 5.14.6 in
+        // the matrix, 2026-09-29; 5.15.2 on resize it)
+        s.add("      rs_lk = socket_read_ascii_float(10, \"" + SOCKET + "\", 10)");
+        s.add("      if rs_lk[0] == 10:");
+        s.add("        if rs_lk[1] == 1:");
+        s.add("          rs_look = p[rs_lk[5], rs_lk[6], rs_lk[7], rs_lk[8], rs_lk[9], rs_lk[10]]");
         s.add("        end");
         s.add("      end");
-        s.add("      if get_inverse_kin_has_solution(rs_look, get_actual_joint_positions()):");
-        s.add("        movej(get_inverse_kin(rs_look, get_actual_joint_positions()), a=" + ja + ", v=" + jv + ")");
-        s.add("        sleep(" + f2(n("settleS")) + ")");
-        say(s, "        ", "close look ", "rs_look", true);
-        s.add("      else:");
-        say(s, "        ", "the close look is out of reach - looking again from here", null, true);
-        s.add("      end");
+        if (ikCheck()) {
+            s.add("      if get_inverse_kin_has_solution(rs_look, get_actual_joint_positions()):");
+            s.add("        movej(get_inverse_kin(rs_look, get_actual_joint_positions()), a=" + ja + ", v=" + jv + ")");
+            s.add("        sleep(" + f2(n("settleS")) + ")");
+            say(s, "        ", "close look ", "rs_look", true);
+            s.add("      else:");
+            say(s, "        ", "the close look is out of reach - looking again from here", null, true);
+            s.add("      end");
+        } else {
+            s.add("      movej(get_inverse_kin(rs_look, get_actual_joint_positions()), a=" + ja + ", v=" + jv + ")");
+            s.add("      sleep(" + f2(n("settleS")) + ")");
+            say(s, "      ", "close look ", "rs_look", true);
+        }
         s.add("      rs_leans = [0, 12, 24]");
         s.add("      rs_lean = 0");
         s.add("      rs_go = False");
@@ -394,13 +434,17 @@ final class PickScript {
         s.add("          rs_hover = pose_trans(rs_top, p[0, 0, " + m(-n("approachMm")) + ", 0, 0, 0])");
         s.add("          rs_grip = pose_trans(rs_top, p[0, 0, " + m(n("gripBelowTopMm")) + ", 0, 0, 0])");
         s.add("          rs_lift = pose_trans(rs_top, p[0, 0, " + m(-n("liftMm")) + ", 0, 0, 0])");
-        s.add("          rs_q = get_actual_joint_positions()");
-        s.add("          if get_inverse_kin_has_solution(rs_hover, rs_q) and get_inverse_kin_has_solution(rs_grip,"
-                + " rs_q) and get_inverse_kin_has_solution(rs_lift, rs_q):");
-        s.add("            rs_go = True");
-        s.add("          else:");
-        say(s, "            ", "no IK for approach + grip + lift at lean ", "rs_leans[rs_lean]", true);
-        s.add("          end");
+        if (ikCheck()) {
+            s.add("          rs_q = get_actual_joint_positions()");
+            s.add("          if get_inverse_kin_has_solution(rs_hover, rs_q) and get_inverse_kin_has_solution(rs_grip,"
+                    + " rs_q) and get_inverse_kin_has_solution(rs_lift, rs_q):");
+            s.add("            rs_go = True");
+            s.add("          else:");
+            say(s, "            ", "no IK for approach + grip + lift at lean ", "rs_leans[rs_lean]", true);
+            s.add("          end");
+        } else {
+            s.add("          rs_go = True");
+        }
         s.add("          rs_lean = rs_lean + 1");
         s.add("        else:");
         s.add("          rs_lean = 3");

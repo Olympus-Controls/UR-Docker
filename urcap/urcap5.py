@@ -198,7 +198,7 @@ def sources_digest(src: Path) -> str:
 
 def version_key(version: str) -> tuple[int, ...]:
     """``"5.8"`` / ``"5.10.2"`` / ``"1.19.0"`` → ``(5, 8)`` / ``(5, 10, 2)`` — numeric, never lexical."""
-    if not re.fullmatch(r"\d{1,4}(\.\d{1,4}){1,3}", version or ""):
+    if not re.fullmatch(r"[0-9]{1,4}(\.[0-9]{1,4}){1,3}", version or ""):  # not \d: it takes any script
         raise Urcap5Error(f"{version!r} is not a version like 5.8 or 5.10.2")
     return tuple(int(p) for p in version.split("."))
 
@@ -285,7 +285,7 @@ def split_image(image: str) -> tuple[str, str]:
         repo = IMAGE_REPO
     elif "/" not in repo:
         repo = "universalrobots/" + repo
-    if not re.fullmatch(r"[\w][\w.-]{0,127}", tag):
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", tag):  # a Docker tag, ASCII only
         raise Urcap5Error(f"{image!r} has no image tag")
     return repo, tag
 
