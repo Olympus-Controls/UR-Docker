@@ -5,15 +5,20 @@
 #
 # build: the committed urcap/dist/realsense-pilot-ps5-*.urcap is rebuilt against the OLDEST
 #   supported PolyScope's URCap API jars (bundle.properties compat.floor; each
-#   compat.since group against its version's) and must come out byte-identical — so the
-#   jar that ships uses nothing the oldest PolyScope lacks. The jars come straight from
-#   Docker Hub's registry (urcap5.py sdk; no Docker).
+#   compat.since group against its version's) with a different JDK from the one that built
+#   the committed jar, and must be the same jar (`urcap5.py compare`: entries, non-class
+#   bytes, the members the sources declare) — so the jar that ships uses nothing the oldest
+#   PolyScope lacks. The jars come straight from Docker Hub's registry (urcap5.py sdk).
 # matrix: per version, `urcap5.py check` against that image's own API jars (the sources it
 #   loads compile, every package the jar imports is exported), then boot URSim with the jar
 #   in /urcaps, check PolyScope started the bundle with no exception from its package, bring
 #   the arm up and run the Pick node's own URScript against a local pick server
 #   (urcap/pick5_e2e.py), plus a compile probe of the Robotiq + popup script. amd64 runners:
 #   the image is amd64-only and does not run under Docker Desktop's emulation on Apple silicon.
+#
+# gate ("URCap5 gate", a required check on dev): passes at once on a PR that touches none of
+#   the URCap's paths (Nick, 2026-09-28: the matrix must not block unrelated PRs), and on one
+#   that does only when build and every version pass — a red build can't auto-merge.
 #
 # Weekly, `ps5_matrix.py check-tags` fails when Docker Hub has a PolyScope 5 minor the
 # matrix lacks, or a newer image of one it has ("PolyScope 5.27 exists (...): add it").
@@ -22,13 +27,9 @@
 name: URCap5 matrix
 
 on:
+  # every PR: `changes` decides whether the URCap's paths are touched, and `gate` answers for
+  # both cases, so the gate can be a required check without blocking unrelated PRs
   pull_request:
-    paths:
-      - "urcap/**"
-      - "perceptronics/picknode.py"
-      - "perceptronics/volume.py"
-      - "docker-compose.ps5-matrix.yml"
-      - ".github/workflows/urcap5-matrix.yml"
   push:
     branches: ["feature/ps5-*"]
   schedule:
@@ -55,7 +56,33 @@ jobs:
       - name: the matrix has every PolyScope 5 minor on Docker Hub, at its newest image
         run: python3 urcap/ps5_matrix.py check-tags
 
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.diff.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: does this change touch the URCap's paths?
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          changed=$(git diff --name-only "origin/$BASE...HEAD")
+          echo "$changed"
+          if echo "$changed" | grep -qE '^(urcap/|perceptronics/(picknode|volume|synthscene|partspec)\.py$|docker-compose\.ps5-matrix\.yml$|\.github/workflows/urcap5-matrix\.yml$)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
   setup:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     outputs:
       versions: ${{ steps.list.outputs.versions }}
@@ -68,6 +95,8 @@ jobs:
         run: echo "versions=$(python3 urcap/ps5_matrix.py list)" >> "$GITHUB_OUTPUT"
 
   build:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     name: build against the oldest PolyScope's API
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -143,3 +172,21 @@ jobs:
           name: urcap5-matrix-${{ matrix.polyscope }}
           path: ps5-artifacts/
           if-no-files-found: ignore
+
+  gate:
+    name: URCap5 gate
+    if: always()
+    needs: [changes, build, matrix]
+    runs-on: ubuntu-latest
+    steps:
+      - name: the URCap's checks passed, or the change doesn't touch the URCap
+        env:
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          CHANGES: ${{ needs.changes.result }}
+          BUILD: ${{ needs.build.result }}
+          MATRIX: ${{ needs.matrix.result }}
+        run: |
+          echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD matrix=$MATRIX"
+          [ "$CHANGES" = success ] || { echo "::error::could not tell what changed"; exit 1; }
+          if [ "$RELEVANT" != true ]; then echo "no URCap paths touched"; exit 0; fi
+          [ "$BUILD" = success ] && [ "$MATRIX" = success ] || { echo "::error::build=$BUILD matrix=$MATRIX"; exit 1; }
