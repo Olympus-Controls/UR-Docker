@@ -49,6 +49,8 @@ IMAGE = "universalrobots/ursim_e-series"
 HUB_TAGS = f"https://hub.docker.com/v2/repositories/{IMAGE}/tags?page_size=100"
 PACKAGE = "com.olympuscontrols.realsensepilot"
 MATRIX_SIZE = 3
+# `sudo docker` where the user is not in the docker group (the Makefile passes its DOCKER).
+DOCKER = os.environ.get("DOCKER", "docker").split()
 
 
 @dataclass(frozen=True)
@@ -198,7 +200,7 @@ def urcap_signal(log: str, package: str = PACKAGE) -> dict:
 def _compose(
     v: Version, *args: str, check: bool = True, timeout: float = 1800
 ) -> subprocess.CompletedProcess:
-    cmd = ["docker", "compose", "-f", str(COMPOSE_FILE), "-p", v.project, *args]
+    cmd = [*DOCKER, "compose", "-f", str(COMPOSE_FILE), "-p", v.project, *args]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     if check and r.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd[3:])} failed: {r.stderr.strip()[-2000:]}")
@@ -211,7 +213,7 @@ def _container(v: Version) -> str:
 
 def _exec(v: Version, script: str, timeout: float = 60) -> str:
     r = subprocess.run(
-        ["docker", "exec", _container(v), "sh", "-c", script],
+        [*DOCKER, "exec", _container(v), "sh", "-c", script],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -271,7 +273,7 @@ def gateway(v: Version) -> str:
     """The address the container reaches this machine at: its network's gateway."""
     r = subprocess.run(
         [
-            "docker",
+            *DOCKER,
             "inspect",
             "-f",
             "{{range .NetworkSettings.Networks}}{{.Gateway}} {{end}}",
@@ -305,7 +307,7 @@ def collect(v: Version, out: Path) -> list[str]:
     for src in ("/ursim/polyscope.log", "/ursim/URControl.log"):
         dst = out / Path(src).name
         r = subprocess.run(
-            ["docker", "cp", f"{_container(v)}:{src}", str(dst)], capture_output=True, check=False
+            [*DOCKER, "cp", f"{_container(v)}:{src}", str(dst)], capture_output=True, check=False
         )
         if r.returncode == 0:
             saved.append(str(dst))
