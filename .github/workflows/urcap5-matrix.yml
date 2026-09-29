@@ -1,0 +1,97 @@
+# The PolyScope 5 (e-Series) URCap on every supported PolyScope 5 release: the newest
+# patch of each of the newest three minors (urcap/ps5_matrix.py MATRIX,
+# docker-compose.ps5-matrix.yml). Per version: boot URSim with the committed
+# urcap/dist/realsense-pilot-ps5-*.urcap in /urcaps, check PolyScope started the bundle
+# with no exception from its package, bring the arm up and run the Pick node's own
+# URScript against a local pick server (urcap/pick5_e2e.py). amd64 runners: the image is
+# amd64-only and does not run under Docker Desktop's emulation on Apple silicon.
+#
+# Weekly, `ps5_matrix.py check-tags` fails when Docker Hub has a newer PolyScope 5 minor
+# or patch than the matrix names ("PolyScope 5.27 exists: add it and drop 5.24").
+
+name: URCap5 matrix
+
+on:
+  pull_request:
+    paths:
+      - "urcap/**"
+      - "perception/picknode.py"
+      - "perception/volume.py"
+      - "docker-compose.ps5-matrix.yml"
+      - ".github/workflows/urcap5-matrix.yml"
+  push:
+    branches: ["feature/ps5-*"]
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: urcap5-matrix-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tags:
+    # Docker Hub vs the matrix. Not on pull requests: a UR release must not block
+    # unrelated PRs; the schedule (and a push to a feature/ps5-* branch) reports it.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: the matrix is the newest three PolyScope 5 minors on Docker Hub
+        run: python3 urcap/ps5_matrix.py check-tags
+
+  matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        polyscope: ["5.24", "5.25", "5.26"]
+    name: PolyScope ${{ matrix.polyscope }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+
+      # pick5_e2e compiles the node's PickScript with `javac --release 8` (Java 8
+      # bytecode, what PolyScope 5's JRE 1.8.0_371 runs); any JDK 9+ does that.
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: the matrix names this version
+        env:
+          POLYSCOPE: ${{ matrix.polyscope }}
+        run: uv run python urcap/ps5_matrix.py list | python3 -c 'import json, os, sys; v = os.environ["POLYSCOPE"]; sys.exit(0 if v in json.load(sys.stdin) else f"{v} is not in ps5_matrix.MATRIX: keep the workflow matrix and MATRIX in step")'
+
+      - name: URCap + pick e2e on PolyScope ${{ matrix.polyscope }}
+        env:
+          POLYSCOPE: ${{ matrix.polyscope }}
+          PS5_MATRIX_COLLECT: "1"
+        run: uv run python urcap/ps5_matrix.py run --version "$POLYSCOPE" --artifacts ps5-artifacts --report "ps5-artifacts/report-$POLYSCOPE.json"
+
+      - name: tear down (always, with volumes)
+        if: always()
+        env:
+          POLYSCOPE: ${{ matrix.polyscope }}
+        run: uv run python urcap/ps5_matrix.py down --version "$POLYSCOPE"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: urcap5-matrix-${{ matrix.polyscope }}
+          path: ps5-artifacts/
+          if-no-files-found: ignore

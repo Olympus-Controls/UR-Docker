@@ -14,7 +14,10 @@ result variable.
     uv run python urcap/pick5_e2e.py --host 10.0.0.5 --reach-back 192.168.3.10   # other sims
 
 ``--reach-back`` is the address the *controller* uses to reach this machine
-(10.0.2.2 from inside the QEMU VM). It moves the arm: a simulator only.
+(10.0.2.2 from inside the QEMU VM; the docker network's gateway for a local URSim
+container, where ``--bind`` must be that address too so the container can connect).
+``--dash-port`` / ``--primary-port`` reach a sim published on offset ports
+(``urcap/ps5_matrix.py``). It moves the arm: a simulator only.
 """
 
 from __future__ import annotations
@@ -78,7 +81,11 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1", help="the simulator (Primary/Dashboard)")
     ap.add_argument("--reach-back", default="10.0.2.2", help="this machine, as the controller reaches it")
     ap.add_argument("--port", type=int, default=7623, help="pick server port for the run")
+    ap.add_argument("--bind", default="127.0.0.1", help="pick server bind address")
+    ap.add_argument("--dash-port", type=int, default=None, help="default UR_DASH_PORT or 29999")
+    ap.add_argument("--primary-port", type=int, default=None, help="default UR_PRIMARY_PORT or 30001")
     args = ap.parse_args()
+    ports = {"dashboard_port": args.dash_port, "primary_port": args.primary_port}
 
     frame = scene([(40, 30, 70, 54)])
     seq = {"n": 0}
@@ -96,10 +103,10 @@ def main() -> int:
         min_radius_m=0.0,
         log=lambda text, ok: log.append(text),
     )
-    server = PickServer("127.0.0.1", args.port, planner)
+    server = PickServer(args.bind, args.port, planner)
     server.start()
     try:
-        robot = Robot(RobotConfig(host=args.host))
+        robot = Robot(RobotConfig.from_env(host=args.host, **{k: v for k, v in ports.items() if v}))
         up = robot.bring_up()
         print("bring-up:", up.get("ok"), up.get("robot_mode") or "", up.get("safety_mode") or "")
         children = '      textmsg("rs_e2e/child=", get_actual_tcp_pose())'
