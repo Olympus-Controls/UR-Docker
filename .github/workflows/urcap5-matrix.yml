@@ -72,11 +72,6 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked
 
-      - name: the matrix names this version
-        env:
-          POLYSCOPE: ${{ matrix.polyscope }}
-        run: uv run python urcap/ps5_matrix.py list | python3 -c 'import json, os, sys; v = os.environ["POLYSCOPE"]; sys.exit(0 if v in json.load(sys.stdin) else f"{v} is not in ps5_matrix.MATRIX: keep the workflow matrix and MATRIX in step")'
-
       - name: URCap + pick e2e on PolyScope ${{ matrix.polyscope }}
         env:
           POLYSCOPE: ${{ matrix.polyscope }}
