@@ -24,8 +24,6 @@
 - 2026-09-27 — First PolyScope 5 install of `realsense-pilot-ps5-0.1.0.urcap`: the first try on the UR3e was refused (no `Bundle-Category: URCap`, fixed 1892a21). The fixed build is on the "URE MODELS" stick (sha256 6e0318817a1e…): Settings → System → URCaps → + → Restart. Past the file checks the installer still runs a compatibility check and a trial OSGi install, and the node has never rendered on a PolyScope 5 pendant.
 - 2026-09-27 — PS5 **RealSense Pick** node 0.3.0 (auto survey = first look from where the arm is, then halfway toward the block, centred; every stage logged; popup on failure) is on the "URE MODELS" stick. Its URScript has **not run on a controller yet**: did it install and pick? The first run's trace is in `~/Library/Logs/perceptronics/pick-server.log` (or `GET http://192.168.3.10:7631/api/pick/log`).
 - 2026-09-27 — Delete the stale pre-rebase `feature/urcap5-pick-node` on the fork? Everything in it is in `refactor/prune-2026-09-25` (4df4259).
-- 2026-09-28 — PR #3 (`ci/urcap5-release`, merged as d5b396c): `urcap5-v<version>` tags publish the committed `.urcap` as a GitHub Release. Cut the first one: `git tag urcap5-v0.3.0 d5b396c && git push fork urcap5-v0.3.0`?
-- 2026-09-28 — "Yes get git of the 0.3.0 URCap": cut the `urcap5-v0.3.0` GitHub Release (`git tag urcap5-v0.3.0 d5b396c && git push fork urcap5-v0.3.0`), or get rid of 0.3.0 (the ps5 branches already replace `urcap/dist/realsense-pilot-ps5-0.3.0.urcap` with 0.4.0)?
 
 ## After the demo (2026-09-28)
 
@@ -39,6 +37,7 @@
 
 ## Decisions (so they don't get re-asked)
 
+- 2026-09-28 — **No 0.3.0 URCap release** (Nick): the `urcap5-v0.3.0` GitHub Release and tag (cut 12:30 from 174959b) were deleted. The committed `urcap/dist/realsense-pilot-ps5-0.3.0.urcap` stays until the ps5 branches replace it with 0.4.0 (the source is still 0.3.0 and a test pins the build).
 - 2026-09-28 — The fork is **JimothyJohn/perceptronics** (renamed from universal-perceptronics). The numpy/OpenCV/Pillow extra is **`vision`** (`uv sync --extra vision`). The repo has a **`dev`** branch (cut from main 174959b) protected by the single `gate` check; PRs go to dev, dev → main is Nick's merge.
 - 2026-09-28 — **Operator UI rule (Nick):** extremely user friendly — minimal clicks and input; the user is prompted through **at most 3 simple stages** with plenty of visual feedback. Applies to the URCap nodes' screens.
 - 2026-09-28 — Pick segmentation goes **depth-above-the-table**, the table **fitted live in every frame** (no setup step; follows a pedestal/table change); part size stays as the filter.
