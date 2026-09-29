@@ -45,6 +45,8 @@
 
 ## Decisions (so they don't get re-asked)
 
+- 2026-09-29 — Claude merges PRs itself once every check is green (Nick: "You do all of the merging automatically once they complete their CICD loops"). `dev` requires `gate` + `URCap5 gate`; the URCap matrix answers every PR, instantly when the URCap isn't touched.
+
 - 2026-09-28 — **No 0.3.0 URCap release** (Nick): the `urcap5-v0.3.0` GitHub Release and tag (cut 12:30 from 174959b) were deleted. The committed `urcap/dist/realsense-pilot-ps5-0.3.0.urcap` stays until the ps5 branches replace it with 0.4.0 (the source is still 0.3.0 and a test pins the build).
 - 2026-09-28 — The fork is **JimothyJohn/perceptronics** (renamed from universal-perceptronics). The numpy/OpenCV/Pillow extra is **`vision`** (`uv sync --extra vision`). The repo has a **`dev`** branch (cut from main 174959b) protected by the single `gate` check; PRs go to dev, dev → main is Nick's merge.
 - 2026-09-29 — PS5 backwards compatibility (Nick): on 5.4–5.7 a pick area taught by touch uses the **nominal DH** (no calibration) — **accurate enough**; 5.9.0–5.9.3 (no image) are treated as **lacking the IK check** — fine; `check-tags` **compares the version inside each image** (`IMAGE_VERSIONS`); the committed jar is checked by **comparing compiled classes** (`urcap5.py compare`), not bytes, and CI rebuilds it with a different JDK to prove it.

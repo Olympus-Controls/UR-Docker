@@ -847,6 +847,12 @@ runs and one that pops "cannot reach the required pose" mid-cycle.
 
 ## Working in this repo
 
+**Required checks on `dev`: `gate` and `URCap5 gate`** (2026-09-29). `URCap5 gate`
+(`urcap5-matrix.yml`) passes at once on a PR that doesn't touch the URCap's paths and only on a
+green `build` + every PolyScope version on one that does — so auto-merge can't land a red
+URCap and the matrix never blocks unrelated PRs. Before a new required job, make sure it runs
+(and answers) on every PR, or it blocks the ones it skips.
+
 **CI/CD** (`.github/`): every PR runs lint (ruff check + format, shellcheck),
 unit tests on Python 3.10/3.12/3.14, and a packaging job that builds the wheel,
 verifies it carries `perceptronics/webui/` + the vendored `_urp_convert.py`, and
