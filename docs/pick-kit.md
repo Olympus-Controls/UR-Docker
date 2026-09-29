@@ -15,6 +15,9 @@ across its short side.
 | Self-deploy | [`.claude/skills/deploy-pick-pc/`](../.claude/skills/deploy-pick-pc/SKILL.md) | Claude Code deploys, checks, updates or rolls back the camera computer: "deploy the pick PC at 192.168.3.10" |
 | Tested PolyScope | [`.github/workflows/urcap5-matrix.yml`](../.github/workflows/urcap5-matrix.yml) | Every change: the URCap loads and the node's own URScript picks on PolyScope 5.24, 5.25 and 5.26 (URSim) |
 
+**See it first, on a desktop:** `uv run python urcap/preview5.py` opens the pendant's screens
+in a window, fed by a simulated camera computer (or `--cockpit http://<ip>:7621`, a real one).
+
 ## Setting up a cell
 
 1. **Mount the camera.** Print `d435_tool_bracket_eseries.stl` (the BOM names the

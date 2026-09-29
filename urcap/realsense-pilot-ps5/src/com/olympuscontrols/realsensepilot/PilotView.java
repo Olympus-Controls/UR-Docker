@@ -252,6 +252,8 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
             @Override
             public void run() {
                 dot.setForeground(live ? LIVE : DEAD);
+                feed.live = live;
+                feed.repaint();
                 String f = "";
                 if (live && framesPerSecond != null) {
                     try {
@@ -356,6 +358,7 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
         private static final int H = 362; // 848×480 scaled to 640 wide
         transient volatile BufferedImage image;
         volatile String hover = "hover for depth · tap a point";
+        volatile boolean live;
         int markX = -1;
         int markY = -1;
 
@@ -411,7 +414,13 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
             g.fillRect(0, 0, getWidth(), getHeight());
             BufferedImage img = image;
             Rectangle r = drawn();
-            if (img != null && r != null) g.drawImage(img, r.x, r.y, r.width, r.height, null);
+            if (img == null || !live) {
+                LiveView.paintNoCamera(g, getWidth(), getHeight(),
+                        "Check the camera computer's address above, and its camera's USB 3 cable.");
+                g.dispose();
+                return;
+            }
+            if (r != null) g.drawImage(img, r.x, r.y, r.width, r.height, null);
             if (markX >= 0) {
                 g.setColor(new Color(0, 0, 0, 128));
                 g.setStroke(new BasicStroke(4f));

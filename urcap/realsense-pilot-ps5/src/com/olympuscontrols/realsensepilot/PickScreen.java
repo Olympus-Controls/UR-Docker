@@ -131,7 +131,6 @@ final class PickScreen extends JPanel {
         p.add(live, BorderLayout.CENTER);
 
         JPanel side = Ui.column();
-        side.setPreferredSize(new Dimension(300, 10));
         JPanel head = new JPanel(new BorderLayout());
         head.setOpaque(false);
         head.add(Ui.label("RealSense Pick", 20f, true, Ui.INK), BorderLayout.WEST);
@@ -179,8 +178,6 @@ final class PickScreen extends JPanel {
         summary.add(sc, BorderLayout.CENTER);
         summary.setMaximumSize(new Dimension(292, 64));
         side.add(Ui.left(summary));
-        side.add(Box.createVerticalGlue());
-        side.add(Box.createVerticalStrut(8));
         JPanel buttons = new JPanel(new GridLayout(1, 2, 6, 0));
         buttons.setOpaque(false);
         JButton opts = Ui.button("Options", Ui.Style.SECONDARY);
@@ -190,9 +187,13 @@ final class PickScreen extends JPanel {
         check.addActionListener(e -> actions.checkApproach());
         buttons.add(opts);
         buttons.add(check);
-        buttons.setMaximumSize(new Dimension(292, Ui.TAP));
-        side.add(Ui.left(buttons));
-        p.add(side, BorderLayout.EAST);
+        // the list packs to the top at any screen height; the two buttons stay at the bottom
+        JPanel sidebar = new JPanel(new BorderLayout(0, 8));
+        sidebar.setOpaque(false);
+        sidebar.setPreferredSize(new Dimension(300, 10));
+        sidebar.add(side, BorderLayout.NORTH);
+        sidebar.add(buttons, BorderLayout.SOUTH);
+        p.add(sidebar, BorderLayout.EAST);
         return p;
     }
 
@@ -396,8 +397,8 @@ final class PickScreen extends JPanel {
             summaryPart.setText("Part " + Ui.value(Math.max(s.n("partLengthMm"), s.n("partWidthMm")), "") + " × "
                     + Ui.value(Math.min(s.n("partLengthMm"), s.n("partWidthMm")), "") + " × "
                     + Ui.value(s.n("partHeightMm"), "mm") + "  ±" + Ui.value(s.n("partTolPct"), "%"));
-            summaryApproach.setText("fingers open " + Ui.value(s.n("approachMm"), "mm") + " over the top, grip "
-                    + Ui.value(s.n("gripBelowTopMm"), "mm") + " down");
+            summaryApproach.setText("open, " + Ui.value(s.n("approachMm"), "mm") + " over the top · grip "
+                    + Ui.value(s.n("gripBelowTopMm"), "mm"));
             for (PickScript.Num n : PickScript.NUMBERS) {
                 current.put(n.key, s.n(n.key));
                 Ui.Stepper st = steppers.get(n.key);

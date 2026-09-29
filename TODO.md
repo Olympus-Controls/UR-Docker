@@ -32,14 +32,10 @@
 - 2026-09-27 — Delete the stale pre-rebase `feature/urcap5-pick-node` on the fork? Everything in it is in `refactor/prune-2026-09-25` (4df4259).
 - 2026-09-28 — Draft PR JimothyJohn/universal-perceptronics#3 (`ci/urcap5-release`): `urcap5-v<version>` tags publish the committed `.urcap` as a GitHub Release. After it merges, cut the first one: `git tag urcap5-v0.3.0 <merge> && git push fork urcap5-v0.3.0`.
 
-- 2026-09-28 — PS5 pick product (`feature/ps5-pick-product`): **reach** read as *min* = the base's outer radius + 150 mm (UR3e Ø128 → 214 mm from the base axis), *max* = the rated reach − 150 mm (UR3e 350 mm); both margins editable in the Installation screen. Right?
-- 2026-09-28 — **Pick order** directions are the picture's, as the pendant shows it: Left/Right = the screen's, **Front → Back = bottom of the picture → top**. The numbers drawn on the parts make it visible either way — or should it be the robot base frame?
 - 2026-09-28 — One **RealSense Pick node run = one part**: it goes to the picture points in turn until one shows a part, picks the first in the chosen order, runs its children (the after-pick routine), and the next run goes straight to the close look over the next part it already saw (no trip back to the picture point) — faster cycle. OK, or should one run clear every location?
-- 2026-09-28 — The node now drives the **Robotiq Hand-E itself** (fully open before the approach, close at the grip, object-detected check) through the controller-local Robotiq socket `urctl gripper` uses; "my own gripper nodes" stays an option. Right default?
 
-- 2026-09-28 — Pick PC (`deploy/pi/`, never run on a board yet): the BOM's primary PC is a **RevPi Connect 5**, which ships RevPi OS (Debian bookworm based) — the installer targets Raspberry Pi OS Lite / Debian arm64; is RevPi OS the target, or do we reflash? Also: bookworm's systemd 252 ignores the unit's restart back-off (trixie only) — OK, or target trixie? Leave the hand-eye line out of the PC's `cell.env` by default (else a fresh on-PC calibration loses to it)?
+- 2026-09-28 — Pick PC (`deploy/pi/`, never run on a board yet): bookworm's systemd 252 ignores the unit's restart back-off (trixie only) — OK, or target trixie? Leave the hand-eye line out of the PC's `cell.env` by default (else a fresh on-PC calibration loses to it)?
 - 2026-09-28 — The librealsense build fetches nlohmann/json, fastcdr, yaml-cpp and sqlite at configure time (first install needs internet). Turn off rosbag support to cut that, or ship a prebuilt `.deb` per board?
-- 2026-09-28 — Make the three `PolyScope 5.x` matrix jobs required checks on `dev`? They're path-filtered (`urcap/**`, `perception/picknode.py`, `perception/volume.py`), so as required checks they'd block PRs that never trigger them unless the filter goes.
 - 2026-09-28 — Bracket tool bolts: the BOM lists M6 × 16 low-head (plate 6 mm + Hand-E's M6 × 10 → the README's "+8 mm" gives only 2 mm more engagement vs the flange's 8 mm limit). Measure before ordering.
 
 ## After the demo (2026-09-28)
@@ -53,6 +49,9 @@
 - 2026-09-27 — `tests/test_handeye.py`: `test_robotlink_locate_then_move_goes_through_the_tool_registry` and `test_robotlink_approach_defaults_come_from_the_cell_env` have failed since b41d795 halved the accelerations: they expect `a=0.3`, the code sends 0.1.
 
 ## Decisions (so they don't get re-asked)
+
+- 2026-09-28 — Pick kit (Nick's answers): **reach** = base outer radius + 150 mm .. rated reach − 150 mm (as built); **pick order is FPV** — the directions of the camera's picture as the pendant shows it (as built); the Pick node **drives the Robotiq Hand-E itself** by default (as built); the camera computer's OS is **Debian** (arm64; the RevPi Connect 5 gets a Debian image, not RevPi OS); the PolyScope 5.x matrix jobs **must not block unrelated PRs** — they stay out of `dev`'s required checks (path-filtered, informational).
+- 2026-09-28 — With no camera, every view shows an unmistakable **NO CAMERA CONNECTED** test card (Nick); a simulated picture is stamped the same way.
 
 - 2026-09-28 — **Operator UI rule (Nick):** extremely user friendly — minimal clicks and input; the user is prompted through **at most 3 simple stages** with plenty of visual feedback. Applies to the URCap nodes' screens.
 - 2026-09-28 — Pick segmentation goes **depth-above-the-table**, the table **fitted live in every frame** (no setup step; follows a pedestal/table change); part size stays as the filter.

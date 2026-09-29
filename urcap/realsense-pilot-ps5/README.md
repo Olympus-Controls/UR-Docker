@@ -54,6 +54,21 @@ jar — the URCap API jars are UR's and live only in the URSim image — it runs
 committed jar of that version exists, carries the current sources' digest, and passes
 PolyScope 5's install checks; then the URCap tests. So: bump `Bundle-Version`, `make
 urcap5-package`, commit `dist/`, then tag. The Python package's `v*` tags are a separate line.
+## Try it on a desktop first
+
+    uv run python urcap/preview5.py                  # a simulated camera computer (a box scene)
+    uv run python urcap/preview5.py --shuffle 6      # ... re-scattering the parts every 6 s
+    uv run python urcap/preview5.py --cockpit http://192.168.3.10:7621   # the real one
+
+A 1280 × 800 window (the pendant's size) with the Pick node's and the Installation node's own
+screens: add picture points, tap the order tiles and watch the numbers change, open
+Options, teach pick areas. The numbers and reasons are the real detector's answers. What only
+a robot can do is stood in for (no arm moves; a pick area's touches are a sample rectangle;
+typed values come from a dialog). Needs a JDK. The simulated picture is stamped **NO CAMERA
+CONNECTED — SIMULATED TEST SCENE**, and whenever there is no live picture at all — on the
+pendant too — the view is a test card that says **NO CAMERA CONNECTED**, never a blank or a
+frozen frame.
+
 ## RealSense Pick (0.5.0): find the part by its size, pick in order
 
 ![The Pick node's main screen](screens/pick-main.png)

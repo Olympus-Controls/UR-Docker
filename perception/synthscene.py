@@ -118,9 +118,64 @@ def shade(w: int, h: int, depth: bytes, scale_m: float = 0.001) -> bytes:
     return bytes(out)
 
 
+# A 5 x 7 bitmap font: just enough to stamp a simulated picture as what it is.
+_GLYPHS = {
+    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "I": ("01110", "00100", "00100", "00100", "00100", "00100", "01110"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "-": ("00000", "00000", "00000", "11111", "00000", "00000", "00000"),
+    " ": ("00000",) * 7,
+}
+NO_CAMERA = "NO CAMERA CONNECTED - SIMULATED TEST SCENE"
+
+
+def banner_height(w: int, h: int, text: str = NO_CAMERA) -> int:
+    """How tall :func:`stamp`'s band is for a ``w`` x ``h`` picture."""
+    k = max(1, min((w - 16) // (len(text) * 6 - 1), h // 40 + 1))
+    return 11 * k
+
+
+def stamp(rgb: bytearray, w: int, h: int, text: str = NO_CAMERA, *, y0: int | None = None) -> None:
+    """Burn ``text`` into a band across ``rgb`` (in place): white capitals on red, as large as
+    the width allows — a picture that says it is not a camera's."""
+    cols = len(text) * 6 - 1
+    k = max(1, min((w - 16) // cols, h // 40 + 1))
+    band = 11 * k
+    top = (h - band) // 2 if y0 is None else y0
+    for y in range(max(0, top), min(h, top + band)):
+        rgb[3 * y * w : 3 * (y + 1) * w] = b"\xb4\x23\x23" * w
+    x0 = (w - cols * k) // 2
+    for n, ch in enumerate(text.upper()):
+        glyph = _GLYPHS.get(ch, _GLYPHS[" "])
+        for gy, row in enumerate(glyph):
+            for gx, bit in enumerate(row):
+                if bit != "1":
+                    continue
+                for dy in range(k):
+                    y = top + 2 * k + gy * k + dy
+                    if not 0 <= y < h:
+                        continue
+                    for dx in range(k):
+                        x = x0 + (n * 6 + gx) * k + dx
+                        if 0 <= x < w:
+                            rgb[3 * (y * w + x) : 3 * (y * w + x) + 3] = b"\xff\xff\xff"
+
+
 class BoxSceneCamera:
     """An RGB-D camera (the cockpit's camera interface) over a fixed box scene seen from a
-    fixed pose — for tests and a demo cockpit with no D435."""
+    fixed pose — for tests and a demo cockpit with no D435. Its colour picture is stamped
+    NO CAMERA CONNECTED top and bottom (``banner=False``: none) — the parts are real depth for
+    the detector, and nobody should take the picture for a camera's."""
 
     def __init__(
         self,
@@ -131,11 +186,16 @@ class BoxSceneCamera:
         h: int = 180,
         fx: float = 230.0,
         table_z: float = -0.27,
+        banner: bool = True,
     ):
         self.w, self.h = w, h
         self.K = {"fx": fx, "fy": fx, "ppx": w / 2, "ppy": h / 2}
         self.depth = render_depth(w, h, self.K, T_bc, boxes, table_z=table_z)
-        self.rgb = shade(w, h, self.depth)
+        rgb = bytearray(shade(w, h, self.depth))
+        if banner:  # top and bottom: the parts in the middle stay visible
+            stamp(rgb, w, h, y0=4)
+            stamp(rgb, w, h, y0=h - 4 - banner_height(w, h))
+        self.rgb = bytes(rgb)
         self._open = False
         self._n = 0
 

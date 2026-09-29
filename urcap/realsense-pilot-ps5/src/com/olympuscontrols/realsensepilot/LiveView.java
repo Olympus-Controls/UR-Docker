@@ -26,7 +26,7 @@ final class LiveView extends JComponent {
     private volatile boolean live;
     private volatile String fps = "";
     private volatile String headline = "";
-    private volatile String empty = "connecting to the camera computer…";
+    private volatile String empty = "Check the camera computer and its USB 3 cable — the picture returns by itself.";
 
     LiveView() {
         setOpaque(true);
@@ -66,10 +66,9 @@ final class LiveView extends JComponent {
         g.setColor(Ui.STAGE);
         g.fillRoundRect(0, 0, w, h, Ui.RADIUS, Ui.RADIUS);
         BufferedImage img = frame;
-        if (img == null) {
-            g.setColor(new Color(0x8a97a6));
-            g.setFont(Ui.font(16f, false));
-            Ui.centre(g, empty, w / 2, h / 2);
+        if (img == null || !live) {
+            // never a blank or a stale picture: an unmistakable test card
+            paintNoCamera(g, w, h, empty);
             g.dispose();
             return;
         }
@@ -85,6 +84,47 @@ final class LiveView extends JComponent {
         for (Scene.Part p : s.parts) drawPart(g, p, ox, oy, sk);
         hud(g, s, w, h);
         g.dispose();
+    }
+
+    /**
+     * The test card shown whenever there is no live picture: grey bars, a hatch, and a plate
+     * that says NO CAMERA CONNECTED — so nobody mistakes an empty or frozen view for a camera
+     * that sees nothing. {@code detail}: one line under it (may be empty).
+     */
+    static void paintNoCamera(Graphics2D g, int w, int h, String detail) {
+        g.setColor(new Color(0x1a2029));
+        g.fillRect(0, 0, w, h);
+        Color[] bars = {
+            new Color(0x9aa0a6), new Color(0xa39b5e), new Color(0x5e9a9c), new Color(0x5e9a5e),
+            new Color(0x9a5e9a), new Color(0x9a5e5e), new Color(0x5e5e9a),
+        };
+        int bh = h / 3;
+        for (int i = 0; i < bars.length; i++) {
+            g.setColor(bars[i].darker());
+            g.fillRect(i * w / bars.length, 0, (i + 1) * w / bars.length - i * w / bars.length, bh);
+        }
+        g.setColor(new Color(255, 255, 255, 18));
+        g.setStroke(new BasicStroke(1f));
+        for (int x = -h; x < w; x += 22) g.drawLine(x, h, x + h, 0);
+        int pw = Math.min(w - 40, 560), ph = 128;
+        int px = (w - pw) / 2, py = (h - ph) / 2;
+        g.setColor(new Color(0, 0, 0, 120));
+        g.fillRoundRect(px + 3, py + 5, pw, ph, 18, 18);
+        g.setColor(new Color(0x0d131a));
+        g.fillRoundRect(px, py, pw, ph, 18, 18);
+        g.setColor(Ui.ERR);
+        g.setStroke(new BasicStroke(3f));
+        g.drawRoundRect(px, py, pw, ph, 18, 18);
+        g.setColor(Color.WHITE);
+        g.setFont(Ui.font(Math.min(34f, pw / 15f), true));
+        Ui.centre(g, "NO CAMERA CONNECTED", w / 2, py + 50);
+        g.setFont(Ui.font(13f, false));
+        g.setColor(new Color(0xc9d3de));
+        int y = py + 84;
+        for (String line : Ui.wrap(detail == null ? "" : detail, g.getFontMetrics(), pw - 40)) {
+            Ui.centre(g, line, w / 2, y);
+            y += 18;
+        }
     }
 
     private static Polygon poly(Scene.Part p, int ox, int oy, double k) {

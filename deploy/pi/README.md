@@ -16,7 +16,7 @@ runtime is stdlib-only Python plus librealsense, which the installer builds from
 | | |
 | --- | --- |
 | Board | Raspberry Pi 5 (4 GB or 8 GB recommended), or a CM4/CM5 industrial box — any **arm64** board with a USB 3 port and Ethernet. 2 GB boards work: the installer adds a temporary swapfile for the build. |
-| OS | **Raspberry Pi OS Lite (64-bit)** or **Debian arm64**, bookworm (12) or trixie (13), no desktop. Needs Python ≥ 3.10 (bookworm has 3.11, trixie 3.13) and systemd. |
+| OS | **Debian arm64** (the target — Nick, 2026-09-28), bookworm (12) or trixie (13), minimal, no desktop; Raspberry Pi OS Lite (64-bit) is Debian and works the same. A RevPi Connect 5 gets a Debian image, not RevPi OS. Needs Python ≥ 3.10 (bookworm has 3.11, trixie 3.13) and systemd. |
 | Camera | One Intel RealSense **D435** (USB ID `8086:0b07`), connected **straight to a USB 3 port** (blue) with a short cable, no hub. |
 | Network | Ethernet on the robot's subnet. A static address is easiest to type into the pendant. |
 | Robot | UR e-Series on PolyScope 5 with the RealSense Pilot URCap (`urcap/dist/realsense-pilot-ps5-*.urcap`, see `urcap/realsense-pilot-ps5/README.md`). |
@@ -28,11 +28,11 @@ D435 in this repo**. If the camera drops out under load, check the supply first.
 
 ## 1. Flash and first boot
 
-1. Raspberry Pi Imager: choose **Raspberry Pi OS Lite (64-bit)**. In the OS
-   customisation settings, set a user name, **enable SSH** (public-key authentication,
-   with your laptop's key), and set the host name, e.g. `pickpc`.
-   For plain Debian arm64, use its Raspberry Pi image and create a user in the `sudo`
-   group with your SSH key in `~/.ssh/authorized_keys`.
+1. Flash **Debian arm64** (for a Raspberry Pi or a CM4/CM5 box: Debian's Raspberry Pi
+   image), create a user in the `sudo` group with your laptop's SSH key in
+   `~/.ssh/authorized_keys`, and set the host name, e.g. `pickpc`. (Raspberry Pi Imager's
+   **Raspberry Pi OS Lite (64-bit)** is Debian too: set the user, public-key SSH and host
+   name in its OS customisation settings.)
 2. Plug in Ethernet on the robot's network and the D435 (USB 3), then boot.
 3. Give it a fixed address on the cell subnet. On Raspberry Pi OS (NetworkManager):
 
