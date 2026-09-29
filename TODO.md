@@ -7,6 +7,9 @@
 - 2026-09-25 — Mac Studio + D435: `--rs-lean` streams (first open errors once, the back-off re-open holds). Open: why the *first* open still loses — shave one more reset, or accept the one retry. Ruled out: software drift, headless-vs-desktop, a fresh daemon, the webcams, Spotify. The Mac is a dev box, not a camera host; Windows laptop (WSL2, verified 09-23) and Jetson are.
 - 2026-09-12 — The native Windows path (`scripts/setup-windows.ps1`, `scripts/cockpit.ps1`, `REALSENSE_LIB` at the SDK's default `bin\x64\realsense2.dll`) has not been run on a Windows box. First run on the work laptop is the verification; paste the doctor output (`uv run perception --cell ur20 doctor --stream --json`) if anything fails.
 
+- 2026-09-28 — **PS5 pick kit 0.5.0, first time on the cell** (all verified only in CI/URSim so far): (1) install `urcap/dist/realsense-pilot-ps5-0.5.0.urcap`, look at both screens on the pendant (`urcap/realsense-pilot-ps5/screens/` are harness renders); (2) teach one pick area by three fingertip touches — the tilt it reports should be < 1°; (3) one Pick node, Robotiq gripper mode: does it activate/open/close the Hand-E and read OBJ right (never run on hardware); (4) deploy the camera computer to real Pi-class hardware with `scripts/deploy-pi.sh` and read the doctor.
+- 2026-09-28 — The finger-room check uses pickplan's Hand-E finger zone (14 × 32 mm beside the open jaws). Measure the real pads once; a wrong zone either blocks good picks or lets a finger land on a neighbour.
+
 ## PolyScope X URCap (2026-09-26, `urcap/DEVELOPING.md`)
 
 - Installed in the sim and verified headless (node loads, feed/hover/click against `make urcap-cockpit` on :7622). **Still owed:** a cockpit with a robot behind it — restart your live one with `--cors http://localhost:8000` (`scripts/cockpit-mac.sh` + that flag), set the node's cockpit URL to `http://localhost:7621`, click a block: base point + approach + reach, then **Move (cockpit)** on the UR3e. **Move (PolyScope)** (IK + auto-move; is `Pose.orientation` a rotation vector?) needs the sim's arm powered + Remote, or the real PolyScope X cell.
@@ -33,6 +36,11 @@
 - 2026-09-28 — **Pick order** directions are the picture's, as the pendant shows it: Left/Right = the screen's, **Front → Back = bottom of the picture → top**. The numbers drawn on the parts make it visible either way — or should it be the robot base frame?
 - 2026-09-28 — One **RealSense Pick node run = one part**: it goes to the picture points in turn until one shows a part, picks the first in the chosen order, runs its children (the after-pick routine), and the next run goes straight to the close look over the next part it already saw (no trip back to the picture point) — faster cycle. OK, or should one run clear every location?
 - 2026-09-28 — The node now drives the **Robotiq Hand-E itself** (fully open before the approach, close at the grip, object-detected check) through the controller-local Robotiq socket `urctl gripper` uses; "my own gripper nodes" stays an option. Right default?
+
+- 2026-09-28 — Pick PC (`deploy/pi/`, never run on a board yet): the BOM's primary PC is a **RevPi Connect 5**, which ships RevPi OS (Debian bookworm based) — the installer targets Raspberry Pi OS Lite / Debian arm64; is RevPi OS the target, or do we reflash? Also: bookworm's systemd 252 ignores the unit's restart back-off (trixie only) — OK, or target trixie? Leave the hand-eye line out of the PC's `cell.env` by default (else a fresh on-PC calibration loses to it)?
+- 2026-09-28 — The librealsense build fetches nlohmann/json, fastcdr, yaml-cpp and sqlite at configure time (first install needs internet). Turn off rosbag support to cut that, or ship a prebuilt `.deb` per board?
+- 2026-09-28 — Make the three `PolyScope 5.x` matrix jobs required checks on `dev`? They're path-filtered (`urcap/**`, `perception/picknode.py`, `perception/volume.py`), so as required checks they'd block PRs that never trigger them unless the filter goes.
+- 2026-09-28 — Bracket tool bolts: the BOM lists M6 × 16 low-head (plate 6 mm + Hand-E's M6 × 10 → the README's "+8 mm" gives only 2 mm more engagement vs the flange's 8 mm limit). Measure before ordering.
 
 ## After the demo (2026-09-28)
 
