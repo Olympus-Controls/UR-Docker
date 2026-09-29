@@ -102,3 +102,74 @@ def _slab(o: Sequence[float], d: Sequence[float], half: Sequence[float]) -> floa
         if t0 > t1:
             return None
     return t0 if t0 > 0 else None
+
+
+def shade(w: int, h: int, depth: bytes, scale_m: float = 0.001) -> bytes:
+    """An RGB picture of a depth frame for a fake camera: nearer is lighter, no depth is black."""
+    zs = [depth[2 * i] | (depth[2 * i + 1] << 8) for i in range(w * h)]
+    valid = [z for z in zs if z]
+    lo, hi = (min(valid), max(valid)) if valid else (0, 1)
+    span = max(1, hi - lo)
+    out = bytearray(w * h * 3)
+    for i, z in enumerate(zs):
+        if z:
+            g = 230 - int(150 * (z - lo) / span)
+            out[3 * i : 3 * i + 3] = bytes((g, g, min(255, g + 12)))
+    return bytes(out)
+
+
+class BoxSceneCamera:
+    """An RGB-D camera (the cockpit's camera interface) over a fixed box scene seen from a
+    fixed pose — for tests and a demo cockpit with no D435."""
+
+    def __init__(
+        self,
+        boxes: Sequence[Box],
+        T_bc: Transform,
+        *,
+        w: int = 320,
+        h: int = 180,
+        fx: float = 230.0,
+        table_z: float = -0.27,
+    ):
+        self.w, self.h = w, h
+        self.K = {"fx": fx, "fy": fx, "ppx": w / 2, "ppy": h / 2}
+        self.depth = render_depth(w, h, self.K, T_bc, boxes, table_z=table_z)
+        self.rgb = shade(w, h, self.depth)
+        self._open = False
+        self._n = 0
+
+    def open(self) -> None:
+        self._open = True
+
+    def close(self) -> None:
+        self._open = False
+
+    def read(self):
+        import time
+
+        from .frame import Frame
+        from .rgbd import DepthImage, Intrinsics, RgbdFrame
+
+        time.sleep(0.02)
+        self._n += 1
+        K = self.K
+        return RgbdFrame(
+            color=Frame(width=self.w, height=self.h, data=self.rgb, channels=3),
+            depth=DepthImage(width=self.w, height=self.h, data=self.depth, scale_m=0.001),
+            intrinsics=Intrinsics(
+                width=self.w, height=self.h, fx=K["fx"], fy=K["fy"], ppx=K["ppx"], ppy=K["ppy"]
+            ),
+            timestamp_ms=0.0,
+            frame_number=self._n,
+            aligned=True,
+            extra={"serial": "BOXES"},
+        )
+
+    def describe(self) -> dict:
+        return {
+            "kind": "boxes",
+            "open": self._open,
+            "device": {"serial": "BOXES"},
+            "intrinsics": dict(self.K),
+        }

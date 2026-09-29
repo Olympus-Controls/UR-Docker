@@ -93,7 +93,9 @@ from .picknode import (
     PickPlanner,
     PickServer,
     detect_report,
+    parse_options,
     parse_preview_request,
+    scene_report,
 )
 from .picknode import preview as pick_preview
 from .pngio import encode_png
@@ -1006,6 +1008,17 @@ class ViewerApp:
             part=part,
         )
 
+    def pick_scene(self, opts_text: str) -> dict:
+        """The 0.5.0 node's teach screen (:func:`perception.picknode.scene_report`): the same
+        FIND the program would make with these options, from the live flange pose (the pose
+        stream, else the robot link; camera-only without either)."""
+        opts = parse_options(opts_text[:1024])
+        flange = self.frame_pose().get("flange_pose")
+        if flange is None and self.robot is not None:
+            fp = self.robot.flange_pose()
+            flange = list(fp["flange"]) if fp.get("ok") and fp.get("flange") else None
+        return scene_report(self.pick_planner(), flange, opts, pick_port=self.pick_port)
+
     # -- API -------------------------------------------------------------------------
 
     def info(self) -> dict:
@@ -1579,6 +1592,9 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": f"bad request: {exc}"}, status=400)
                 return
             self._guarded(lambda: self.app.pick_detect(part))
+        elif route == "/api/pick/scene":
+            opts = (qs.get("opts") or [""])[0]
+            self._guarded(lambda: self.app.pick_scene(opts))
         elif route == "/api/color.png":
             try:
                 after = int(qs["after"][0]) if "after" in qs else None

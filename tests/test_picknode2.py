@@ -319,3 +319,37 @@ def test_a_controller_session_over_a_real_socket():
         assert len(vals) == PROTO2_FIELDS and vals[0] == 1 and vals[11] == 1 and vals[12] == 2
     finally:
         server.stop()
+
+
+def test_the_cockpit_scene_route_answers_the_teach_screen_over_http():
+    import json
+    import time
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from perception.config import PerceptionConfig
+    from perception.synthscene import BoxSceneCamera
+    from perception.webapp import ViewerApp, ViewerHandler
+
+    app = ViewerApp(BoxSceneCamera(ROW, Transform.from_pose(FLANGE), w=W, h=H), config=PerceptionConfig())
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), ViewerHandler)
+    srv.daemon_threads = True
+    srv.app = app  # type: ignore[attr-defined]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    app.start()
+    try:
+        deadline = time.monotonic() + 5
+        while app.latest()[1] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        base = f"http://127.0.0.1:{srv.server_address[1]}/api/pick/scene?opts="
+        out = json.load(urllib.request.urlopen(base + urllib.parse.quote(OPTS), timeout=10))
+        assert out["ok"] and [p["order"] for p in out["parts"]] == [1, 2, 3]
+        with pytest.raises(urllib.error.HTTPError) as bad:
+            urllib.request.urlopen(base + urllib.parse.quote("order=LR,RL"), timeout=10)
+        assert bad.value.code == 400
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        app.stop()
