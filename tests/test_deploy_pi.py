@@ -45,9 +45,24 @@ def _code(text: str) -> str:
 # ----- shell scripts ------------------------------------------------------------------------
 
 
+def _real_bash() -> str | None:
+    """A bash that runs (on a Windows runner ``bash`` is WSL's launcher with no distribution)."""
+    bash = shutil.which("bash")
+    if bash is None:
+        return None
+    try:
+        ran = subprocess.run([bash, "-c", "echo ok"], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return bash if ran.stdout.strip() == b"ok" else None
+
+
 @pytest.mark.parametrize("script", BASH_SCRIPTS, ids=lambda p: p.name)
 def test_bash_scripts_parse(script):
-    subprocess.run(["bash", "-n", str(script)], check=True)
+    bash = _real_bash()
+    if bash is None:
+        pytest.skip("no working bash on this machine")
+    subprocess.run([bash, "-n", str(script)], check=True)
 
 
 def test_doctor_wrapper_parses_as_posix_sh():
@@ -83,8 +98,19 @@ def test_never_pipes_a_download_into_a_shell(script):
 
 
 def test_deploy_script_is_executable():
+    # the mode git records is what a Linux checkout (the PC, CI) gets; Windows has no exec bit
     for path in (INSTALL, DEPLOY, DOCTOR):
-        assert path.stat().st_mode & 0o111, f"{path} is not executable"
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            staged = subprocess.run(
+                ["git", "ls-files", "-s", "--", rel], cwd=ROOT, capture_output=True, text=True, timeout=30
+            ).stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            staged = []
+        if staged:
+            assert staged[0] == "100755", f"{rel} is committed without its executable bit"
+        elif sys.platform != "win32":
+            assert path.stat().st_mode & 0o111, f"{path} is not executable"
 
 
 # ----- librealsense pin -------------------------------------------------------------------
