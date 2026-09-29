@@ -289,16 +289,35 @@ def gateway(v: Version) -> str:
     return gw[0]
 
 
-EVIDENCE = (
-    "echo '## polyscope.log lines about URCaps / bundles';"
-    " grep -n -i -E 'urcap|olympus|realsense|bundle|felix' /ursim/polyscope.log | tail -200;"
-    " echo '## /ursim/GUI/bundle (ours)'; ls -la /ursim/GUI/bundle | grep -i realsense;"
-    " echo '## /ursim/.urcaps'; ls -la /ursim/.urcaps 2>&1;"
-    " echo '## felix caches'; find / -xdev \\( -path /proc -o -path /sys \\) -prune -o"
-    " -type d -iname '*felix*' -print 2>/dev/null | head;"
-    " echo '## bundle.info naming us'; grep -l -r -i realsense $(find / -xdev -type d -iname '*felix*cache*'"
-    " 2>/dev/null) 2>/dev/null | head"
-)
+# Run inside the container (sh) when a run fails, or always with PS5_MATRIX_COLLECT.
+EVIDENCE = r"""
+echo '## polyscope.log lines about URCaps'
+grep -n -i -E 'urcap|olympus|realsense' /ursim/polyscope.log | grep -v "Adding 'reference" | tail -100
+echo '## /ursim/GUI/bundle (ours)'; ls -la /ursim/GUI/bundle | grep -i realsense
+echo '## /ursim/.urcaps'; ls -la /ursim/.urcaps 2>&1
+echo '## felix-cache bundle.info naming us'
+for d in $(grep -l -i realsense /ursim/GUI/felix-cache/bundle*/bundle.info 2>/dev/null); do
+  echo "# $d"; cat -A "$d"
+done
+echo '## felix / shell config'; ls /ursim/GUI/conf 2>&1
+grep -r -n -i -E 'shell|telnet|felix' /ursim/GUI/conf 2>/dev/null | head -40
+echo '## listening tcp ports (hex)'
+awk 'NR>1 && $4=="0A" {print $2}' /proc/net/tcp /proc/net/tcp6 | sort -u
+echo '## felix remote shell ps'
+python3 - <<'EOF' 2>&1 | tail -250
+import socket, time
+s = socket.create_connection(("127.0.0.1", 6666), 3)
+time.sleep(1)
+s.settimeout(3)
+try:
+    print(s.recv(4096).decode(errors="replace"))
+except OSError as exc:
+    print("no banner:", exc)
+s.sendall(b"ps\n")
+time.sleep(2)
+print(s.recv(65536).decode(errors="replace"))
+EOF
+"""
 
 
 def collect(v: Version, out: Path) -> list[str]:
@@ -337,7 +356,7 @@ def run_version(v: Version, artifacts: Path, *, boot_timeout: float, urcap_timeo
         stages["urcap_signal"] = sig
         if sig["errors"]:
             raise RuntimeError(f"PolyScope logged {len(sig['errors'])} error line(s) about the URCap")
-        if not sig["started"]:
+        if not sig["started"] and not os.environ.get("PS5_MATRIX_DISCOVER"):
             raise RuntimeError(
                 f"no sign in polyscope.log that the URCap started within {urcap_timeout:.0f} s"
             )

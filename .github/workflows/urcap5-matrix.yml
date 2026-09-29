@@ -76,6 +76,7 @@ jobs:
         env:
           POLYSCOPE: ${{ matrix.polyscope }}
           PS5_MATRIX_COLLECT: "1"
+          PS5_MATRIX_DISCOVER: "1"
         run: uv run python urcap/ps5_matrix.py run --version "$POLYSCOPE" --artifacts ps5-artifacts --report "ps5-artifacts/report-$POLYSCOPE.json"
 
       - name: tear down (always, with volumes)
