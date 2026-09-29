@@ -8,8 +8,8 @@ files that were packaged, then drives PolyScope's own UI headlessly:
 
 * Application → RealSense Pilot: the node's element renders with its i18n title,
   the behavior worker and presenter load without a page error from our files;
-* the node goes live against a synthetic cockpit (``perception gui --fake --no-robot``,
-  with none of the shell's ``UR_*`` / ``PERCEPTION_*``: it never reaches a robot);
+* the node goes live against a synthetic cockpit (``perceptronics gui --fake --no-robot``,
+  with none of the shell's ``UR_*`` / ``PERCEPTRONICS_*``: it never reaches a robot);
   hover reads depth, a click segments (``POST /api/segment`` ok) and asks to locate;
 * the PolyScope services Move (PolyScope) relies on answer on this release:
   ``getKinematicInfo`` (6 DH rows), ``getJointPositions``,
@@ -19,7 +19,7 @@ files that were packaged, then drives PolyScope's own UI headlessly:
 * the cockpit URL saved through ``applicationNodeService.updateNode`` survives a reload.
 
 The browser half needs Playwright (``uv run --with playwright==1.63.0 python
-urcap/e2e.py``; ``playwright install chromium`` once) and the ``perception``
+urcap/e2e.py``; ``playwright install chromium`` once) and the ``perceptronics``
 package; ``--no-browser`` stops after the install checks. Needs Docker, and the
 simulator needs ``--privileged``.
 
@@ -136,7 +136,12 @@ def simulator(image: str, port: int, *, keep: bool, docker: str = "docker"):
     run = subprocess.run(cmd, capture_output=True, text=True)
     if run.returncode != 0:
         raise E2EError(f"docker run failed: {run.stderr.strip()[-800:]}")
-    sim = {"name": name, "logs": "", "alive": lambda: running(docker, name)}
+    sim = {
+        "name": name,
+        "logs": "",
+        "alive": lambda: running(docker, name),
+        "ready": lambda: bootstrapped(docker_logs(name, docker, tail=100_000)),
+    }
     try:
         yield sim
     except BaseException:
@@ -161,6 +166,20 @@ def running(docker: str, name: str) -> bool:
     return out.stdout.strip() == "true"
 
 
+# The simulator's own "ready": its web-bootstrapper installs UR's URCaps after the web UI is
+# already answering, then logs this line and the "Simulator Is Ready" banner. Installing ours
+# before it raced that last pass: in every failing CI run PolyScope X's splash then said "An
+# error occurred while starting the application" (2026-09-29: installs at 04:00:06 / 04:50:10,
+# bootstrapper done at 04:00:53 / 04:50:48; runs 36519457991, 36523255181).
+BOOTSTRAP_DONE = "Done, time to sleep forever"
+BOOTSTRAP_STATUS = "/universal-robots/bootstrapper/status"
+
+
+def bootstrapped(log_text: str) -> bool:
+    """Has the simulator's web-bootstrapper finished (its log says so)?"""
+    return BOOTSTRAP_DONE in log_text
+
+
 def docker_logs(name: str, docker: str = "docker", tail: int = 150) -> str:
     out = subprocess.run([docker, "logs", "--tail", str(tail), name], capture_output=True, text=True)
     return (out.stdout + out.stderr)[-12000:]
@@ -174,7 +193,7 @@ def cockpit_command(port: int, origin: str) -> list[str]:
     click on a linked cockpit sends a Primary script (locate) to whatever robot it
     points at."""
     return [
-        sys.executable, "-m", "perception", "gui", "--fake", "--no-robot", "--no-browser",
+        sys.executable, "-m", "perceptronics", "gui", "--fake", "--no-robot", "--no-browser",
         "--port", str(port), "--cors", origin,
     ]  # fmt: skip
 
@@ -182,7 +201,7 @@ def cockpit_command(port: int, origin: str) -> list[str]:
 def cockpit_env(environ: dict[str, str]) -> dict[str, str]:
     """The caller's environment without the robot / cell / camera settings a
     developer's shell may export (UR_CELL=ur3 names a real arm)."""
-    return {k: v for k, v in environ.items() if not k.startswith(("UR_", "PERCEPTION_"))}
+    return {k: v for k, v in environ.items() if not k.startswith(("UR_", "PERCEPTRONICS_"))}
 
 
 @contextlib.contextmanager
@@ -212,7 +231,9 @@ def fake_cockpit(port: int, origin: str):
 # -- the checks -----------------------------------------------------------------------------------
 
 
-def install_checks(checks: Checks, package: Path, port: int, boot_timeout: float, alive=None) -> None:
+def install_checks(
+    checks: Checks, package: Path, port: int, boot_timeout: float, alive=None, ready=None
+) -> None:
     base = f"http://127.0.0.1:{port}"
     t0 = time.monotonic()
     wait_for(
@@ -225,6 +246,12 @@ def install_checks(checks: Checks, package: Path, port: int, boot_timeout: float
     # PolyScope's own web app is a URCap too; the page 404s until it is in.
     wait_for("the PolyScope X web UI", lambda: http(f"{base}/")[0] == 200, boot_timeout, 5, alive)
     checks.ok("simulator up", f"{time.monotonic() - t0:.0f} s to the web UI")
+    if ready is not None:
+        # the web UI answers before the simulator has finished installing its own URCaps
+        wait_for("the simulator's bootstrapper to finish", ready, boot_timeout, 3, alive)
+        status, body = http(f"{base}{BOOTSTRAP_STATUS}")
+        detail = body[:120].decode("utf-8", "replace") if status == 200 else f"HTTP {status}"
+        checks.ok("simulator ready", f"{time.monotonic() - t0:.0f} s; bootstrapper status {detail}")
     res = urcapx.install(package, "127.0.0.1", port, replace=True)
     checks.expect(res["ok"], "install accepted", f"HTTP {res['status']} {res.get('hint', '')}".strip())
     listed = [
@@ -458,7 +485,7 @@ def run(args) -> int:
         sim = None
         try:
             with simulator(image, port, keep=args.keep, docker=args.docker) as sim:
-                install_checks(checks, package, port, args.boot_timeout, sim["alive"])
+                install_checks(checks, package, port, args.boot_timeout, sim["alive"], sim["ready"])
                 if not args.no_browser:
                     browser_checks(checks, port, args.cockpit_port or free_port(), shots)
                 if not args.keep:

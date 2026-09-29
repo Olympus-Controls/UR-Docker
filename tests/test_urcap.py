@@ -23,9 +23,9 @@ from pathlib import Path
 
 import pytest
 
-from perception.config import PerceptionConfig
-from perception.realsense import SyntheticRgbdCamera
-from perception.webapp import ViewerApp, ViewerHandler
+from perceptronics.config import PerceptionConfig
+from perceptronics.realsense import SyntheticRgbdCamera
+from perceptronics.webapp import ViewerApp, ViewerHandler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "urcap"))
 import urcapx  # noqa: E402
@@ -461,14 +461,14 @@ def test_cors_star_and_off():
 
 
 def test_cors_from_args_reads_flag_then_env(monkeypatch):
-    from perception.webapp import cors_from_args
+    from perceptronics.webapp import cors_from_args
 
     class A:
         cors = None
 
-    monkeypatch.delenv("PERCEPTION_CORS", raising=False)
+    monkeypatch.delenv("PERCEPTRONICS_CORS", raising=False)
     assert cors_from_args(A()) == []
-    monkeypatch.setenv("PERCEPTION_CORS", "http://a:1, http://b:2")
+    monkeypatch.setenv("PERCEPTRONICS_CORS", "http://a:1, http://b:2")
     assert cors_from_args(A()) == ["http://a:1", "http://b:2"]
     A.cors = "*"
     assert cors_from_args(A()) == ["*"]

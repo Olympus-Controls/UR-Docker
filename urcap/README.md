@@ -14,12 +14,12 @@ RealSense D435 on the tool flange, right in PolyScope's own screen:
   **Move (cockpit)** moves the arm there through the safety-checked cockpit.
 
 The URCap is only the window. The camera is plugged into a computer next to the
-robot (laptop, Jetson, mini-PC) that runs the **cockpit** (`perception gui` from
+robot (laptop, Jetson, mini-PC) that runs the **cockpit** (`perceptronics gui` from
 this repository). The pendant shows the cockpit's picture over the cell network.
 
 ```
  ┌───────────── PolyScope X pendant ─────────────┐          ┌──── computer next to the robot ────┐
- │ Application → RealSense Pilot  (this URCap)   │  HTTP    │ perception gui  (the cockpit)       │
+ │ Application → RealSense Pilot  (this URCap)   │  HTTP    │ perceptronics gui  (the cockpit)       │
  │   feed · hover · click · Move                 │ ───────► │   :7621   D435 on USB               │
  └───────────────────────────────────────────────┘          │   talks to the robot on 30001/30004 │
                                                             └─────────────────────────────────────┘
@@ -27,7 +27,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
 
 > **PolyScope X only.** PolyScope 5 e-Series controllers (UR3e/UR5e/UR10e… on
 > 5.x software) can't run URCap X packages. On those, use the cockpit in a browser
-> instead (`perception gui`, [docs/realsense.md](../docs/realsense.md)).
+> instead (`perceptronics gui`, [docs/realsense.md](../docs/realsense.md)).
 
 ---
 
@@ -39,7 +39,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
 2. **Install it** on the robot (see [Install the URCap](#1-install-the-urcap)).
 3. **Start the cockpit** on the camera computer, with the robot's address:
    ```bash
-   uv run perception --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
+   uv run perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
    ```
 4. On the pendant: **Application → RealSense Pilot**, type
    `http://<camera-computer-ip>:7621` in **Cockpit**, press **Save**. The feed
@@ -125,10 +125,10 @@ Get this repository and its environment:
 
 ```bash
 git clone https://github.com/Olympus-Controls/UR-utils.git && cd UR-utils
-uv sync --extra perception
+uv sync --extra vision
 ```
 
-Describe your cell in one small file (copy [`perception/cells/ur20.env`](../perception/cells/ur20.env), the
+Describe your cell in one small file (copy [`perceptronics/cells/ur20.env`](../perceptronics/cells/ur20.env), the
 PolyScope X template) and fill in the robot:
 
 ```bash
@@ -139,19 +139,19 @@ UR_ROBOT_API_PORT=80
 UR_PRIMARY_PORT=30001
 UR_RTDE_PORT=30004
 UR_ROBOT_MODEL=UR20           # sizes the reach check: UR3e … UR30
-PERCEPTION_BRACKET=ur20       # which bracket print: eseries (ISO-50) or ur20
+PERCEPTRONICS_BRACKET=ur20       # which bracket print: eseries (ISO-50) or ur20
 ```
 
 Check everything before the first run (it prints a fix next to each failure):
 
 ```bash
-uv run perception --cell mycell.env doctor
+uv run perceptronics --cell mycell.env doctor
 ```
 
 Then start the cockpit so the pendant can reach it:
 
 ```bash
-uv run perception --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
+uv run perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
 ```
 
 - `--bind 0.0.0.0` lets the pendant reach the computer (the default is this
@@ -159,7 +159,7 @@ uv run perception --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
 - `--cors` names the page that's allowed to call the cockpit: the PolyScope X
   page on the pendant. Its exact value depends on the controller. If yours
   differs, the node tells you the right one (next section). You can also set
-  `PERCEPTION_CORS` in `mycell.env` instead of passing the flag.
+  `PERCEPTRONICS_CORS` in `mycell.env` instead of passing the flag.
 - The cockpit listens on port **7621**. Open `http://localhost:7621` on the
   computer itself to see the full cockpit.
 - macOS: prefix with `sudo` (the camera needs it) and launch from a local
@@ -168,7 +168,7 @@ uv run perception --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
 **Calibrate once per camera mounting.** Without it, positions come from the
 bracket's nominal geometry and can be off by a few centimetres. With the cockpit
 running, put a block under the camera and run
-`uv run perception --cell mycell.env calibrate --apply` in a second terminal (the
+`uv run perceptronics --cell mycell.env calibrate --apply` in a second terminal (the
 arm orbits the block and the result is saved), or use the cockpit's **Calibrate
 hand-eye**. See [docs/realsense.md §Hand-eye](../docs/realsense.md).
 
@@ -245,7 +245,7 @@ link behind the cockpit.
 | All of the above plus PolyScope's IK / FK services answering the node, on **10.14.0** (verified; the target is held at 10.13 since — `target.json` `hold`) | `urcap/e2e.py`, 2026-09-27; re-run on every change and every new UR release by CI |
 | Install from a USB stick on a physical pendant (§1A) | **not yet**: the steps follow PolyScope X's System Manager but haven't been walked on hardware |
 | Locate + Move (cockpit) against a real PolyScope X arm | **not yet** |
-| `perception calibrate` (orbit hand-eye) as a command on hardware | **not yet**: the same orbit, scripted, gave RMS 4.4 mm on a UR3e (2026-09-25); the cockpit's touch-and-click calibration is the proven path |
+| `perceptronics calibrate` (orbit hand-eye) as a command on hardware | **not yet**: the same orbit, scripted, gave RMS 4.4 mm on a UR3e (2026-09-25); the cockpit's touch-and-click calibration is the proven path |
 | Move (PolyScope): IK + hold-to-move accept the pose | **not yet**: compare against the cockpit's approach pose on first use |
 
 Building or changing the URCap: [DEVELOPING.md](DEVELOPING.md).

@@ -14,9 +14,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from perception.partspec import PartSpec
-from perception.picknode import STATUS, parse_options, parse_request
-from perception.volume import Reach, Surface
+from perceptronics.partspec import PartSpec
+from perceptronics.picknode import STATUS, parse_options, parse_request
+from perceptronics.volume import Reach, Surface
 from tests.test_urcap5 import java_client  # noqa: F401 — the fixture
 from urctl.pose import pose_trans
 
@@ -251,8 +251,8 @@ def test_values_are_clamped_to_their_limits(java_client, key, value, stored):  #
     ],
 )
 def test_an_order_tile_numbers_a_grid_the_way_the_detector_will(java_client, order):  # noqa: F811
-    from perception.synthscene import Box, camera_looking_down, render_depth
-    from perception.volume import find_parts
+    from perceptronics.synthscene import Box, camera_looking_down, render_depth
+    from perceptronics.volume import find_parts
 
     W, H = 320, 180
     K = {"fx": 230.0, "fy": 230.0, "ppx": W / 2, "ppy": H / 2}
@@ -334,8 +334,8 @@ def test_a_touch_measures_the_fingertips_whatever_tcp_polyscope_has(java_client)
 
 
 def test_the_screen_parses_what_the_cockpit_sends(java_client):  # noqa: F811
-    from perception.picknode import scene_report
-    from perception.synthscene import Box
+    from perceptronics.picknode import scene_report
+    from perceptronics.synthscene import Box
     from tests.test_picknode2 import FLANGE, OPTS, ROW, Frames, planner
 
     out = scene_report(

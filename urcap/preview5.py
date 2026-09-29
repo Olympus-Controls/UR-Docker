@@ -50,7 +50,7 @@ W, H, FX = 848, 480, 610.0  # the D435's colour stream
 
 
 def scene_boxes(rng: random.Random | None = None):
-    from perception.synthscene import Box
+    from perceptronics.synthscene import Box
 
     if rng is None:  # two rows of three, a spare, and three that are not to be picked
         boxes = [
@@ -77,9 +77,9 @@ def simulated_cockpit(port: int, shuffle_s: float):
     pose, the camera at the flange) so reach and pick areas are checked as on a robot."""
     from http.server import ThreadingHTTPServer
 
-    from perception.config import PerceptionConfig
-    from perception.synthscene import BoxSceneCamera
-    from perception.webapp import ViewerApp, ViewerHandler
+    from perceptronics.config import PerceptionConfig
+    from perceptronics.synthscene import BoxSceneCamera
+    from perceptronics.webapp import ViewerApp, ViewerHandler
     from urctl.pose import Transform
 
     cam = BoxSceneCamera(scene_boxes(), Transform.from_pose(FLANGE), w=W, h=H, fx=FX, table_z=TABLE_Z)

@@ -38,8 +38,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from perception.picknode import PickPlanner, PickServer, parse_request  # noqa: E402
-from perception.synthscene import Box, render_depth  # noqa: E402
+from perceptronics.picknode import PickPlanner, PickServer, parse_request  # noqa: E402
+from perceptronics.synthscene import Box, render_depth  # noqa: E402
 from tests.test_urcap5 import HARNESS, JAVA, PURE_JAVA  # noqa: E402
 from urctl import Robot, RobotConfig  # noqa: E402
 from urctl.pose import Transform  # noqa: E402

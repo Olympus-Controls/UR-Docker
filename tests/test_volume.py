@@ -1,5 +1,5 @@
-"""The volume detector's contract (:mod:`perception.volume`), against ray-cast ground truth
-(:mod:`perception.synthscene`): the right size and nothing else, the rectangle's axes, the
+"""The volume detector's contract (:mod:`perceptronics.volume`), against ray-cast ground truth
+(:mod:`perceptronics.synthscene`): the right size and nothing else, the rectangle's axes, the
 surface (fitted, taught, nudged), the reach annulus, the pick order the pendant numbers."""
 
 from __future__ import annotations
@@ -10,9 +10,9 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from perception.partspec import PartSpec
-from perception.synthscene import Box, camera_looking_down, render_depth
-from perception.volume import (
+from perceptronics.partspec import PartSpec
+from perceptronics.synthscene import Box, camera_looking_down, render_depth
+from perceptronics.volume import (
     Reach,
     Surface,
     convex_hull,

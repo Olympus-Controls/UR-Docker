@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from perception.picknode import (
+from perceptronics.picknode import (
     MAX_LINE,
     PickOptions,
     PickPlanner,
@@ -269,9 +269,9 @@ def test_many_controllers_at_once_each_get_their_own_answer(server):
 
 
 def test_the_cockpit_detect_route_lists_the_blocks_in_pixels():
-    from perception.config import PerceptionConfig
-    from perception.robotlink import RobotLink
-    from perception.webapp import ViewerApp
+    from perceptronics.config import PerceptionConfig
+    from perceptronics.robotlink import RobotLink
+    from perceptronics.webapp import ViewerApp
     from urctl.config import RobotConfig
 
     app = ViewerApp(
@@ -293,9 +293,9 @@ def test_the_cockpit_detect_route_lists_the_blocks_in_pixels():
 
 
 def test_the_teach_time_preview_gives_hover_and_grip_in_the_active_tcp():
-    from perception.config import PerceptionConfig
-    from perception.robotlink import RobotLink
-    from perception.webapp import ViewerApp
+    from perceptronics.config import PerceptionConfig
+    from perceptronics.robotlink import RobotLink
+    from perceptronics.webapp import ViewerApp
     from urctl.config import RobotConfig
 
     link = RobotLink(RobotConfig(host="fake-ur.invalid"), dry_run=True)
@@ -333,7 +333,7 @@ def _camera(flange, handeye):
     ],
 )
 def test_the_look_pose_puts_the_camera_halfway_and_aims_it_at_the_block(flange):
-    from perception.picknode import LOOK_MIN_M, look_pose
+    from perceptronics.picknode import LOOK_MIN_M, look_pose
 
     handeye = [0.0133, 0.0553, 0.0129, 0.10, -0.164, 3.119]  # the UR3e bracket's solve
     top = [0.25, 0.30, -0.26]
@@ -358,7 +358,7 @@ def test_the_look_pose_puts_the_camera_halfway_and_aims_it_at_the_block(flange):
 
 
 def test_a_camera_already_close_is_not_moved_nearer_than_the_d435_can_see():
-    from perception.picknode import LOOK_MIN_M, look_pose
+    from perceptronics.picknode import LOOK_MIN_M, look_pose
 
     top = [0.40, 0.0, 0.0]
     flange = [0.40, 0.0, LOOK_MIN_M + 0.02, 0.0, math.pi, 0.0]  # camera 0.27 m straight above
@@ -368,7 +368,7 @@ def test_a_camera_already_close_is_not_moved_nearer_than_the_d435_can_see():
 
 
 def test_no_look_pose_when_the_tool_would_tip_past_the_limit():
-    from perception.picknode import look_pose
+    from perceptronics.picknode import look_pose
 
     # camera level with the block, 0.5 m away sideways: aiming at it means a horizontal tool
     flange = [0.9, 0.0, 0.0, 0.0, math.pi / 2, 0.0]
@@ -450,8 +450,8 @@ def test_refine_holds_the_part_to_the_same_size():
 
 
 def test_the_node_teach_screen_sees_the_rejects_and_why():
-    from perception.partspec import PartSpec
-    from perception.picknode import detect_report
+    from perceptronics.partspec import PartSpec
+    from perceptronics.picknode import detect_report
 
     rgb, depth = TWO_SIZES[0]
     frame = (7, W, H, 3, rgb, depth, 0.001, K)

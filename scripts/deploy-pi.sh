@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy the pick PC from this checkout: build the wheel, copy it and deploy/pi/ to the PC,
-# run deploy/pi/install.sh there under sudo, then print `perception doctor` from the PC.
+# run deploy/pi/install.sh there under sudo, then print `perceptronics doctor` from the PC.
 #
 #   scripts/deploy-pi.sh pi@192.168.3.10                      # cell ur3 (the default)
 #   scripts/deploy-pi.sh pi@192.168.3.10 --cell ur3 --robot-host 192.168.3.3
@@ -8,7 +8,7 @@
 #   scripts/deploy-pi.sh pi@192.168.3.10 --doctor-only
 #   scripts/deploy-pi.sh pi@192.168.3.10 --rollback            # previous release, restart
 #
-# --cell / --robot-host rewrite /etc/perception/cell.env on the PC (the old one is kept
+# --cell / --robot-host rewrite /etc/perceptronics/cell.env on the PC (the old one is kept
 # beside it); without them an existing cell.env is left alone. Authentication is your
 # SSH key (or ssh's own password prompt); sudo on the PC prompts on the terminal (ssh -t),
 # or, run without a terminal (an agent), must be passwordless (`sudo -n`, fails fast).
@@ -68,9 +68,9 @@ remote_cmd() {
 }
 
 run_doctor() {
-    log "perception doctor on ${target}:"
+    log "perceptronics doctor on ${target}:"
     # The doctor exits non-zero when a check fails; show it, don't abort on it.
-    ssh "${tty_opt[@]}" "${ssh_opts[@]}" "$target" "$(remote_cmd "${sudo_cmd[@]}" perception-doctor)" \
+    ssh "${tty_opt[@]}" "${ssh_opts[@]}" "$target" "$(remote_cmd "${sudo_cmd[@]}" perceptronics-doctor)" \
         || log "doctor reported failures (above)"
 }
 
@@ -82,7 +82,7 @@ case "$mode" in
     doctor) run_doctor; exit 0 ;;
     rollback)
         ssh "${tty_opt[@]}" "${ssh_opts[@]}" "$target" \
-            "$(remote_cmd "${sudo_cmd[@]}" /opt/perception/deploy/install.sh --rollback)"
+            "$(remote_cmd "${sudo_cmd[@]}" /opt/perceptronics/deploy/install.sh --rollback)"
         run_doctor
         exit 0
         ;;
@@ -100,7 +100,7 @@ wheel="$(find "$stage_local" -maxdepth 1 -name '*-py3-none-any.whl' | head -n 1)
 [ -n "$wheel" ] || die "uv build produced no pure-Python wheel"
 log "built $(basename "$wheel")"
 
-stage_remote="$(ssh "${ssh_opts[@]}" "$target" 'mktemp -d /tmp/perception-deploy.XXXXXX')"
+stage_remote="$(ssh "${ssh_opts[@]}" "$target" 'mktemp -d /tmp/perceptronics-deploy.XXXXXX')"
 [ -n "$stage_remote" ] || die "could not create a staging directory on ${target}"
 log "copying to ${target}:${stage_remote}"
 scp -q "${ssh_opts[@]}" "$wheel" "$repo"/deploy/pi/* "${target}:${stage_remote}/"

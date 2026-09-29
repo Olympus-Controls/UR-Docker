@@ -15,8 +15,8 @@ on:
   pull_request:
     paths:
       - "urcap/**"
-      - "perception/picknode.py"
-      - "perception/volume.py"
+      - "perceptronics/picknode.py"
+      - "perceptronics/volume.py"
       - "docker-compose.ps5-matrix.yml"
       - ".github/workflows/urcap5-matrix.yml"
   push:
