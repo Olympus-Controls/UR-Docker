@@ -40,7 +40,7 @@ packages = ["urctl", "perceptronics"]
 "scripts/urp_convert.py" = "urctl/_urp_convert.py"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["hypothesis>=6.100", "pytest>=8", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

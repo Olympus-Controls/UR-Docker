@@ -4,11 +4,15 @@ import com.ur.urcap.api.contribution.ProgramNodeContribution;
 import com.ur.urcap.api.contribution.program.CreationContext;
 import com.ur.urcap.api.contribution.program.ProgramAPIProvider;
 import com.ur.urcap.api.domain.data.DataModel;
+import com.ur.urcap.api.domain.program.nodes.ProgramNodeFactory;
 import com.ur.urcap.api.domain.program.nodes.builtin.CommentNode;
+import com.ur.urcap.api.domain.program.nodes.contributable.URCapProgramNode;
 import com.ur.urcap.api.domain.program.structure.TreeNode;
 import com.ur.urcap.api.domain.script.ScriptWriter;
 import com.ur.urcap.api.domain.undoredo.UndoableChanges;
 import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback2;
+import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardInputCallback;
+import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardNumberInput;
 import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementCancelEvent;
 import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementCompleteEvent;
 import com.ur.urcap.api.domain.userinteraction.robot.movement.MovementErrorEvent;
@@ -21,47 +25,59 @@ import com.ur.urcap.api.domain.value.simple.Angle;
 import com.ur.urcap.api.domain.value.simple.Length;
 import com.ur.urcap.api.domain.variable.Variable;
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.security.SecureRandom;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
+import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
 
 /**
- * One RealSense Pick node in a program. Teach time (the node's screen open): the
- * cockpit's colour feed with the blocks its detector sees, a tap to choose one, an
- * optional survey position taught through PolyScope's own screen (without one the first
- * look is from wherever the arm is), and two checks that open
- * PolyScope's hold-to-move screen over and into the grasp the program would make —
- * all in Local mode. Run time: {@link PickScript}.
+ * One RealSense Pick node in a program (0.5.0). Teach time — the node's screen open — the
+ * live picture with the parts numbered in pick order ({@code GET /api/pick/scene}, asked with
+ * exactly the options the program will send), the picture points, the pick order, and the
+ * Options view. Run time: {@link PickScript}. Everything is in the node's data model;
+ * the camera computer's address, the pick areas and the reach come from the Installation
+ * node, one per robot.
  */
-public class PickContribution implements ProgramNodeContribution {
-    static final String KEY_SURVEY = "surveyJoints";
-    static final String KEY_TAP_U = "tapU";
-    static final String KEY_TAP_V = "tapV";
-    static final String KEY_GRIP_MM = "gripBelowTopMm";
-    static final String KEY_LIFT_MM = "liftMm";
+public class PickContribution implements ProgramNodeContribution, PickScreen.Actions {
+    static final String KEY_NODE_ID = "nodeId";
+    static final String KEY_TEMPLATED = "templated";
+    static final String KEY_POINTS = "points";
+    static final String KEY_SELECTED = "selectedPoint";
+    static final String KEY_ORDER_FIRST = "orderFirst";
+    static final String KEY_ORDER_ROWS = "orderRows";
+    static final String KEY_GRIPPER = "gripper";
+    static final String KEY_POPUP = "popupOnFail";
+    static final String KEY_PER_POINT = "perPointRoutine";
     static final String KEY_PORT = "pickPort";
     static final String KEY_VARIABLE = "foundVariable";
-    static final String KEY_TEMPLATED = "templated";
-    static final String VARIABLE_NAME = "rs_pick_found";
+    static final String KEY_LOC_VARIABLE = "locVariable";
+    static final String KEY_SURVEY_040 = "surveyJoints"; // 0.4.0's single survey position
+    static final String FOUND_NAME = "rs_pick_found";
+    static final String LOC_NAME = "rs_pick_loc";
+    static final String AFTER_PICK = "After the pick: insert what happens to the part (place it, …)";
     static final String GRIP_HERE = "Close the gripper here: insert your gripper's Close node";
     private static final int POLL_TIMEOUT_MS = 1500;
-    private static final long DETECT_EVERY_MS = 1000;
+    private static final long SCENE_EVERY_MS = 700;
 
     private final ProgramAPIProvider api;
     private final PickView view;
     private final DataModel model;
-    private final ExecutorService actions = Executors.newSingleThreadExecutor(daemon("realsense-pick-actions"));
+    private final ExecutorService actions = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "realsense-pick-actions");
+        t.setDaemon(true);
+        return t;
+    });
 
     private volatile boolean open;
     private volatile Thread poller;
     private volatile long seq;
-    private volatile long detectedAt;
-    private volatile List<int[]> blocks = new ArrayList<int[]>();
+    private volatile long sceneAt;
+    private volatile Scene scene = Scene.empty();
 
     PickContribution(ProgramAPIProvider api, PickView view, DataModel model, CreationContext context) {
         this.api = api;
@@ -71,63 +87,79 @@ public class PickContribution implements ProgramNodeContribution {
 
     // -- where things come from ---------------------------------------------------------------
 
-    /** The cockpit is the Installation node's: one address per robot, not per node. */
-    Cockpit cockpit() {
-        PilotContribution installation = api.getProgramAPI().getInstallationNode(PilotContribution.class);
-        return new Cockpit(installation == null ? "" : installation.savedUrl());
+    PilotContribution installation() {
+        return api.getProgramAPI().getInstallationNode(PilotContribution.class);
     }
 
-    double[] surveyJoints() {
-        JointPositions q = model.get(KEY_SURVEY, (JointPositions) null);
+    Cockpit cockpit() {
+        PilotContribution i = installation();
+        return new Cockpit(i == null ? "" : i.savedUrl());
+    }
+
+    int pointCount() {
+        return Math.max(0, Math.min(PickScript.MAX_POINTS, model.get(KEY_POINTS, 0)));
+    }
+
+    double[] joints(int i) {
+        JointPositions q = model.get("point." + i + ".q", (JointPositions) null);
         if (q == null) return null;
         JointPosition[] all = q.getAllJointPositions();
         double[] out = new double[all.length];
-        for (int i = 0; i < all.length; i++) out[i] = all[i].getPosition(Angle.Unit.RAD);
+        for (int k = 0; k < all.length; k++) out[k] = all[k].getPosition(Angle.Unit.RAD);
         return out;
     }
 
-    int tapU() {
-        return model.get(KEY_TAP_U, -1);
+    /** The installation's pick area picture point {@code i} looks at: its index, or -1 (the table found live). */
+    int areaOf(int i) {
+        return model.get("point." + i + ".area", -1);
     }
 
-    int tapV() {
-        return model.get(KEY_TAP_V, -1);
+    int selected() {
+        return Math.max(0, Math.min(pointCount() - 1, model.get(KEY_SELECTED, 0)));
     }
 
-    double gripMm() {
-        return model.get(KEY_GRIP_MM, 15.0);
-    }
-
-    double liftMm() {
-        return model.get(KEY_LIFT_MM, 60.0);
-    }
-
+    /** Everything the script needs, from this node's data model and the installation. */
     PickScript script() {
         PickScript s = new PickScript();
+        PilotContribution inst = installation();
         s.host = PickScript.hostOf(cockpit().base);
         s.port = model.get(KEY_PORT, PickScript.DEFAULT_PICK_PORT);
-        s.surveyJoints = surveyJoints();
-        s.tapU = tapU();
-        s.tapV = tapV();
-        s.gripBelowTopMm = gripMm();
-        s.liftMm = liftMm();
+        s.nodeId = model.get(KEY_NODE_ID, "");
+        for (PickScript.Num n : PickScript.NUMBERS) s.values.put(n.key, model.get(n.key, n.def));
+        s.orderFirst = model.get(KEY_ORDER_FIRST, "LR");
+        s.orderRows = model.get(KEY_ORDER_ROWS, "FB");
+        s.gripper = model.get(KEY_GRIPPER, "robotiq");
+        s.popupOnFail = model.get(KEY_POPUP, true);
+        if (inst != null) {
+            double[] reach = inst.reachLimits();
+            if (reach != null) {
+                s.reachMinM = reach[0];
+                s.reachMaxM = reach[1];
+            }
+        }
+        for (int i = 0; i < pointCount(); i++) {
+            double[] q = joints(i);
+            double[] plane = inst == null ? null : inst.areaPlane(areaOf(i));
+            s.points.add(new PickScript.Point(q, plane == null ? null : java.util.Arrays.copyOf(plane, 6),
+                    plane == null ? 0 : plane[6] * 1000, plane == null ? 0 : plane[7] * 1000));
+        }
         return s;
+    }
+
+    private List<PickScreen.PointRow> rows() {
+        PilotContribution inst = installation();
+        List<PickScreen.PointRow> out = new ArrayList<PickScreen.PointRow>();
+        for (int i = 0; i < pointCount(); i++) {
+            int a = areaOf(i);
+            String name = inst == null ? null : inst.areaName(a);
+            boolean taught = inst != null && inst.areaPlane(a) != null;
+            out.add(new PickScreen.PointRow(taught ? name : "live table", taught));
+        }
+        return out;
     }
 
     private TreeNode tree() {
         return api.getProgramAPI().getProgramModel().getRootTreeNode(this);
-    }
-
-    /** A child that is not a Comment: the operator's gripper node is in. */
-    boolean hasGripChild() {
-        try {
-            for (TreeNode child : tree().getChildren()) {
-                if (!(child.getProgramNode() instanceof CommentNode)) return true;
-            }
-        } catch (RuntimeException e) {
-            return false;
-        }
-        return false;
     }
 
     // -- program node --------------------------------------------------------------------------
@@ -136,8 +168,8 @@ public class PickContribution implements ProgramNodeContribution {
     public void openView() {
         open = true;
         ensureTemplate();
-        view.show(this);
-        view.setStatus("connecting to " + cockpit().base + "…", PilotView.Kind.INFO);
+        refresh();
+        view.screen().setStatus("connecting to " + cockpit().base + "…", Ui.Kind.INFO);
         startPolling();
     }
 
@@ -150,12 +182,16 @@ public class PickContribution implements ProgramNodeContribution {
 
     @Override
     public String getTitle() {
-        return tapU() >= 0 ? "RealSense Pick (tapped block)" : "RealSense Pick (nearest block)";
+        PickScript s = script();
+        int n = pointCount();
+        return "RealSense Pick (" + PickScript.num(Math.max(s.n("partLengthMm"), s.n("partWidthMm"))) + "×"
+                + PickScript.num(Math.min(s.n("partLengthMm"), s.n("partWidthMm"))) + "×"
+                + PickScript.num(s.n("partHeightMm")) + " mm, " + n + " picture" + (n == 1 ? "" : "s") + ")";
     }
 
     @Override
     public boolean isDefined() {
-        return script().problem() == null && hasGripChild();
+        return problem() == null;
     }
 
     @Override
@@ -163,202 +199,336 @@ public class PickContribution implements ProgramNodeContribution {
         PickScript s = script();
         Variable v = model.get(KEY_VARIABLE, (Variable) null);
         if (v != null) s.foundVariable = writer.getResolvedVariableName(v);
+        Variable l = model.get(KEY_LOC_VARIABLE, (Variable) null);
+        if (l != null) s.locVariable = writer.getResolvedVariableName(l);
         for (String line : s.beforeChildren()) writer.appendLine(line);
-        writer.writeChildren();
+        if (s.ownGripperNodes()) writer.writeChildren();
         for (String line : s.afterChildren()) writer.appendLine(line);
+        if (!s.ownGripperNodes()) {
+            writer.appendLine(s.afterPickOpen());
+            writer.writeChildren();
+            writer.appendLine("end");
+        }
     }
 
     /** What still stops the node from running, for the screen; null when ready. */
     String problem() {
-        String p = script().problem();
+        PickScript s = script();
+        String p = s.problem();
         if (p != null) return p;
-        if (!hasGripChild()) return "insert your gripper's Close node inside this node (it runs at the grip)";
+        if (s.ownGripperNodes() && !hasNonComment()) {
+            return "insert your gripper's Close node inside this node (it runs at the grip)";
+        }
         return null;
     }
 
-    // -- first open: the comment child and the result variable -----------------------------------
+    private boolean hasNonComment() {
+        try {
+            for (TreeNode child : tree().getChildren()) {
+                if (!(child.getProgramNode() instanceof CommentNode)) return true;
+            }
+        } catch (RuntimeException e) {
+            return false;
+        }
+        return false;
+    }
+
+    // -- first open: identity, variables, the child template, 0.4.0's settings ------------------
 
     private void ensureTemplate() {
-        if (model.get(KEY_TEMPLATED, false)) return;
-        change(new UndoableChanges() {
+        if (!model.get(KEY_NODE_ID, "").isEmpty() && model.get(KEY_TEMPLATED, false)) return;
+        change(() -> {
+            if (model.get(KEY_NODE_ID, "").isEmpty()) model.set(KEY_NODE_ID, newId());
+            boolean upgraded = model.get(KEY_TEMPLATED, false); // a 0.4.0 node opened in 0.5.0
+            if (upgraded && !model.isSet(KEY_GRIPPER)) model.set(KEY_GRIPPER, "children"); // its children grip
+            JointPositions survey = model.get(KEY_SURVEY_040, (JointPositions) null);
+            if (survey != null && pointCount() == 0) {
+                model.set("point.0.q", survey);
+                model.set(KEY_POINTS, 1);
+                model.remove(KEY_SURVEY_040);
+            }
+            model.set(KEY_TEMPLATED, true);
+            try {
+                TreeNode root = tree();
+                if (root.getChildren().isEmpty()) {
+                    CommentNode c = factory().createCommentNode();
+                    c.setComment("children".equals(model.get(KEY_GRIPPER, "robotiq")) ? GRIP_HERE : AFTER_PICK);
+                    root.addChild(c);
+                }
+            } catch (Exception e) {
+                // an empty node is still usable: the screen says what to insert
+            }
+            variable(KEY_VARIABLE, FOUND_NAME);
+            variable(KEY_LOC_VARIABLE, LOC_NAME);
+        });
+    }
+
+    private void variable(String key, String name) {
+        try {
+            if (model.get(key, (Variable) null) == null) {
+                model.set(key, api.getProgramAPI().getVariableModel().getVariableFactory().createGlobalVariable(name));
+            }
+        } catch (Exception e) {
+            // the script falls back to the plain name
+        }
+    }
+
+    private static String newId() {
+        byte[] b = new byte[3];
+        new SecureRandom().nextBytes(b);
+        return String.format("%02x%02x%02x", b[0] & 0xff, b[1] & 0xff, b[2] & 0xff);
+    }
+
+    private ProgramNodeFactory factory() {
+        return api.getProgramAPI().getProgramModel().getProgramNodeFactory();
+    }
+
+    private void change(final Runnable r) {
+        api.getProgramAPI().getUndoRedoManager().recordChanges(new UndoableChanges() {
             @Override
             public void executeChanges() {
-                model.set(KEY_TEMPLATED, true);
-                try {
-                    TreeNode root = tree();
-                    if (root.getChildren().isEmpty()) {
-                        CommentNode c = api.getProgramAPI().getProgramModel().getProgramNodeFactory().createCommentNode();
-                        c.setComment(GRIP_HERE);
-                        root.addChild(c);
-                    }
-                } catch (Exception e) {
-                    // an empty node is still usable: the screen says what to insert
-                }
-                try {
-                    if (model.get(KEY_VARIABLE, (Variable) null) == null) {
-                        model.set(KEY_VARIABLE, api.getProgramAPI().getVariableModel().getVariableFactory()
-                                .createGlobalVariable(VARIABLE_NAME));
-                    }
-                } catch (Exception e) {
-                    // the script falls back to a plain rs_pick_found
-                }
+                r.run();
             }
         });
     }
 
-    private void change(UndoableChanges changes) {
-        api.getProgramAPI().getUndoRedoManager().recordChanges(changes);
+    private void refresh() {
+        view.screen().show(script(), rows(), selected(), model.get(KEY_PER_POINT, false));
+        sceneAt = 0; // the picture's numbers follow at once
     }
 
-    // -- teach: survey position ---------------------------------------------------------------
+    // -- the picture points ---------------------------------------------------------------------
 
-    void setSurvey() {
+    @Override
+    public void addPoint() {
+        if (pointCount() >= PickScript.MAX_POINTS) return;
+        teachPosition(pointCount(), true);
+    }
+
+    @Override
+    public void retake(int i) {
+        teachPosition(i, false);
+    }
+
+    /** PolyScope's own move screen: the operator puts the arm where the camera sees the parts, then OK. */
+    private void teachPosition(final int i, final boolean adding) {
         api.getUserInterfaceAPI().getUserInteraction().getUserDefinedRobotPosition(new RobotPositionCallback2() {
             @Override
             public void onOk(final PositionParameters position) {
-                change(new UndoableChanges() {
-                    @Override
-                    public void executeChanges() {
-                        model.set(KEY_SURVEY, position.getJointPositions());
+                change(() -> {
+                    model.set("point." + i + ".q", position.getJointPositions());
+                    if (adding) {
+                        PilotContribution inst = installation();
+                        // a new point looks at the area the last one did, or the first taught one
+                        int area = i > 0 ? areaOf(i - 1) : inst == null ? -1 : inst.firstTaughtArea();
+                        model.set("point." + i + ".area", area);
+                        model.set(KEY_POINTS, i + 1);
                     }
+                    model.set(KEY_SELECTED, i);
                 });
-                view.show(PickContribution.this);
-                view.setStatus("survey position taught — the camera must see the blocks from here, ≥ 0.25 m away",
-                        PilotView.Kind.OK);
+                if (adding && model.get(KEY_PER_POINT, false)) ensurePointRoutines();
+                refresh();
+                view.screen().setStatus("picture " + (i + 1) + " taught — the camera must see the parts from here,"
+                        + " at least 0.25 m away", Ui.Kind.OK);
             }
         });
     }
 
-    void clearSurvey() {
-        change(new UndoableChanges() {
-            @Override
-            public void executeChanges() {
-                model.remove(KEY_SURVEY);
-            }
-        });
-        view.show(this);
-        view.setStatus("no survey position: the first look is from wherever the arm is when the node runs",
-                PilotView.Kind.OK);
+    @Override
+    public void goTo(int i) {
+        JointPositions q = model.get("point." + i + ".q", (JointPositions) null);
+        if (q == null) return;
+        api.getUserInterfaceAPI().getUserInteraction().getRobotMovement().requestUserToMoveRobot(q,
+                done("picture " + (i + 1)));
+        change(() -> model.set(KEY_SELECTED, i));
+        refresh();
     }
 
-    void moveToSurvey() {
-        JointPositions q = model.get(KEY_SURVEY, (JointPositions) null);
-        if (q == null) {
-            view.setStatus("no survey position taught: the node looks from where the arm is", PilotView.Kind.WARN);
-            return;
+    @Override
+    public void remove(final int i) {
+        final int n = pointCount();
+        if (i < 0 || i >= n) return;
+        change(() -> {
+            for (int k = i; k < n - 1; k++) {
+                JointPositions q = model.get("point." + (k + 1) + ".q", (JointPositions) null);
+                if (q != null) model.set("point." + k + ".q", q);
+                model.set("point." + k + ".area", model.get("point." + (k + 1) + ".area", -1));
+            }
+            model.remove("point." + (n - 1) + ".q");
+            model.remove("point." + (n - 1) + ".area");
+            model.set(KEY_POINTS, n - 1);
+            model.set(KEY_SELECTED, Math.max(0, Math.min(i, n - 2)));
+        });
+        refresh();
+        view.screen().setStatus("picture " + (i + 1) + " removed", Ui.Kind.INFO);
+    }
+
+    @Override
+    public void select(int i) {
+        change(() -> model.set(KEY_SELECTED, i));
+        refresh();
+    }
+
+    /** Tap the area line of a point: the next taught area, then "live table", round again. */
+    @Override
+    public void cycleArea(final int i) {
+        PilotContribution inst = installation();
+        final int areas = inst == null ? 0 : inst.areaCount();
+        int now = areaOf(i);
+        int next = now;
+        for (int step = 0; step <= areas; step++) {
+            next = next + 1 >= areas ? -1 : next + 1;
+            if (next == -1 || (inst != null && inst.areaPlane(next) != null)) break;
         }
-        api.getUserInterfaceAPI().getUserInteraction().getRobotMovement().requestUserToMoveRobot(q, done("survey position"));
-    }
-
-    // -- teach: which block ---------------------------------------------------------------------
-
-    void onTap(final int x, final int y) {
-        change(new UndoableChanges() {
-            @Override
-            public void executeChanges() {
-                model.set(KEY_TAP_U, x);
-                model.set(KEY_TAP_V, y);
-            }
-        });
-        int[] near = nearestBlock(x, y);
-        view.show(this);
-        if (near == null) {
-            view.setStatus("tapped (" + x + ", " + y + ") — no block detected there yet; the program picks the block "
-                    + "nearest this spot", PilotView.Kind.WARN);
-        } else {
-            view.setStatus("the program will pick the block nearest (" + x + ", " + y + ") — " + near[2] + " × "
-                    + near[3] + " mm now", PilotView.Kind.OK);
+        final int pick = next;
+        change(() -> model.set("point." + i + ".area", pick));
+        refresh();
+        view.screen().setStatus(pick < 0 ? "picture " + (i + 1) + " finds the table live in every picture"
+                : "picture " + (i + 1) + " looks at " + inst.areaName(pick) + " — parts outside it are left alone",
+                Ui.Kind.OK);
+        if (areas == 0) {
+            view.screen().setStatus("no pick area is taught yet: Installation → URCaps → RealSense Pilot → Pick areas",
+                    Ui.Kind.INFO);
         }
     }
 
-    void anyBlock() {
-        change(new UndoableChanges() {
-            @Override
-            public void executeChanges() {
-                model.set(KEY_TAP_U, -1);
-                model.set(KEY_TAP_V, -1);
-            }
+    // -- the settings -----------------------------------------------------------------------------
+
+    @Override
+    public void setOrder(final String first, final String rows) {
+        if (!PickScript.isOrder(first, rows)) return;
+        change(() -> {
+            model.set(KEY_ORDER_FIRST, first);
+            model.set(KEY_ORDER_ROWS, rows);
         });
-        view.show(this);
-        view.setStatus("the program will pick the block nearest the middle of the picture", PilotView.Kind.OK);
+        refresh();
+        view.screen().setStatus("pick order: " + PickScript.orderText(first, rows) + " — see the numbers",
+                Ui.Kind.OK);
     }
 
-    void setGripMm(final double mm) {
-        change(new UndoableChanges() {
-            @Override
-            public void executeChanges() {
-                model.set(KEY_GRIP_MM, mm);
-            }
-        });
-        view.show(this);
+    @Override
+    public void setNumber(final String key, double value) {
+        PickScript s = script();
+        final double v = s.set(key, value);
+        change(() -> model.set(key, v));
+        refresh();
     }
 
-    void setLiftMm(final double mm) {
-        change(new UndoableChanges() {
+    @Override
+    public void askNumber(final String key, JLabel anchor) {
+        final PickScript.Num n = PickScript.BY_KEY.get(key);
+        if (n == null) return;
+        KeyboardNumberInput<Double> kb = api.getUserInterfaceAPI().getUserInteraction().getKeyboardInputFactory()
+                .createPositiveDoubleKeypadInput();
+        kb.setInitialValue(model.get(key, n.def));
+        kb.show(anchor, new KeyboardInputCallback<Double>() {
             @Override
-            public void executeChanges() {
-                model.set(KEY_LIFT_MM, mm);
+            public void onOk(Double value) {
+                if (value != null) setNumber(key, value);
             }
         });
-        view.show(this);
     }
 
-    private int[] nearestBlock(int x, int y) {
-        int[] best = null;
-        long bestD = Long.MAX_VALUE;
-        for (int[] b : blocks) {
-            long d = (long) (b[0] - x) * (b[0] - x) + (long) (b[1] - y) * (b[1] - y);
-            if (d < bestD) {
-                bestD = d;
-                best = b;
-            }
+    @Override
+    public void setGripper(final String mode) {
+        if (!PickScript.contains(PickScript.GRIPPERS, mode)) return;
+        change(() -> model.set(KEY_GRIPPER, mode));
+        refresh();
+        view.screen().setStatus("children".equals(mode)
+                ? "your gripper nodes go inside this node and run at the grip; what happens next follows the node"
+                : "the node drives the " + PickScreen.gripperWords(mode) + "; its children are the routine after the"
+                + " pick", Ui.Kind.OK);
+    }
+
+    @Override
+    public void setFlag(final String key, final boolean on) {
+        if (PickScreen.FLAG_POPUP.equals(key)) {
+            change(() -> model.set(KEY_POPUP, on));
+        } else if (PickScreen.FLAG_PER_POINT.equals(key)) {
+            change(() -> model.set(KEY_PER_POINT, on));
+            if (on) ensurePointRoutines();
+            view.screen().setStatus(on ? "each picture point has its own routine inside this node (\"After picture N\")"
+                    : "the per-picture routines stay in the program until you delete them", Ui.Kind.INFO);
         }
-        return best != null && bestD <= 80L * 80L ? best : null;
+        refresh();
     }
 
-    // -- teach: check the grasp with PolyScope's hold-to-move screen ------------------------------
+    @Override
+    public void resetDefaults() {
+        change(() -> {
+            for (PickScript.Num n : PickScript.NUMBERS) model.set(n.key, n.def);
+            model.set(KEY_POPUP, true);
+        });
+        refresh();
+        view.screen().setStatus("every option back at its default (the picture points and the order are kept)",
+                Ui.Kind.INFO);
+    }
 
-    /** {@code which}: "hover" (the fingertips 40 mm over the top) or "grip" (the grip depth). */
-    void check(final String which) {
-        view.setStatus("asking the cockpit where the " + which + " would be from here…", PilotView.Kind.INFO);
-        final Cockpit c = cockpit();
-        actions.submit(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Map<String, Object> body = new LinkedHashMap<String, Object>();
-                    body.put("u", tapU());
-                    body.put("v", tapV());
-                    body.put("grip_below_mm", gripMm());
-                    Map<String, Object> res = c.post("/api/pick/preview", body, 15000);
-                    if (!Boolean.TRUE.equals(res.get("ok"))) {
-                        Object e = res.get("error");
-                        view.setStatus("no " + which + " to check: " + (e == null ? "?" : e), PilotView.Kind.WARN);
-                        return;
-                    }
-                    final double[] p = Cockpit.six(res.get("polyscope_" + which + "_pose"));
-                    if (p == null) {
-                        Object note = res.get("polyscope_note");
-                        view.setStatus("PolyScope can't be given the " + which + ": " + (note == null ? "?" : note),
-                                PilotView.Kind.ERR);
-                        return;
-                    }
-                    SwingUtilities.invokeLater(new Runnable() {
-                        @Override
-                        public void run() {
-                            Pose pose = api.getProgramAPI().getValueFactoryProvider().getPoseFactory()
-                                    .createPose(p[0], p[1], p[2], p[3], p[4], p[5], Length.Unit.M, Angle.Unit.RAD);
-                            view.setStatus("PolyScope's move screen is open — hold Move to go to the " + which
-                                    + "; let go to stop", PilotView.Kind.OK);
-                            api.getUserInterfaceAPI().getUserInteraction().getRobotMovement()
-                                    .requestUserToMoveRobot(pose, done(which));
+    /** One "After picture N" child per picture point that doesn't have one yet. */
+    private void ensurePointRoutines() {
+        change(() -> {
+            try {
+                TreeNode root = tree();
+                boolean[] have = new boolean[PickScript.MAX_POINTS + 1];
+                for (TreeNode c : root.getChildren()) {
+                    if (c.getProgramNode() instanceof URCapProgramNode) {
+                        URCapProgramNode u = (URCapProgramNode) c.getProgramNode();
+                        if (u.canGetAs(PickRoutineContribution.class)) {
+                            int k = u.getAs(PickRoutineContribution.class).point();
+                            if (k >= 1 && k <= PickScript.MAX_POINTS) have[k] = true;
                         }
-                    });
-                } catch (IOException e) {
-                    view.setStatus(Cockpit.explain(e, c.base), PilotView.Kind.ERR);
-                } catch (RuntimeException e) {
-                    view.setStatus("check: " + e.getMessage(), PilotView.Kind.ERR);
+                    }
                 }
+                Variable loc = model.get(KEY_LOC_VARIABLE, (Variable) null);
+                for (int k = 1; k <= pointCount(); k++) {
+                    if (have[k]) continue;
+                    URCapProgramNode node = factory().createURCapProgramNode(PickRoutineService.class);
+                    node.getAs(PickRoutineContribution.class).init(k, loc);
+                    root.addChild(node);
+                }
+            } catch (Exception e) {
+                view.screen().setStatus("could not add the per-picture routines: " + e.getMessage(), Ui.Kind.ERR);
+            }
+        });
+    }
+
+    // -- check the approach with PolyScope's move screen --------------------------------------------
+
+    @Override
+    public void checkApproach() {
+        final PickScript s = script();
+        final Cockpit c = cockpit();
+        final int i = selected();
+        view.screen().setStatus("asking the camera computer where part #1's approach is…", Ui.Kind.INFO);
+        actions.submit(() -> {
+            try {
+                Map<String, Object> res = c.get("/api/pick/scene?opts=" + URLEncoder.encode(s.tokens(i), "UTF-8")
+                        + "&approach_mm=" + PickScript.num(s.n("approachMm")), 15000);
+                Object parts = res.get("parts");
+                Map<?, ?> first = parts instanceof List && !((List<?>) parts).isEmpty()
+                        && ((List<?>) parts).get(0) instanceof Map ? (Map<?, ?>) ((List<?>) parts).get(0) : null;
+                if (!Boolean.TRUE.equals(res.get("ok")) || first == null) {
+                    Object why = res.get("reason") != null ? res.get("reason") : res.get("error");
+                    view.screen().setStatus("no part to check: " + (why == null ? "?" : why), Ui.Kind.WARN);
+                    return;
+                }
+                final double[] p = Cockpit.six(first.get("polyscope_approach_pose"));
+                if (p == null) {
+                    view.screen().setStatus("the camera computer has no robot pose (is its robot link up?)", Ui.Kind.ERR);
+                    return;
+                }
+                SwingUtilities.invokeLater(() -> {
+                    Pose pose = api.getProgramAPI().getValueFactoryProvider().getPoseFactory()
+                            .createPose(p[0], p[1], p[2], p[3], p[4], p[5], Length.Unit.M, Angle.Unit.RAD);
+                    view.screen().setStatus("PolyScope's move screen: hold Move to go over part #1 — fingertips "
+                            + PickScript.num(s.n("approachMm")) + " mm over its top", Ui.Kind.OK);
+                    api.getUserInterfaceAPI().getUserInteraction().getRobotMovement().requestUserToMoveRobot(pose,
+                            done("approach over part #1"));
+                });
+            } catch (IOException e) {
+                view.screen().setStatus(Cockpit.explain(e, c.base), Ui.Kind.ERR);
+            } catch (RuntimeException e) {
+                view.screen().setStatus("check: " + e.getMessage(), Ui.Kind.ERR);
             }
         });
     }
@@ -367,31 +537,27 @@ public class PickContribution implements ProgramNodeContribution {
         return new RobotMovementCallback() {
             @Override
             public void onComplete(MovementCompleteEvent event) {
-                view.setStatus("at the " + what, PilotView.Kind.OK);
+                view.screen().setStatus("at the " + what, Ui.Kind.OK);
+                sceneAt = 0;
             }
 
             @Override
             public void onCancel(MovementCancelEvent event) {
-                view.setStatus("move to the " + what + " cancelled", PilotView.Kind.WARN);
+                view.screen().setStatus("move to the " + what + " cancelled", Ui.Kind.WARN);
             }
 
             @Override
             public void onError(MovementErrorEvent event) {
-                view.setStatus("move to the " + what + ": " + event.getErrorType(), PilotView.Kind.ERR);
+                view.screen().setStatus("move to the " + what + ": " + event.getErrorType(), Ui.Kind.ERR);
             }
         };
     }
 
-    // -- the feed and the detector's blocks -----------------------------------------------------
+    // -- the live picture ---------------------------------------------------------------------------
 
     private synchronized void startPolling() {
         if (poller != null && poller.isAlive()) return;
-        Thread t = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                pollLoop();
-            }
-        }, "realsense-pick-feed");
+        Thread t = new Thread(this::pollLoop, "realsense-pick-feed");
         t.setDaemon(true);
         poller = t;
         t.start();
@@ -405,81 +571,54 @@ public class PickContribution implements ProgramNodeContribution {
                 Cockpit.Frame f = c.colorPng(seq, POLL_TIMEOUT_MS);
                 if (f.status != 200) {
                     announced = false;
-                    view.setLive(false, null);
-                    view.setStatus(f.status == 503 ? "the cockpit is up but has no frame yet (camera opening?)"
-                            : "the cockpit at " + c.base + " answered HTTP " + f.status, PilotView.Kind.WARN);
+                    view.screen().setLive(false, null);
+                    view.screen().setStatus(f.status == 503 ? "the camera computer is up but has no picture yet"
+                            + " (camera opening?)" : "the camera computer at " + c.base + " answered HTTP " + f.status,
+                            Ui.Kind.WARN);
                     sleep(1000);
                     continue;
                 }
                 seq = f.seq;
-                view.setFrame(f.image);
-                view.setLive(true, f.fps);
-                if (System.currentTimeMillis() - detectedAt > DETECT_EVERY_MS) {
-                    detectedAt = System.currentTimeMillis();
-                    detect(c);
+                view.screen().setFrame(f.image);
+                view.screen().setLive(true, f.fps);
+                if (System.currentTimeMillis() - sceneAt > SCENE_EVERY_MS) {
+                    sceneAt = System.currentTimeMillis();
+                    PickScript s = script();
+                    Map<String, Object> res = c.get("/api/pick/scene?opts="
+                            + URLEncoder.encode(s.tokens(pointCount() == 0 ? -1 : selected()), "UTF-8"), 3000);
+                    if (res.get("pick_port") instanceof Number) keepPort(((Number) res.get("pick_port")).intValue());
+                    scene = Scene.parse(res);
+                    view.screen().setScene(scene);
+                    if (!Boolean.TRUE.equals(res.get("ok")) && res.get("error") != null) {
+                        view.screen().setStatus("the camera computer: " + res.get("error") + " (update it to 0.5.0?)",
+                                Ui.Kind.WARN);
+                        announced = false;
+                    }
                 }
                 if (!announced) {
                     String p = problem();
-                    view.setStatus(p == null ? "ready — live from " + c.base : "live from " + c.base + " · to do: " + p,
-                            p == null ? PilotView.Kind.OK : PilotView.Kind.INFO);
+                    view.screen().setStatus(p == null ? "ready — live from " + c.base : "to do: " + p,
+                            p == null ? Ui.Kind.OK : Ui.Kind.INFO);
                     announced = true;
                 }
             } catch (IOException e) {
                 announced = false;
-                view.setLive(false, null);
-                view.setStatus(Cockpit.explain(e, c.base), PilotView.Kind.ERR);
+                view.screen().setLive(false, null);
+                view.screen().setStatus(Cockpit.explain(e, c.base), Ui.Kind.ERR);
                 sleep(1500);
             } catch (RuntimeException e) {
                 announced = false;
-                view.setLive(false, null);
-                view.setStatus(Cockpit.explain(e, c.base), PilotView.Kind.ERR);
+                view.screen().setLive(false, null);
+                view.screen().setStatus(Cockpit.explain(e, c.base), Ui.Kind.ERR);
                 sleep(1500);
             }
         }
     }
 
-    private void detect(Cockpit c) throws IOException {
-        Map<String, Object> res = c.get("/api/pick/detect", 3000);
-        List<int[]> found = new ArrayList<int[]>();
-        Object list = res.get("blocks");
-        if (list instanceof List) {
-            for (Object o : (List<?>) list) {
-                if (!(o instanceof Map)) continue;
-                Map<?, ?> b = (Map<?, ?>) o;
-                int[] px = ints(b.get("pixel"), 2);
-                int[] mm = ints(b.get("size_mm"), 2);
-                if (px != null) found.add(new int[] {px[0], px[1], mm == null ? 0 : mm[0], mm == null ? 0 : mm[1]});
-            }
-        }
-        blocks = found;
-        if (res.get("pick_port") instanceof Number) {
-            final int port = ((Number) res.get("pick_port")).intValue();
-            if (port != model.get(KEY_PORT, PickScript.DEFAULT_PICK_PORT) && port > 0) {
-                SwingUtilities.invokeLater(new Runnable() {
-                    @Override
-                    public void run() {
-                        change(new UndoableChanges() {
-                            @Override
-                            public void executeChanges() {
-                                model.set(KEY_PORT, port);
-                            }
-                        });
-                    }
-                });
-            }
-        }
-        view.setBlocks(found, tapU(), tapV());
-    }
-
-    private static int[] ints(Object xs, int n) {
-        if (!(xs instanceof List) || ((List<?>) xs).size() != n) return null;
-        int[] out = new int[n];
-        for (int i = 0; i < n; i++) {
-            Object v = ((List<?>) xs).get(i);
-            if (!(v instanceof Number)) return null;
-            out[i] = ((Number) v).intValue();
-        }
-        return out;
+    /** The pick server's port as the camera computer reports it, kept for the program. */
+    private void keepPort(final int port) {
+        if (port <= 0 || port == model.get(KEY_PORT, PickScript.DEFAULT_PICK_PORT)) return;
+        SwingUtilities.invokeLater(() -> change(() -> model.set(KEY_PORT, port)));
     }
 
     private static void sleep(long ms) {
@@ -488,16 +627,5 @@ public class PickContribution implements ProgramNodeContribution {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    private static ThreadFactory daemon(final String name) {
-        return new ThreadFactory() {
-            @Override
-            public Thread newThread(Runnable r) {
-                Thread t = new Thread(r, name);
-                t.setDaemon(true);
-                return t;
-            }
-        };
     }
 }

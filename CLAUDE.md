@@ -233,7 +233,7 @@ bundle dir and skips those checks, so a VM load does not prove the pendant will 
 (missed once, 2026-09-27). Check with PolyScope's own `URCapFileValidationHelper` from the
 image's `/ursim/GUI/bundle`. Installed and rendered on the UR3e pendant 2026-09-27 (0.2.0).
 
-**RealSense Pick program node (same bundle, 0.3.0; `PickScript.java`, `perceptronics/picknode.py`):**
+**RealSense Pick program node (same bundle, 0.4.0; `PickScript.java`, `perceptronics/picknode.py`):**
 Program tab → URCaps → RealSense Pick. Its URScript runs in the operator's program (Local mode,
 no Primary) and talks to a pick server over a plain socket (`:7622`; `FIND`/`LOOK`/`REFINE`, and
 `LOG` lines that are never answered — a stray reply would be read as the next answer). No survey
@@ -246,6 +246,36 @@ every other route, and writes the whole trace to `captures/pick-server.log` or, 
 root-owned, `~/Library/Logs/perceptronics/` (also `GET /api/pick/log`). **Kill the sidecar before
 relaunching the cockpit** (`pkill -f "pick-server --bind"`): both bind `:7622`, and the cockpit
 just warns and runs without its pick server. The 0.3.0 script has not yet run on a controller.
+**Part size (0.4.0, `perceptronics/partspec.py`):** the node's Length × Width [× Height] ± tolerance
+(as the part lies; default ±25 %, never under ±5 mm) rides on FIND/REFINE as `part=60x40x30 tol=25`
+and replaces `detect_blocks`' fixed foam-block gate (≤ 70 × 60 mm); height is measured against the
+non-white depth in a ring around the blob (unseen → not checked). Status −7 = white things in view,
+none that size; the teach screen draws the rejects grey with why. Still colour-segmented: the part
+must read white. Verified on synthetic scenes only.
+
+**The pick kit, 0.5.0 (`docs/pick-kit.md`, 2026-09-28).** The product line for a PolyScope 5
+cell: `hardware/BOM.md` (sourced, dated prices), the bracket, `deploy/pi/` (a Pi-class arm64
+camera computer on minimal Debian: librealsense built pinned, the cockpit as the
+`perceptronics-cockpit` service on :7621/:7622, nftables; `scripts/deploy-pi.sh`, the
+`deploy-pick-pc` skill), and the URCap 0.5.0. **Detection is by volume**
+(`perceptronics/volume.py`, depth only, no colour): what stands the part's height above the
+surface with a top face its length × width; the surface is a taught pick area (three
+fingertip touches in the Installation node, nudged ≤ 15 mm to the live table) or the table
+found live; each part's min-area rectangle gives the axes, the fingers close across the short
+side. `order_parts` numbers parts in the **picture's** directions (front = bottom of the
+picture). Reach = base outer radius + 150 mm .. rated reach − 150 mm (`Reach.for_model`).
+**Pick server protocol 2** (`picknode.parse_options`): every request carries
+`part= tol= order= grip= stroke= [reach=] [plane= area=] node= loc= locs= proto=2`, answers
+are 16 numbers; `NEXT` serves the per-node queue (the next part already seen: no trip to the
+picture point), `FIND` refills it. The Java `PickScript.tokens` writes the same line, and
+`tests/test_urcap5_pick.py` reads the Java's tokens back with the Python parser — change
+one, the test tells you about the other. The node's screens (`PickScreen`, `LocationsScreen`,
+`LiveView`, `Diagrams`, `Ui`) are pure Swing: render them off-pendant with a harness (the
+README's `screens/` came from one). The teach screen asks `GET /api/pick/scene?opts=<tokens>`.
+**PolyScope 5.24/5.25/5.26** run every URCap change in CI (`urcap5-matrix.yml`,
+`urcap/ps5_matrix.py`, offset ports in `docker-compose.ps5-matrix.yml`): Felix shell
+(`127.0.0.1:6666` in the container) proves the bundle Active — polyscope.log never says so —
+then `urcap/pick5_e2e.py` runs the node's own script, two picks, the second from the queue.
 
 **Monocular scan** (`perceptronics scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before

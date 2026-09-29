@@ -112,6 +112,15 @@ urcap5-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-ps5-<ver
 urcap5-install: urcap5-package  ## Install it in the e-Series sim container $(URCAP5_CONTAINER) (restarts it).
 	$(PYTHON) urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-*.urcap --container $(URCAP5_CONTAINER)
 
+# The URCap on the last three PolyScope 5 minors (docker-compose.ps5-matrix.yml; amd64 host).
+PS5_VERSION ?= all
+.PHONY: urcap5-matrix urcap5-matrix-down
+urcap5-matrix:  ## Boot each PS5 URSim, check the URCap starts, run the pick e2e, down -v (PS5_VERSION=5.26).
+	DOCKER="$(DOCKER)" $(PYTHON) urcap/ps5_matrix.py run --version $(PS5_VERSION) --artifacts target/ps5-matrix/artifacts
+
+urcap5-matrix-down:  ## Tear the PS5 matrix sims down with their volumes.
+	DOCKER="$(DOCKER)" $(PYTHON) urcap/ps5_matrix.py down --version $(PS5_VERSION)
+
 # ---- RealSense perception (docs/realsense.md) ----------------------------------
 # On macOS librealsense needs root to claim the camera's USB interface, hence
 # the `sudo` on the hardware targets; `rs-gui-fake` needs no camera at all.

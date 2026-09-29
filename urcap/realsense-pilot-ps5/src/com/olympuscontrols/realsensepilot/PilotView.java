@@ -5,6 +5,8 @@ import com.ur.urcap.api.contribution.installation.swing.SwingInstallationNodeVie
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardInputCallback;
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardTextInput;
 import java.awt.BasicStroke;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -35,8 +37,11 @@ import javax.swing.SwingUtilities;
  * The PolyScope X node's page, in Swing: title + live dot + fps, the Cockpit field with
  * Save, the colour feed (hover for depth, tap a point, the yellow mark), a status line,
  * the located target, and Move (PolyScope) / Move (cockpit) / Bring up / STOP / Clear.
- * "Open cockpit" is gone — the pendant has no browser to open it in.
+ * "Open cockpit" is gone — the pendant has no browser to open it in. A second tab holds the
+ * pick areas the RealSense Pick node looks at, and the reach ({@link LocationsScreen}).
  */
+// Swing components are never serialized here; javac's serial lint does not apply to them
+@SuppressWarnings("serial")
 public class PilotView implements SwingInstallationNodeView<PilotContribution> {
     enum Kind { INFO, OK, WARN, ERR }
 
@@ -68,6 +73,7 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
     private final JButton stop = button("STOP", DANGER, Color.WHITE);
     private final JButton clear = button("Clear", null, null);
     private PilotContribution node;
+    private LocationsScreen areas;
 
     PilotView(ViewAPIProvider api) {
         this.api = api;
@@ -78,14 +84,26 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
         this.node = contribution;
         // PolyScope's own panel refuses most setters (setBorder throws "Method not
         // supported from URCaps", verified in URSim 5.26): lay it out, add one panel we own.
-        host.setLayout(new BoxLayout(host, BoxLayout.Y_AXIS));
+        host.setLayout(new BorderLayout());
+        JPanel outer = new JPanel(new BorderLayout(0, 6));
+        outer.setBackground(Ui.BG);
+        outer.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        host.add(outer, BorderLayout.CENTER);
         JPanel panel = new JPanel();
+        panel.setOpaque(false);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
-        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        host.add(panel);
+        final CardLayout cards = new CardLayout();
+        final JPanel deck = new JPanel(cards);
+        deck.setOpaque(false);
+        deck.add(panel, "camera");
+        areas = new LocationsScreen(contribution);
+        deck.add(areas, "areas");
+        outer.add(deck, BorderLayout.CENTER);
 
+        JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
         JPanel title = row();
+        title.setOpaque(false);
         dot.setForeground(IDLE);
         dot.setFont(dot.getFont().deriveFont(16f));
         JLabel name = new JLabel("RealSense Pilot");
@@ -95,7 +113,12 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
         title.add(dot);
         title.add(name);
         title.add(fps);
-        panel.add(title);
+        top.add(title, BorderLayout.WEST);
+        Ui.Segmented tabs = new Ui.Segmented(new String[] {"Camera", "Pick areas + reach"}, 0,
+                i -> cards.show(deck, i == 0 ? "camera" : "areas"));
+        tabs.setPreferredSize(new Dimension(340, 40));
+        top.add(tabs, BorderLayout.EAST);
+        outer.add(top, BorderLayout.NORTH);
 
         JPanel cockpitRow = row();
         JLabel label = new JLabel("Cockpit");
@@ -189,6 +212,10 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
         });
     }
 
+    LocationsScreen areas() {
+        return areas;
+    }
+
     // -- setters the contribution calls from any thread ------------------------------------------
 
     void showUrl(final String value) {
@@ -225,6 +252,8 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
             @Override
             public void run() {
                 dot.setForeground(live ? LIVE : DEAD);
+                feed.live = live;
+                feed.repaint();
                 String f = "";
                 if (live && framesPerSecond != null) {
                     try {
@@ -329,6 +358,7 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
         private static final int H = 362; // 848×480 scaled to 640 wide
         transient volatile BufferedImage image;
         volatile String hover = "hover for depth · tap a point";
+        volatile boolean live;
         int markX = -1;
         int markY = -1;
 
@@ -384,7 +414,13 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
             g.fillRect(0, 0, getWidth(), getHeight());
             BufferedImage img = image;
             Rectangle r = drawn();
-            if (img != null && r != null) g.drawImage(img, r.x, r.y, r.width, r.height, null);
+            if (img == null || !live) {
+                LiveView.paintNoCamera(g, getWidth(), getHeight(),
+                        "Check the camera computer's address above, and its camera's USB 3 cable.");
+                g.dispose();
+                return;
+            }
+            if (r != null) g.drawImage(img, r.x, r.y, r.width, r.height, null);
             if (markX >= 0) {
                 g.setColor(new Color(0, 0, 0, 128));
                 g.setStroke(new BasicStroke(4f));

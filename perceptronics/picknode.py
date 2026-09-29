@@ -28,6 +28,11 @@ Requests (one line each, ASCII, ≤ 1 kB; the pose is URScript's ``to_str(pose)`
     fingertips clear the top by :data:`LOOK_TIP_CLEAR_M`. Status -6 when no such pose
     exists (the node then looks from straight over the block, as before).
 
+``part=<L>x<W>[x<H>] [tol=<pct>]`` (FIND and REFINE, optional): the part's rough size in
+mm as it lies — footprint and height above the table — and how far off it may measure
+(default 25 %). Only candidates that size are considered
+(:class:`perceptronics.partspec.PartSpec`); without it, anything foam-block-sized.
+
 ``LOG <text>``
     The robot program saying where it is (``start``, ``FIND status 1``, ``hover`` …):
     written to the server's log, printable ASCII only, capped; **no reply**.
@@ -56,11 +61,16 @@ import math
 import re
 import socketserver
 import threading
+import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from urctl.pose import Transform
 
+from . import partspec
+from .partspec import PartSpec
 from .pickcycle import Block, detect_blocks, grasp_rotation, grasp_yaw_deg, tip_pose
+from .volume import Reach, Scene, Surface, find_parts, parse_order
 
 DEFAULT_PICK_PORT = 7622
 MAX_LINE = 1024
@@ -81,7 +91,13 @@ STATUS = {
     -4: "no fresh camera frame",
     -5: "the second look did not find the block again",
     -6: "no look pose keeps the camera in range and the fingertips clear",
+    -7: "something is in view, but nothing the size of the part",
     -9: "malformed request",
+    # protocol 2 (the 0.5.0 node): why a location had nothing to pick
+    -10: "the only parts in view are out of reach",
+    -11: "no room for the open fingers beside any part",
+    -12: "the parts in view are outside the pick area",
+    -13: "the only part in view is cut off by the edge of the picture",
 }
 
 _NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
@@ -98,8 +114,8 @@ class RequestError(ValueError):
 
 
 def parse_request(line: str) -> dict:
-    """``{"verb", "flange", "near" (REFINE, LOOK), "pixel" (FIND, optional)}``,
-    ``{"verb": "LOG", "text"}``, or RequestError."""
+    """``{"verb", "flange", "near" (REFINE, LOOK), "pixel" (FIND, optional), "part"
+    (FIND, REFINE: a PartSpec or None)}``, ``{"verb": "LOG", "text"}``, or RequestError."""
     text = line.strip()
     if text[:4].upper() in ("LOG", "LOG "):  # the program never reads a reply to LOG: never refuse one
         said = text[3:].strip()[: MAX_LOG_TEXT * 2]
@@ -108,17 +124,23 @@ def parse_request(line: str) -> dict:
     if not text or len(text) > MAX_LINE:
         raise RequestError("empty or oversized request")
     verb = text.split(None, 1)[0].upper()
-    if verb not in ("FIND", "REFINE", "LOOK"):
+    if verb not in ("FIND", "REFINE", "LOOK", "NEXT"):
         raise RequestError(f"unknown verb {verb[:16]!r}")
-    poses = [[float(g) for g in m.groups()] for m in _POSE_RX.finditer(text)]
+    opts = parse_options(text)
+    poses = [[float(g) for g in m.groups()] for m in _POSE_RX.finditer(_PLANE_RX.sub("", text))]
     if not poses or not all(math.isfinite(v) and abs(v) < 100.0 for p in poses for v in p):
         raise RequestError("no plausible pose p[x, y, z, rx, ry, rz] in the request")
-    out: dict = {"verb": verb, "flange": poses[0], "lean": 0.0}
+    out: dict = {"verb": verb, "flange": poses[0], "lean": 0.0, "options": opts}
     lean = _LEAN_RX.search(text)
     if lean:
         out["lean"] = float(lean.group(1))
         if not (0.0 <= out["lean"] <= MAX_LEAN_DEG):
             raise RequestError(f"lean must be within 0..{MAX_LEAN_DEG:.0f} deg")
+    out["part"] = opts.part if verb != "LOOK" else None
+    if verb == "NEXT":
+        if not opts.node:
+            raise RequestError("NEXT needs node=<id>")
+        return out
     if verb in ("REFINE", "LOOK"):
         if len(poses) < 2:
             raise RequestError(f"{verb} needs the flange pose and the block centre")
@@ -128,6 +150,146 @@ def parse_request(line: str) -> dict:
         if "u" in kv and "v" in kv and kv["u"] >= 0 and kv["v"] >= 0:
             out["pixel"] = (kv["u"], kv["v"])
     return out
+
+
+# -- protocol 2: the options every request of the 0.5.0 node carries -------------------------
+
+_POSE_BODY = rf"\[\s*({_NUM})\s*,\s*({_NUM})\s*,\s*({_NUM})\s*,\s*({_NUM})\s*,\s*({_NUM})\s*,\s*({_NUM})\s*\]"
+_PLANE_RX = re.compile(r"\bplane=p" + _POSE_BODY)
+_AREA_RX = re.compile(rf"\barea=({_NUM})[xX]({_NUM})(?![\w.])")
+_ORDER_RX = re.compile(r"\border=([A-Za-z]{2},[A-Za-z]{2})\b")
+_REACH_RX = re.compile(rf"\breach=({_NUM}),({_NUM})(?![\w.])")
+_MM_RX = {k: re.compile(rf"\b{k}=({_NUM})(?![\w.])") for k in ("grip", "stroke")}
+_NODE_RX = re.compile(r"\bnode=([0-9A-Za-z]{1,12})\b")
+_INT_RX = {k: re.compile(rf"\b{k}=(\d{{1,3}})\b") for k in ("loc", "locs", "proto")}
+MAX_LOCS = 32
+QUEUE_TTL_S = 120.0  # a part seen at a picture point stays queued this long
+PROTO2_FIELDS = 16
+
+
+@dataclass(frozen=True)
+class PickOptions:
+    """What the 0.5.0 node tells the server with every request (all optional; the defaults
+    are protocol 1's behaviour): ``part=LxWxH tol=T``, the taught surface ``plane=p[...]``
+    with ``area=<x>x<y>`` (mm, along the plane's X / Y from its origin), the pick
+    ``order=LR,FB``, ``reach=<min>,<max>`` (m from the base axis), the grip depth
+    ``grip=<mm>`` and the gripper's ``stroke=<mm>`` (for the finger-room check), and the
+    node's identity ``node=<id> loc=<i> locs=<n> proto=2``."""
+
+    part: PartSpec | None = None
+    surface: Surface | None = None
+    order: tuple[str, str] = ("LR", "FB")
+    reach: Reach | None = None
+    grip_below_m: float = 0.015
+    stroke_m: float = DEFAULT_STROKE_M
+    node: str = ""
+    loc: int = 0
+    locs: int = 1
+    proto: int = 1
+
+    def fingers(self) -> dict:
+        return {"grasp_below_m": self.grip_below_m, "stroke_m": self.stroke_m}
+
+
+def parse_options(text: str) -> PickOptions:
+    """The :class:`PickOptions` in a request line (or the teach screen's query); RequestError
+    when one is present but malformed or out of range."""
+    try:
+        part = partspec.parse(text)
+    except ValueError as exc:
+        raise RequestError(str(exc)) from None
+    kw: dict = {"part": part}
+    m = _PLANE_RX.search(text)
+    if m:
+        pose = [float(g) for g in m.groups()]
+        if not all(math.isfinite(v) and abs(v) < 100 for v in pose):
+            raise RequestError("plane must be a pose p[x, y, z, rx, ry, rz]")
+        size = None
+        a = _AREA_RX.search(text)
+        if a:
+            size = (float(a.group(1)) / 1000.0, float(a.group(2)) / 1000.0)
+            if not all(0.005 <= abs(v) <= 3.0 for v in size):
+                raise RequestError("area must be 5..3000 mm each way")
+        kw["surface"] = Surface.from_pose(pose, size)
+    elif re.search(r"\bplane=", text):
+        raise RequestError("plane must be a pose p[x, y, z, rx, ry, rz]")
+    o = _ORDER_RX.search(text)
+    if o:
+        try:
+            kw["order"] = parse_order(o.group(1))
+        except ValueError as exc:
+            raise RequestError(str(exc)) from None
+    elif re.search(r"\border=", text):
+        raise RequestError("order must be like order=LR,FB")
+    r = _REACH_RX.search(text)
+    if r:
+        lo, hi = float(r.group(1)), float(r.group(2))
+        if not (0.0 <= lo < 3.0 and 0.0 <= hi <= 3.0 and (hi == 0 or hi > lo)):
+            raise RequestError("reach must be min,max in metres with max > min (max 0: no limit)")
+        kw["reach"] = Reach(lo, hi)
+    for key, name, lo, hi in (("grip", "grip_below_m", 0.0, 60.0), ("stroke", "stroke_m", 10.0, 300.0)):
+        g = _MM_RX[key].search(text)
+        if g:
+            mm = float(g.group(1))
+            if not lo <= mm <= hi:
+                raise RequestError(f"{key} must be {lo:.0f}..{hi:.0f} mm")
+            kw[name] = mm / 1000.0
+    n = _NODE_RX.search(text)
+    if n:
+        kw["node"] = n.group(1)
+    for key in ("loc", "locs", "proto"):
+        i = _INT_RX[key].search(text)
+        if i:
+            kw[key] = int(i.group(1))
+    if not 0 <= kw.get("loc", 0) <= MAX_LOCS or not 1 <= kw.get("locs", 1) <= MAX_LOCS:
+        raise RequestError(f"loc and locs must be within 1..{MAX_LOCS}")
+    if kw.get("proto", 1) not in (1, 2):
+        raise RequestError("proto must be 1 or 2")
+    return PickOptions(**kw)
+
+
+def format_reply2(
+    status: int,
+    centre: Sequence[float] | None = None,
+    pose: Sequence[float] | None = None,
+    *,
+    loc: int = 0,
+    order: int = 0,
+    remaining: int = 0,
+    dims_mm: Sequence[float] | None = None,
+) -> str:
+    """Protocol 2's line: ``(status, cx, cy, cz, x, …, rz, loc, order, remaining, L, W, H)``
+    — :data:`PROTO2_FIELDS` numbers, the part's measured size in mm last."""
+    vals = (
+        [float(status)]
+        + [float(v) for v in (centre or (0.0,) * 3)]
+        + [float(v) for v in (pose or (0.0,) * 6)]
+        + [float(loc), float(order), float(remaining)]
+        + [float(v) for v in (dims_mm or (0.0,) * 3)]
+    )
+    return "(" + ",".join(f"{v:.6f}" for v in vals) + ")\n"
+
+
+_SIZE_WHYS = {"too long", "too wide", "too short", "too narrow", "too tall", "too flat", "not a block"}
+
+
+def scene_status(scene: Scene) -> int:
+    """Why a picture had nothing to pick, as the most useful status code."""
+    if scene.parts:
+        return 1
+    whys = [p.why or "" for p in scene.rejected]
+    for code, test in (
+        (-7, lambda w: w in _SIZE_WHYS or "touching" in w),
+        (-1, lambda w: w.startswith("wider than")),
+        (-11, lambda w: w.startswith("no room")),
+        (-2, lambda w: w.startswith("too close to the base")),
+        (-10, lambda w: w.startswith("out of reach")),
+        (-12, lambda w: w.startswith("outside the pick area")),
+        (-13, lambda w: w.startswith("cut off")),
+    ):
+        if any(test(w) for w in whys):
+            return code
+    return 0
 
 
 def format_reply(
@@ -217,8 +379,12 @@ class PickPlanner:
         min_radius_m: float = 0.2,
         finger_axis: str = "y",
         log: Callable[[str, bool], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.frame_source, self.latest_seq, self.handeye = frame_source, latest_seq, handeye
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._queues: dict[str, dict] = {}  # node id -> {"t", "pointer", "items": [...]}
         self.tip_m, self.stroke_m, self.min_radius_m, self.finger_axis = (
             tip_m,
             stroke_m,
@@ -232,20 +398,29 @@ class PickPlanner:
             req = parse_request(line)
         except RequestError as exc:
             self.log(f"pick request refused: {exc}", False)
-            return format_reply(-9)
+            # a protocol-2 program reads 16 numbers: answer in its shape, or it sees a timeout
+            return format_reply2(-9) if re.search(r"\bproto=2\b", line) else format_reply(-9)
         if req["verb"] == "LOG":
             self.log(f"robot: {req['text']}", True)
             return ""  # the program does not read a reply to LOG
+        if req["options"].proto == 2 and req["verb"] != "LOOK":
+            return self._answer2(req)
         status, centre, pose = self._look(req) if req["verb"] == "LOOK" else self._plan(req)
         what = STATUS.get(status, "?")
         where = f" top {[round(c, 3) for c in centre]}" if centre else ""
         self.log(f"pick {req['verb']}: {what}{where}", status == 1)
         return format_reply(status, centre, pose)
 
-    def plan(self, flange: Sequence[float], pixel: tuple[int, int] | None = None, lean: float = 0.0) -> dict:
+    def plan(
+        self,
+        flange: Sequence[float],
+        pixel: tuple[int, int] | None = None,
+        lean: float = 0.0,
+        part: PartSpec | None = None,
+    ) -> dict:
         """A FIND for a caller that already has the flange pose (the node's teach-time
         check through the cockpit): ``{status, reason, centre, top_pose}``."""
-        req = {"verb": "FIND", "flange": [float(v) for v in flange], "lean": float(lean)}
+        req = {"verb": "FIND", "flange": [float(v) for v in flange], "lean": float(lean), "part": part}
         if pixel is not None:
             req["pixel"] = pixel
         status, centre, pose = self._plan(req)
@@ -268,9 +443,24 @@ class PickPlanner:
             return -4, None, None
         _, w, h, ch, rgb, depth, scale, K = frame
         flange = req["flange"]
+        part = req.get("part")
+        rejects: list[dict] = []
         blocks = detect_blocks(
-            w, h, ch, rgb, depth, scale, K, Transform.from_pose(he), Transform.from_pose(flange)
+            w,
+            h,
+            ch,
+            rgb,
+            depth,
+            scale,
+            K,
+            Transform.from_pose(he),
+            Transform.from_pose(flange),
+            part=part,
+            rejects=rejects,
         )
+        if part is not None and rejects:
+            seen = ", ".join(f"{r['size_mm'][0]}x{r['size_mm'][1]} mm {r['why']}" for r in rejects[:4])
+            self.log(f"pick {req['verb']}: not the part ({part.token()}): {seen}", False)
         if req["verb"] == "REFINE":
             near = req["near"]
             close = [b for b in blocks if math.dist(b.centre_base[:2], near[:2]) < REFINE_RADIUS_M]
@@ -280,7 +470,7 @@ class PickPlanner:
         else:
             blk = choose(blocks, req.get("pixel"), w, h)
             if blk is None:
-                return 0, None, None
+                return (-7 if part is not None and rejects else 0), None, None
         if blk.minor_m > self.stroke_m - 0.006:
             return -1, blk.centre_base, None
         if self.min_radius_m and math.hypot(blk.centre_base[0], blk.centre_base[1]) < self.min_radius_m:
@@ -289,13 +479,153 @@ class PickPlanner:
         yaw = grasp_yaw_deg(rot, blk.theta + math.pi / 2, self.finger_axis)
         return 1, list(blk.centre_base), tip_pose(blk.centre_base, rot, self.tip_m, yaw)
 
+    # -- protocol 2 ----------------------------------------------------------------------
+
+    def _answer2(self, req: dict) -> str:
+        opts: PickOptions = req["options"]
+        verb = req["verb"]
+        if verb == "NEXT":
+            got = self._next(opts)
+        elif verb == "FIND":
+            got = self._find2(req, opts)
+        else:
+            got = self._refine2(req, opts)
+        status = got["status"]
+        what = "nothing queued" if verb == "NEXT" and status == 0 else STATUS.get(status, "?")
+        at = got.get("loc", 0)
+        where = f" #{got.get('order', 0)} at {at}" if status == 1 else f" (next: {at})"
+        self.log(f"pick {verb} [{opts.node or '-'}]: {what}{where}", status in (0, 1))
+        return format_reply2(
+            status,
+            got.get("centre"),
+            got.get("pose"),
+            loc=got.get("loc", 0),
+            order=got.get("order", 0),
+            remaining=got.get("remaining", 0),
+            dims_mm=got.get("dims_mm"),
+        )
+
+    def _queue(self, node: str) -> dict:
+        q = self._queues.get(node)
+        if q is None:
+            q = self._queues[node] = {"t": self.clock(), "pointer": 1, "items": []}
+        return q
+
+    def _next(self, opts: PickOptions) -> dict:
+        """The next part already seen (no picture needed), else where to look next."""
+        with self._lock:
+            q = self._queue(opts.node)
+            if q["items"] and self.clock() - q["t"] <= QUEUE_TTL_S:
+                item = q["items"].pop(0)
+                return {**item, "status": 1, "remaining": len(q["items"])}
+            q["items"] = []
+            if not 1 <= q["pointer"] <= opts.locs:
+                q["pointer"] = 1
+            return {"status": 0, "loc": q["pointer"]}
+
+    def scene(self, flange: Sequence[float] | None, opts: PickOptions, after: int | None = None):
+        """``(status, scene, frame)`` for a picture newer than ``after`` (default: the
+        request's arrival) seen from ``flange`` (None: camera-only)."""
+        he = self.handeye()
+        if flange is not None and not he:
+            return -3, None, None
+        arrived = self.latest_seq() if after is None else after
+        frame = self.frame_source(arrived + FRESH_FRAMES - 1)
+        if frame is None:
+            return -4, None, None
+        _, w, h, _ch, _rgb, depth, scale, K = frame
+        T_bc = None if flange is None else Transform.from_pose(flange).compose(Transform.from_pose(he))
+        scene = find_parts(
+            w,
+            h,
+            depth,
+            scale,
+            K,
+            T_bc,
+            spec=opts.part,
+            surface=opts.surface,
+            reach=opts.reach,
+            order=opts.order,
+            fingers=opts.fingers() if T_bc is not None else None,
+        )
+        for p in list(scene.parts):
+            if p.width_m > opts.stroke_m - 0.006:
+                p.why = f"wider than the open gripper ({p.width_m * 1000:.0f} mm)"
+                scene.parts.remove(p)
+                scene.rejected.append(p)
+        for n, p in enumerate(scene.parts, 1):
+            p.order = n
+        return 1, scene, frame
+
+    def _grasp(self, part, flange: Sequence[float], lean: float) -> list[float]:
+        rot = grasp_rotation(flange, part.centre_base, lean)
+        yaw = grasp_yaw_deg(rot, part.theta + math.pi / 2, self.finger_axis)
+        return tip_pose(part.centre_base, rot, self.tip_m, yaw)
+
+    def _item(self, part, flange: Sequence[float], lean: float, loc: int) -> dict:
+        return {
+            "centre": list(part.centre_base),
+            "pose": self._grasp(part, flange, lean),
+            "loc": loc,
+            "order": part.order,
+            "dims_mm": [round(v * 1000, 1) for v in (part.length_m, part.width_m, part.height_m)],
+        }
+
+    def _find2(self, req: dict, opts: PickOptions) -> dict:
+        loc = opts.loc or 1
+        ok, scene, _ = self.scene(req["flange"], opts)
+        if ok != 1:
+            return {"status": ok, "loc": loc}
+        for note in scene.notes:
+            self.log(f"pick FIND at {loc}: {note}", False)
+        for p in scene.rejected[:6]:
+            self.log(
+                f"pick FIND at {loc}: not picking {p.length_m * 1000:.0f}x{p.width_m * 1000:.0f}x"
+                f"{p.height_m * 1000:.0f} mm at {[round(c, 3) for c in p.centre]}: {p.why}",
+                False,
+            )
+        items = [self._item(p, req["flange"], req["lean"], loc) for p in scene.parts]
+        with self._lock:
+            q = self._queue(opts.node or "-")
+            q["t"] = self.clock()
+            if not items:
+                q["items"] = []
+                q["pointer"] = loc % max(1, opts.locs) + 1  # this location is empty: the next one
+                return {"status": scene_status(scene), "loc": q["pointer"]}
+            q["pointer"] = loc  # when the queue drains, look here again: picks may uncover more
+            q["items"] = items[1:]
+            return {**items[0], "status": 1, "remaining": len(items) - 1}
+
+    def _refine2(self, req: dict, opts: PickOptions) -> dict:
+        ok, scene, _ = self.scene(req["flange"], opts)
+        if ok != 1:
+            return {"status": ok, "loc": opts.loc}
+        near = req["near"]
+        # the close look sees the part from nearer: its neighbours may now be cut off or out of
+        # the area, but the part itself is judged only by its size
+        edge = [p for p in scene.rejected if (p.why or "").startswith(("cut off", "no room"))]
+        pool = list(scene.parts) + edge
+        close = [p for p in pool if math.dist(p.centre[:2], near[:2]) < REFINE_RADIUS_M]
+        if not close:
+            with self._lock:
+                self._queue(opts.node or "-")["items"] = []  # what was queued was seen before this change
+            return {"status": -5, "loc": opts.loc}
+        part = min(close, key=lambda p: math.dist(p.centre[:2], near[:2]))
+        if part.why and part.why.startswith("no room"):
+            return {"status": -11, "loc": opts.loc, "centre": list(part.centre)}
+        item = self._item(part, req["flange"], req["lean"], opts.loc)
+        with self._lock:
+            remaining = len(self._queue(opts.node or "-")["items"])
+        return {**item, "status": 1, "order": 0, "remaining": remaining}
+
 
 # -- the node's teach screen (the cockpit's routes and the stand-alone pick server's) ---------
 
 
 def parse_preview_request(payload: dict) -> tuple[tuple[int, int] | None, float, float]:
     """``POST /api/pick/preview``'s body -> ``(pixel, grip_below_mm, hover_mm)``;
-    ValueError when a field isn't a number or is out of range."""
+    ValueError when a field isn't a number or is out of range. The body's ``part`` /
+    ``tol`` are :func:`perceptronics.partspec.from_payload`'s."""
     try:
         u, v = int(payload.get("u", -1)), int(payload.get("v", -1))
         grip = float(payload.get("grip_below_mm", 15.0))
@@ -314,6 +644,7 @@ def preview(
     *,
     grip_below_mm: float = 15.0,
     hover_mm: float = 40.0,
+    part: PartSpec | None = None,
 ) -> dict:
     """The node's teach-time check: what the program would do from where the arm is
     now. ``flange_pose`` is a ``get_flange_pose`` result (``flange``, ``tcp_offset``,
@@ -325,7 +656,7 @@ def preview(
     fp = flange_pose
     if not fp.get("ok") or not fp.get("flange"):
         return {"ok": False, "error": fp.get("error") or "could not read the flange pose", "robot": fp}
-    planned = planner.plan(fp["flange"], pixel)
+    planned = planner.plan(fp["flange"], pixel, part=part)
     out: dict = {"ok": planned["status"] == 1, **planned, "flange_pose": fp["flange"]}
     if planned["status"] != 1:
         out["error"] = planned["reason"]
@@ -342,12 +673,24 @@ def preview(
     return out
 
 
-def detect_report(frame: tuple, *, pick_port: int | None, handeye: bool, tip_m: float | None) -> dict:
+def detect_report(
+    frame: tuple,
+    *,
+    pick_port: int | None,
+    handeye: bool,
+    tip_m: float | None,
+    part: PartSpec | None = None,
+) -> dict:
     """What the node's teach screen draws: the blocks the pick server would choose
     among, in image pixels, from one ``(seq, w, h, ch, rgb, depth, scale, K)`` frame
-    (camera frame — no robot needed)."""
+    (camera frame — no robot needed) — and, as ``rejected``, the candidates that were
+    the wrong size (for ``part`` when given) with why, so the operator can see what
+    the filter is doing."""
     seq, w, h, ch, rgb, depth, scale, K = frame
-    blocks = detect_blocks(w, h, ch, rgb, depth, scale, K, Transform(), Transform())
+    rejects: list[dict] = []
+    blocks = detect_blocks(
+        w, h, ch, rgb, depth, scale, K, Transform(), Transform(), part=part, rejects=rejects
+    )
     return {
         "ok": True,
         "seq": seq,
@@ -356,15 +699,56 @@ def detect_report(frame: tuple, *, pick_port: int | None, handeye: bool, tip_m: 
         "pick_port": pick_port,
         "handeye": handeye,
         "tip_m": tip_m,
+        "part": None if part is None else part.as_dict(),
         "blocks": [
             {
                 "pixel": list(b.pixel),
                 "size_mm": [round(b.major_m * 1000), round(b.minor_m * 1000)],
+                "height_mm": None if b.height_m is None else round(b.height_m * 1000),
                 "distance_m": round(b.centre_base[2], 3),
             }
             for b in blocks
         ],
+        "rejected": rejects,
     }
+
+
+def scene_report(
+    planner: PickPlanner,
+    flange: Sequence[float] | None,
+    opts: PickOptions,
+    *,
+    pick_port: int | None = None,
+) -> dict:
+    """What the 0.5.0 node's teach screen draws, computed exactly as the program's FIND
+    would from ``flange`` (the live pose; None: camera-only, no reach or pick area):
+    every part with its outline in picture pixels and its pick-order number, every
+    candidate that isn't picked with why, the surface used. Moves nothing."""
+    ok, scene, frame = planner.scene(flange, opts, after=max(0, planner.latest_seq() - FRESH_FRAMES))
+    if ok != 1:
+        return {"ok": False, "status": ok, "error": STATUS.get(ok, "?")}
+    seq, w, h = frame[0], frame[1], frame[2]
+    out = scene.as_dict()
+    if flange is not None:
+        # the grasp for each part (fingertips on its top centre, flange pose): the teach screen's
+        # "Check approach" backs it off along the tool axis for PolyScope's move screen
+        for d, p in zip(out["parts"], scene.parts, strict=True):
+            d["grasp_pose"] = [round(v, 6) for v in planner._grasp(p, flange, 0.0)]
+    out.update(
+        ok=True,
+        seq=seq,
+        width=w,
+        height=h,
+        pick_port=pick_port,
+        base_frame=flange is not None,
+        status=scene_status(scene),
+        reason=STATUS.get(scene_status(scene), "?"),
+        part=None if opts.part is None else opts.part.as_dict(),
+        order=list(opts.order),
+    )
+    if flange is None:
+        out["notes"].append("no live robot pose: reach and the pick area are not checked")
+    return out
 
 
 class _Handler(socketserver.StreamRequestHandler):
