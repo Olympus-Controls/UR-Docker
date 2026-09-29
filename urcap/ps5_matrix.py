@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """The PolyScope 5 URCap on every supported PolyScope 5 release — stdlib + Docker.
 
-For each version in :data:`MATRIX` (the newest patch of each of the newest three
-PolyScope 5 minors), against ``docker-compose.ps5-matrix.yml``:
+For each version in :data:`MATRIX` (the newest image of **every** PolyScope 5 minor on
+Docker Hub, oldest first — nothing is ever dropped), against
+``docker-compose.ps5-matrix.yml`` (generated from MATRIX: ``ps5_matrix.py compose``):
 
-1. stage the committed ``urcap/dist/realsense-pilot-ps5-<ver>.urcap`` as
+1. pull the image and hold the committed URCap to its URCap API (``urcap5.py check``:
+   the sources it loads compile against the jars in this image, and every package the jar
+   imports is one this PolyScope exports);
+2. stage the committed ``urcap/dist/realsense-pilot-ps5-<ver>.urcap`` as
    ``/urcaps/realsense-pilot-ps5.jar`` (the image's entrypoint copies ``/urcaps/*.jar``
    into PolyScope's bundle dir at every start) and bring the version's service up;
-2. wait for the Dashboard to answer a ``robotmode`` other than ``NO_CONTROLLER``;
-3. wait for Felix (PolyScope's OSGi framework; its remote shell on the container's
-   127.0.0.1:6666) to report the bundle ``Active`` with both node services registered,
+3. wait for the Dashboard to answer a ``robotmode`` other than ``NO_CONTROLLER``;
+4. wait for Felix (PolyScope's OSGi framework; its remote shell on the container's
+   port 6666) to report the bundle ``Active`` with both node services registered,
    failing on any polyscope.log exception that names the URCap's package;
-4. power on + brake release, then run ``urcap/pick5_e2e.py`` — the Pick node's own
+5. power on + brake release, then run ``urcap/pick5_e2e.py`` — the Pick node's own
    URScript on this controller, against a pick server on this machine that the container
-   reaches at its network's gateway;
-5. on failure copy ``polyscope.log`` / ``URControl.log`` and the evidence out, and always
+   reaches at its network's gateway, and the full script (Robotiq + popup) compiled by the
+   controller;
+6. on failure copy ``polyscope.log`` / ``URControl.log`` and the evidence out, and always
    ``docker compose down -v``.
 
 One JSON summary per version (``--report`` writes them all).
@@ -22,7 +27,9 @@ One JSON summary per version (``--report`` writes them all).
     python3 urcap/ps5_matrix.py run --version 5.26 --artifacts ps5-artifacts
     python3 urcap/ps5_matrix.py run --version all
     python3 urcap/ps5_matrix.py down --version all
+    python3 urcap/ps5_matrix.py list                  # the minors, as JSON (CI's matrix)
     python3 urcap/ps5_matrix.py ports                 # the host-port table
+    python3 urcap/ps5_matrix.py compose > docker-compose.ps5-matrix.yml
     python3 urcap/ps5_matrix.py check-tags            # Docker Hub vs MATRIX; exit 1 on drift
 """
 
@@ -44,21 +51,36 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = REPO / "docker-compose.ps5-matrix.yml"
 DIST = REPO / "urcap" / "dist"
+SRC = REPO / "urcap" / "realsense-pilot-ps5"
 STAGE = REPO / "target" / "ps5-matrix" / "urcaps"
+SDK = REPO / "target" / "ps5-matrix" / "sdk"
 JAR_NAME = "realsense-pilot-ps5.jar"
 IMAGE = "universalrobots/ursim_e-series"
 HUB_TAGS = f"https://hub.docker.com/v2/repositories/{IMAGE}/tags?page_size=100"
 PACKAGE = "com.olympuscontrols.realsensepilot"
-MATRIX_SIZE = 3
 # `sudo docker` where the user is not in the docker group (the Makefile passes its DOCKER).
 DOCKER = os.environ.get("DOCKER", "docker").split()
+
+# -- host ports -------------------------------------------------------------------------------
+#
+# Every version publishes on its own block of 100 host ports, 20000 + 100 × minor, and inside
+# the block each service keeps the last two digits of its usual port: Dashboard 29999 → 99,
+# Primary 30001 → 01, RTDE 30004 → 04, noVNC 6080 → 80, and the pick server the e2e runs on
+# the host (7622, the cockpit's) → 22. PolyScope 5.26: 22699 / 22601 / 22604 / 22680 / 22622.
+# Blocks never overlap; minors 0..98 stay in 20000..29899 — clear of the default sims
+# (docker-compose.yml: 29999, 30000-30004, 30020, 502, 6080, 15900, 8000, 31001, 31004), the
+# cockpit's 7621/7622/7623/7631, and the Linux (32768+) and macOS (49152+) ephemeral ranges.
+
+PORT_BASE = 20000
+SLOTS = {"dashboard": 99, "primary": 1, "rtde": 4, "novnc": 80, "pick": 22}
+MAX_MINOR = 98
 
 
 @dataclass(frozen=True)
 class Version:
     """One matrix entry: the image tag and the host ports its service publishes."""
 
-    tag: str  # the image tag, the newest patch of its minor
+    tag: str  # the image tag: the newest patch of its minor (the bare minor where UR tagged no patch)
     dashboard: int
     primary: int
     rtde: int
@@ -78,15 +100,46 @@ class Version:
         return "ur-ps5-matrix-" + self.minor.replace(".", "")
 
 
-def _version(tag: str, pick: int) -> Version:
-    off = 100 * (int(tag.split(".")[1]) - 23)
-    return Version(tag, 29999 + off, 30001 + off, 30004 + off, 6080 + off, pick)
+def _version(tag: str) -> Version:
+    minor = int(tag.split(".")[1])
+    if not 0 <= minor <= MAX_MINOR:
+        raise ValueError(f"PolyScope 5.{minor}: the port scheme covers minors 0..{MAX_MINOR}")
+    base = PORT_BASE + 100 * minor
+    return Version(tag, **{name: base + slot for name, slot in SLOTS.items()})
 
 
-# The source of truth for the compose file's ports (tests hold the file to it).
-MATRIX: dict[str, Version] = {
-    v.minor: v for v in (_version("5.24.0", 7641), _version("5.25.2", 7642), _version("5.26.1", 7643))
-}
+# The newest image of every PolyScope 5 minor on Docker Hub (2026-09-28), oldest first. 5.4-5.8
+# carry only the bare minor tag (their VERSION env: 5.4.3, 5.5.1, 5.6.0, 5.7.0, 5.8.2). The source
+# of truth for docker-compose.ps5-matrix.yml and the CI matrix; `check-tags` only ever adds.
+TAGS = (
+    "5.4",
+    "5.5",
+    "5.6",
+    "5.7",
+    "5.8",
+    "5.9.4",
+    "5.10.2",
+    "5.11.11",
+    "5.12.8",
+    "5.13.1",
+    "5.14.6",
+    "5.15.2",
+    "5.16.1",
+    "5.17.3",
+    "5.18.1",
+    "5.19.0",
+    "5.20.0",
+    "5.21.3",
+    "5.22.2",
+    "5.23.0",
+    "5.24.0",
+    "5.25.2",
+    "5.26.1",
+)
+MATRIX: dict[str, Version] = {v.minor: v for v in map(_version, TAGS)}
+
+# Minors on Docker Hub the URCap does not support, each with the specific reason (README table).
+EXCLUDED: dict[str, str] = {}
 
 # Every host port docker-compose.yml (the default dev sims) and the cockpit bind.
 DEFAULT_PORTS = frozenset(
@@ -99,9 +152,125 @@ def host_ports(v: Version) -> list[int]:
     return [v.dashboard, v.primary, v.rtde, v.novnc, v.pick]
 
 
+# -- docker-compose.ps5-matrix.yml, generated -------------------------------------------------
+
+# The healthcheck (python3 is in the image; nc is not): the Dashboard answers a robotmode.
+HEALTH = (
+    "import socket,sys,time; s=socket.create_connection(('localhost',29999),3); "
+    "s.sendall(('robotmode'+chr(10)+'quit'+chr(10)).encode()); time.sleep(0.3); "
+    "d=s.recv(256).decode(); sys.exit(0 if 'Robotmode:' in d and 'NO_CONTROLLER' not in d else 1)"
+)
+
+COMPOSE_HEAD = """\
+# GENERATED by `python3 urcap/ps5_matrix.py compose` from urcap/ps5_matrix.py's MATRIX — edit
+# that, then regenerate (tests/test_ps5_matrix.py holds this file to it).
+#
+# The PolyScope 5 (e-Series) URCap's version matrix: one URSim per PolyScope 5 minor on
+# Docker Hub (the newest image of each, oldest first), for urcap/ps5_matrix.py and
+# .github/workflows/urcap5-matrix.yml. Separate from docker-compose.yml so the default
+# dev flow (`make sim-up`, the `ur-docker` project) is untouched; every version publishes on
+# its own block of host ports, so any of them and the default sim can run side by side.
+#
+#   python3 urcap/ps5_matrix.py run --version 5.26     # API check, up, URCap, pick e2e, down -v
+#   python3 urcap/ps5_matrix.py run --version all
+#   docker compose -f docker-compose.ps5-matrix.yml up -d ursim-5-26   # by hand
+#
+# Host ports: 20000 + 100 x minor + the last two digits of the usual port (Dashboard 29999
+# -> 99, Primary 30001 -> 01, RTDE 30004 -> 04, noVNC 6080 -> 80; the e2e's pick server on
+# the host, 7622 -> 22). Minors 0..98 stay inside 20000..29899, clear of the default sims
+# (docker-compose.yml: 29999, 30000-30004, 30020, 502, 6080, 15900, 8000, 31001, 31004),
+# the cockpit (7621/7622/7623/7631) and the Linux/macOS ephemeral ranges.
+#
+{table}
+#
+# Can one container host several versions on different ports? No, not sensibly. Read
+# from the images' own config and layers (registry API, 2026-09-28; every tag from 5.4 to
+# 5.26.1 carries the same /entrypoint.sh): each image is ONE PolyScope + URControl install
+# rooted at /ursim (HOME=/ursim, JAVA_HOME=/usr/lib/jvm/jdk1.8.0_371, VERSION=<version>),
+# started by /entrypoint.sh on a fixed X display (`Xvfb :1`, /tmp/.X1-lock removed at start),
+# x11vnc on 5900, noVNC on 6080, a single runit service dir (/etc/service/runsvdir*),
+# /ursim/start-ursim.sh <MODEL>, and fixed log paths /ursim/polyscope.log and
+# /ursim/URControl.log. The controller's ports (29999, 30001-30004, 30020, 502, 50001-3)
+# are URControl's own, not configurable per install. Several versions in one container
+# would mean several /ursim trees, X displays and network namespaces — i.e. containers.
+# Docker's port mapping is the supported way to offset them.
+#
+# URCaps: the entrypoint runs `cp -r /urcaps/*.jar /ursim/GUI/bundle/` at every start, so
+# /urcaps must hold *.jar files. The committed urcap/dist/realsense-pilot-ps5-<ver>.urcap
+# is a jar under another suffix; ps5_matrix.py stages it as
+# target/ps5-matrix/urcaps/realsense-pilot-ps5.jar (PS5_URCAPS_DIR overrides) — that
+# keeps this file free of the version number.
+#
+# The images declare no VOLUME, but teardown is `docker compose down -v` anyway (the
+# PolyScope X sim leaked ~9 GB of anonymous volumes per run without -v).
+name: ur-ps5-matrix
+
+x-ursim: &ursim
+  stdin_open: true
+  tty: true
+  environment:
+    # UR3 -> the entrypoint picks UR3e where /ursim/programs.UR3e exists (5.4's image has
+    # only programs.UR3, 5.26's programs.UR3e): the arm the node ships to, either way.
+    - ROBOT_MODEL=${PS5_ROBOT_MODEL:-UR3}
+  # Same reasons as docker-compose.yml's ursim: URControl's socket() gets ENOSYS under
+  # Docker's default seccomp profile on modern kernels; Modbus 502 needs NET_BIND_SERVICE.
+  security_opt:
+    - seccomp:unconfined
+  cap_add:
+    - NET_BIND_SERVICE
+  volumes:
+    - ${PS5_URCAPS_DIR:-./target/ps5-matrix/urcaps}:/urcaps:ro
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "python3",
+        "-c",
+        "{health}",
+      ]
+    interval: 15s
+    timeout: 10s
+    retries: 20
+    start_period: 90s
+
+services:
+"""
+
+
+def compose_table(versions=None) -> str:
+    rows = [("service", "image tag", "Dashboard", "Primary", "RTDE", "noVNC", "pick server (host)")]
+    for v in versions or MATRIX.values():
+        rows.append((v.service, v.tag, *map(str, (v.dashboard, v.primary, v.rtde, v.novnc, v.pick))))
+    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+    return "\n".join(
+        "#   " + "  ".join(c.ljust(w) for c, w in zip(r, widths, strict=True)).rstrip() for r in rows
+    )
+
+
+def render_compose(versions=None) -> str:
+    """docker-compose.ps5-matrix.yml, exactly — the committed file must equal this."""
+    versions = list(versions or MATRIX.values())
+    out = [COMPOSE_HEAD.replace("{table}", compose_table(versions)).replace("{health}", HEALTH)]
+    for i, v in enumerate(versions):
+        out.append(
+            f"  {v.service}:\n"
+            "    <<: *ursim\n"
+            f"    image: {IMAGE}:{v.tag}\n"
+            "    ports:\n"
+            f'      - "{v.dashboard}:29999" # Dashboard\n'
+            f'      - "{v.primary}:30001" # Primary\n'
+            f'      - "{v.rtde}:30004" # RTDE\n'
+            f'      - "{v.novnc}:6080" # noVNC\n'
+        )
+        if i < len(versions) - 1:
+            out.append("\n")
+    return "".join(out)
+
+
 # -- Docker Hub tags ------------------------------------------------------------------------
 
 _TAG = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+_MINOR_TAG = re.compile(r"(\d+)\.(\d+)")
 
 
 def parse_tag(tag: str) -> tuple[int, int, int] | None:
@@ -113,34 +282,52 @@ def parse_tag(tag: str) -> tuple[int, int, int] | None:
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def newest_minors(tags: list[str], n: int = MATRIX_SIZE) -> list[str]:
-    """The newest patch tag of each of the newest ``n`` PolyScope 5 minors, oldest first."""
-    best: dict[int, tuple[int, int, int]] = {}
+def tag_key(tag: str) -> tuple[int, int, int] | None:
+    """Order PolyScope 5 image tags: a full ``5.26.1`` is ``(5, 26, 1)``, a bare minor
+    ``5.8`` (all UR published for 5.4-5.8) is ``(5, 8, -1)`` — older than any patch of it."""
+    full = parse_tag(tag)
+    if full:
+        return full
+    m = _MINOR_TAG.fullmatch(tag)
+    if not m or m.group(1) != "5" or any(p != str(int(p)) for p in m.groups()):
+        return None
+    return 5, int(m.group(2)), -1
+
+
+def minor_of(tag: str) -> str:
+    return ".".join(tag.split(".")[:2])
+
+
+def newest_per_minor(tags: list[str]) -> list[str]:
+    """The newest image tag of every PolyScope 5 minor, oldest minor first: its highest
+    ``5.x.y``, or the bare ``5.x`` when UR tagged no patch of it."""
+    best: dict[int, tuple[tuple[int, int, int], str]] = {}
     for tag in tags:
-        v = parse_tag(tag)
-        if v and (v[1] not in best or v > best[v[1]]):
-            best[v[1]] = v
-    chosen = sorted(best.values())[-n:] if n > 0 else []
-    return [".".join(map(str, v)) for v in chosen]
+        k = tag_key(tag)
+        if k and (k[1] not in best or k > best[k[1]][0]):
+            best[k[1]] = (k, tag)
+    return [best[m][1] for m in sorted(best)]
 
 
-def tag_drift(tags: list[str], matrix: list[str]) -> list[str]:
-    """What is wrong with ``matrix`` given Docker Hub's ``tags``: one sentence per fix."""
-    want = newest_minors(tags, len(matrix))
-    have = sorted(matrix, key=lambda t: parse_tag(t) or (0, 0, 0))
+def tag_drift(tags: list[str], matrix: list[str], excluded: dict[str, str] | None = None) -> list[str]:
+    """What the matrix is missing given Docker Hub's ``tags``, one sentence per fix. It only
+    ever grows: a minor it lacks (not :data:`EXCLUDED`) is added, a newer image of a minor it
+    has replaces that one; nothing is dropped. A tag it names that Hub no longer serves is
+    reported too — the matrix can't pull it (decide with Nick; don't drop it silently)."""
+    excluded = excluded if excluded is not None else EXCLUDED
+    have = {minor_of(t): t for t in matrix}
     problems = []
-    minor = lambda t: ".".join(t.split(".")[:2])  # noqa: E731
-    want_minors, have_minors = [minor(t) for t in want], [minor(t) for t in have]
-    for t in want:
-        if minor(t) not in have_minors:
-            drop = next((m for m in have_minors if m not in want_minors), None)
-            problems.append(f"PolyScope {minor(t)} exists: add it" + (f" and drop {drop}" if drop else ""))
-        elif t not in have:
-            old = have[have_minors.index(minor(t))]
-            problems.append(f"PolyScope {t} exists: bump {old} to it")
-    for t in have:
+    for t in newest_per_minor(tags):
+        m = minor_of(t)
+        if m in excluded:
+            continue
+        if m not in have:
+            problems.append(f"PolyScope {m} exists ({IMAGE}:{t}): add it")
+        elif (tag_key(t) or (0, 0, 0)) > (tag_key(have[m]) or (0, 0, 0)):
+            problems.append(f"PolyScope {t} exists: bump {have[m]} to it")
+    for t in matrix:
         if t not in tags:
-            problems.append(f"{IMAGE}:{t} is not on Docker Hub")
+            problems.append(f"{IMAGE}:{t} is not on Docker Hub (the matrix can't pull it)")
     return problems
 
 
@@ -423,6 +610,18 @@ def collect(v: Version, out: Path) -> list[str]:
     return saved
 
 
+def api_check(v: Version, jar: Path) -> dict:
+    """``urcap5.py check`` against this image's own URCap API jars (read out of the pulled
+    image, nothing runs): the sources this PolyScope loads compile, and every package the
+    jar needs is exported. Urcap5Error (the javac output) fails the version."""
+    sys.path.insert(0, str(REPO / "urcap"))
+    import urcap5
+
+    sdk = SDK / v.tag
+    urcap5.fetch_sdk(f"{IMAGE}:{v.tag}", sdk, source="docker")
+    return urcap5.check(SRC, sdk, jar, v.tag)
+
+
 def down(v: Version) -> None:
     _compose(v, "down", "-v", "--remove-orphans", check=False, timeout=300)
 
@@ -435,6 +634,7 @@ def run_version(v: Version, artifacts: Path, *, boot_timeout: float, urcap_timeo
         jar = stage_urcap()
         report["urcap"] = jar.name
         _compose(v, "pull", "--quiet", v.service)
+        stages["api"] = api_check(v, jar)
         _compose(v, "up", "-d", v.service)
         stages["dashboard"] = wait_for_dashboard(v, boot_timeout)
         stages["boot_s"] = round(time.monotonic() - t0, 1)
@@ -516,7 +716,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ps5_matrix", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     rn = sub.add_parser("run", help="boot, check the URCap, run the pick e2e, tear down")
-    rn.add_argument("--version", default="all", help="5.24 / 5.25.2 / ... or all")
+    rn.add_argument("--version", default="all", help="5.4 / 5.25.2 / ... or all")
     rn.add_argument("--artifacts", default="ps5-artifacts", help="where logs go on failure")
     rn.add_argument("--report", help="write the JSON summaries here")
     rn.add_argument("--boot-timeout", type=float, default=600.0)
@@ -524,12 +724,16 @@ def main(argv: list[str] | None = None) -> int:
     dn = sub.add_parser("down", help="docker compose down -v")
     dn.add_argument("--version", default="all")
     sub.add_parser("ports", help="print the host-port table as JSON")
-    sub.add_parser("check-tags", help="compare MATRIX with Docker Hub's tags")
+    sub.add_parser("compose", help="print docker-compose.ps5-matrix.yml as MATRIX makes it")
+    sub.add_parser("check-tags", help="compare MATRIX with Docker Hub's tags (it only ever grows)")
     sub.add_parser("list", help="print the matrix's minors as a JSON list (for CI)")
     args = ap.parse_args(argv)
 
     if args.cmd == "ports":
         print(json.dumps({m: asdict(v) | {"service": v.service} for m, v in MATRIX.items()}, indent=2))
+        return 0
+    if args.cmd == "compose":
+        sys.stdout.write(render_compose())
         return 0
     if args.cmd == "list":
         print(json.dumps(list(MATRIX)))
@@ -541,15 +745,14 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "matrix": [v.tag for v in MATRIX.values()],
-                    "newest": newest_minors(tags),
+                    "newest": newest_per_minor(tags),
+                    "excluded": EXCLUDED,
                     "problems": problems,
                 }
             )
         )
         for p in problems:
-            print(
-                f"::error::{p} (urcap/ps5_matrix.py MATRIX, docker-compose.ps5-matrix.yml)", file=sys.stderr
-            )
+            print(f"::error::{p} (urcap/ps5_matrix.py TAGS, then `ps5_matrix.py compose`)", file=sys.stderr)
         return 1 if problems else 0
     if args.cmd == "down":
         for v in _selected(args.version):

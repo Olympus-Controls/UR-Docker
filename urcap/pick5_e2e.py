@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -125,6 +126,37 @@ def generate(spec: dict) -> str:
     return res["script"]
 
 
+ERRORS = re.compile(r"(?i)error|exception|not defined|unknown|illegal|syntax|invalid")
+
+
+def compile_probe(robot: Robot, spec: dict) -> tuple[bool, bool]:
+    """Does the controller *compile* the parts of the script the run above can't reach — the
+    Robotiq gripper (``socket_read_string(..., timeout=)``, ``str_find``) and the failure
+    popup (``popup(..., blocking=True)``)? The script goes inside ``if False:`` so nothing
+    runs; URControl compiles the whole program first, so a function or keyword argument this
+    controller lacks means the marker after it never prints. The control: a dead branch that
+    calls a function no controller has must *not* print its marker, or the probe proves
+    nothing on this controller (returned as the second value)."""
+    control = robot.primary.run_and_capture(
+        'if False:\n  rs_e2e_no_such_function()\nend\ntextmsg("rs_e2e/control=", True)\n',
+        fn_name="rs_e2e_control",
+        marker="",
+        collect_for=15.0,
+        stop_marker="rs_e2e/control=",
+    )
+    control_ran = any("rs_e2e/control=" in c for c in control)
+    full = generate({**spec, "gripper": "robotiq", "popup": True})
+    body = "if False:\n" + full + "end\n" + 'textmsg("rs_e2e/compiled=", True)\n'
+    captured = robot.primary.run_and_capture(
+        body, fn_name="rs_e2e_probe", marker="", collect_for=30.0, stop_marker="rs_e2e/compiled="
+    )
+    compiled = any("rs_e2e/compiled=" in c for c in captured)
+    for c in control + captured:
+        if ERRORS.search(c):
+            print("  controller:", c)
+    return compiled, control_ran
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--host", default="127.0.0.1", help="the simulator (Primary/Dashboard)")
@@ -178,6 +210,7 @@ def main() -> int:
             body, fn_name="rs_e2e", marker="", collect_for=300.0, stop_marker="rs_e2e/found="
         )
         took = time.monotonic() - t0
+        compiled, control = compile_probe(robot, spec)
     finally:
         server.stop()
     marks = [c for c in captured if "rs_e2e/" in c or "RealSense Pick" in c]
@@ -198,6 +231,10 @@ def main() -> int:
         and sum(1 for t in log if t.startswith("pick REFINE [e2e001]: found")) >= 2
         and any(t.startswith("pick NEXT [e2e001]: found") for t in log)
     )
+    print("controller compiles the full script (Robotiq + popup):", compiled)
+    if control:
+        print("  (inconclusive: this controller also ran a dead branch naming an undefined function)")
+    ok = ok and compiled
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

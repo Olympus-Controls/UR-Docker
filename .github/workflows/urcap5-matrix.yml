@@ -1,13 +1,23 @@
-# The PolyScope 5 (e-Series) URCap on every supported PolyScope 5 release: the newest
-# patch of each of the newest three minors (urcap/ps5_matrix.py MATRIX,
-# docker-compose.ps5-matrix.yml). Per version: boot URSim with the committed
-# urcap/dist/realsense-pilot-ps5-*.urcap in /urcaps, check PolyScope started the bundle
-# with no exception from its package, bring the arm up and run the Pick node's own
-# URScript against a local pick server (urcap/pick5_e2e.py). amd64 runners: the image is
-# amd64-only and does not run under Docker Desktop's emulation on Apple silicon.
+# The PolyScope 5 (e-Series) URCap on every PolyScope 5 release UR publishes an image for:
+# the newest image of every minor from 5.4 on (urcap/ps5_matrix.py MATRIX — the job list
+# comes from `ps5_matrix.py list`, never from this file; docker-compose.ps5-matrix.yml is
+# generated from it too).
 #
-# Weekly, `ps5_matrix.py check-tags` fails when Docker Hub has a newer PolyScope 5 minor
-# or patch than the matrix names ("PolyScope 5.27 exists: add it and drop 5.24").
+# build: the committed urcap/dist/realsense-pilot-ps5-*.urcap is rebuilt against the OLDEST
+#   supported PolyScope's URCap API jars (bundle.properties compat.floor; each
+#   compat.since group against its version's) and must come out byte-identical — so the
+#   jar that ships uses nothing the oldest PolyScope lacks. The jars come straight from
+#   Docker Hub's registry (urcap5.py sdk; no Docker).
+# matrix: per version, `urcap5.py check` against that image's own API jars (the sources it
+#   loads compile, every package the jar imports is exported), then boot URSim with the jar
+#   in /urcaps, check PolyScope started the bundle with no exception from its package, bring
+#   the arm up and run the Pick node's own URScript against a local pick server
+#   (urcap/pick5_e2e.py), plus a compile probe of the Robotiq + popup script. amd64 runners:
+#   the image is amd64-only and does not run under Docker Desktop's emulation on Apple silicon.
+#
+# Weekly, `ps5_matrix.py check-tags` fails when Docker Hub has a PolyScope 5 minor the
+# matrix lacks, or a newer image of one it has ("PolyScope 5.27 exists (...): add it").
+# The matrix only ever grows.
 
 name: URCap5 matrix
 
@@ -42,16 +52,59 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: the matrix is the newest three PolyScope 5 minors on Docker Hub
+      - name: the matrix has every PolyScope 5 minor on Docker Hub, at its newest image
         run: python3 urcap/ps5_matrix.py check-tags
 
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: the versions (urcap/ps5_matrix.py MATRIX)
+        id: list
+        run: echo "versions=$(python3 urcap/ps5_matrix.py list)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build against the oldest PolyScope's API
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # javac --release 8 (Java 8 bytecode, what PolyScope 5's JRE 1.8.0_371 runs). The same
+      # major as the machine that built the committed jar, so the rebuild is byte-comparable.
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: the URCap API jars of compat.floor and every compat.since version (registry)
+        run: python3 urcap/urcap5.py sdk
+
+      - name: rebuild the URCap against them; it must equal the committed jar
+        run: |
+          python3 urcap/urcap5.py package urcap/realsense-pilot-ps5 --out target/rebuilt
+          for jar in target/rebuilt/*.urcap; do
+            cmp "$jar" "urcap/dist/$(basename "$jar")" || {
+              echo "::error::urcap/dist/$(basename "$jar") is not what the floor build makes — run \`make urcap5-package\` and commit it"
+              exit 1
+            }
+          done
+
   matrix:
+    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix:
-        polyscope: ["5.24", "5.25", "5.26"]
+        polyscope: ${{ fromJSON(needs.setup.outputs.versions) }}
     name: PolyScope ${{ matrix.polyscope }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,8 +115,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      # pick5_e2e compiles the node's PickScript with `javac --release 8` (Java 8
-      # bytecode, what PolyScope 5's JRE 1.8.0_371 runs); any JDK 9+ does that.
+      # pick5_e2e compiles the node's PickScript and `urcap5.py check` the whole URCap with
+      # `javac --release 8`; any JDK 9+ does that.
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
@@ -72,7 +125,7 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked
 
-      - name: URCap + pick e2e on PolyScope ${{ matrix.polyscope }}
+      - name: API check, URCap + pick e2e on PolyScope ${{ matrix.polyscope }}
         env:
           POLYSCOPE: ${{ matrix.polyscope }}
         run: uv run python urcap/ps5_matrix.py run --version "$POLYSCOPE" --artifacts ps5-artifacts --report "ps5-artifacts/report-$POLYSCOPE.json"
