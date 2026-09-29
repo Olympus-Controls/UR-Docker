@@ -11,7 +11,6 @@ license = { file = "LICENSE" }
 dependencies = []
 
 [project.optional-dependencies]
-# The `urctl-mcp` MCP server is pure stdlib since the JSON-RPC rewrite; the
 # Classic-CV perception backend (blob detection) + numpy/OpenCV Frame interop.
 perceptronics = ["numpy>=1.24", "opencv-python>=4.8", "pillow>=10.0"]
 # Learned monocular depth (Depth Anything V2) backend.

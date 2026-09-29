@@ -103,14 +103,6 @@ def wait_until(
 _ASCII_RUN = re.compile(rb"[\x20-\x7e]{4,}")
 
 
-def primary_send(host: str, urscript: str) -> None:
-    """Stream a URScript snippet to the Primary Client. The controller parses
-    and executes immediately; this socket does NOT wait for a response —
-    Primary is a broadcast channel."""
-    with socket.create_connection((host, PRIMARY_PORT), timeout=5.0) as s:
-        s.sendall(urscript.encode("utf-8"))
-
-
 def primary_send_and_capture(
     host: str, urscript: str, *, marker: str = "e2e/", collect_for: float = 2.0
 ) -> list[str]:
