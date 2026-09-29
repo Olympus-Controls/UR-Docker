@@ -144,7 +144,8 @@ the page itself is read from disk per request.
 
 **Pick from the cockpit (`POST /api/robot/pick`, `perceptronics/pickplan.py`, 2026-09-27).**
 Nick's spec: the gripper comes in straight down the base Z axis, wrist 3 across the
-object's short side, fingers pre-opened to 1.2x its width, fingertips 25 mm over its top.
+object's short side, the jaws pre-opened to their full 50 mm stroke (a 1.2x opening caught a
+block's edge), fingertips 25 mm over its top.
 Two programs: a blended sweep from the picture pose (`PERCEPTRONICS_HOME_POSE`; FANCY adds a
 swing and a wrist flourish) to a **close look** — the object on the colour camera's axis at
 0.24 m, just outside the D435's blind zone — then the object is re-found there and the

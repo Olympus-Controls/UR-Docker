@@ -17,12 +17,12 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
       - name: install deps
-        run: uv sync --extra perceptronics
+        run: uv sync --locked --extra perceptronics
       - name: ruff check
         run: uv run ruff check urctl perceptronics scripts urcap tests
       - name: ruff format
@@ -48,8 +48,8 @@ jobs:
           - { os: macos-latest, python-version: "3.14" }
           - { os: ubuntu-24.04-arm, python-version: "3.14" }
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
@@ -57,7 +57,7 @@ jobs:
         # Core is stdlib-only; the extras exercise the optional integrations.
         # opencv/numpy wheels can lag new CPython releases, so extras are
         # best-effort off the oldest/newest edges: fall back to core deps.
-        run: uv sync --extra perceptronics || uv sync
+        run: uv sync --locked --extra perceptronics || uv sync --locked
       - name: unit tests
         run: uv run pytest -m "not integration and not sam" -q
 
@@ -66,8 +66,8 @@ jobs:
     # console scripts — this catches packaging regressions before a release.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
       - name: build sdist + wheel
@@ -97,7 +97,7 @@ jobs:
           /tmp/smoke/bin/perceptronics-gui --help > /dev/null
           /tmp/smoke/bin/perceptronics rs-info > /dev/null 2>&1 || true   # no SDK on the runner: must fail cleanly, not crash
           /tmp/smoke/bin/urctl tools | python3 -c "import json,sys; assert len(json.load(sys.stdin)) >= 20"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
           path: dist/
@@ -108,12 +108,12 @@ jobs:
     # main and on PRs that carry the run-integration label.
     if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'run-integration')
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
       - name: install deps
-        run: uv sync --extra perceptronics
+        run: uv sync --locked --extra perceptronics
       - name: start URSim
         run: |
           docker compose up -d

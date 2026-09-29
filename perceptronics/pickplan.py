@@ -3,8 +3,8 @@
 The work surface is flat and parallel to the base XY plane (Nick, 2026-09-27), so
 an object's **top face** is a horizontal slice of its points in the base frame —
 no plane fit, no tilt — and the gripper comes in straight down the base Z axis,
-wrist 3 turned so the fingers close across the top face's short side, opened to
-``opening_factor`` × that width, fingertips ``hover_m`` over the top.
+wrist 3 turned so the fingers close across the top face's short side, the jaws
+open their full ``stroke_m``, fingertips ``hover_m`` over the top.
 
 :func:`top_face` + :func:`rectangle` measure; :func:`plan` builds the legs of a
 single ``move_tcp_path`` program (flange poses, run with the TCP at the flange):
@@ -26,16 +26,14 @@ from urctl.pose import Transform
 from .pickcycle import grasp_rotation, grasp_yaw_deg, tip_pose
 
 HOVER_M = 0.025  # fingertips over the top face at the approach (Nick, 2026-09-27)
-OPENING_FACTOR = 1.2  # fingers 20 % wider than the object ...
-CLEARANCE_M = 0.008  # ... but never less than 8 mm a side: at 1.2 x 28 mm (3.4 mm a side) a fingertip
-# caught the block's top edge and the Hand-E closed on nothing; fully open at the same spot, it held
-# (UR3e, 2026-09-27 23:1x)
 GRASP_BELOW_M = 0.015
 LIFT_M = 0.05
 DROP_M = 0.06  # the last stretch of the sweep runs straight down the Z axis
 LOOK_M = 0.24  # the close look: camera to the top, just outside the D435's ~0.2 m blind zone
 LOOK_TILT_DEG = 10.0  # ... from a slight angle (a second viewpoint, and it reads as "taking a look")
 STROKE_M = 0.05  # Hand-E — and the jaws open this full stroke every time (Nick, 2026-09-28: "maximum slop")
+# (opening to 1.2x the part left 3.4 mm a side on a 28 mm block: a fingertip caught its top edge and
+# the Hand-E closed on nothing; fully open at the same spot it held — UR3e, 2026-09-27)
 MIN_SLOP_M = 0.002  # an object needs at least this much room a side inside the open jaws
 # the finger zones checked for clearance before a grasp: each finger comes down just outside the
 # open jaws — FINGER_T_M thick along its travel, FINGER_W_M wide across it (Hand-E pads + a margin)
@@ -230,7 +228,6 @@ def plan(
     flange_to_color: Sequence[float] | None = None,
     look_m: float | None = None,
     hover_m: float = HOVER_M,
-    opening_factor: float = OPENING_FACTOR,
     grasp_below_m: float = GRASP_BELOW_M,
     lift_m: float = LIFT_M,
     stroke_m: float = STROKE_M,
