@@ -193,6 +193,12 @@ def find_bundle(rows: list[dict], name: str, version: str) -> dict | None:
     return next((r for r in rows if r["name"] == want), None)
 
 
+def services_command(bundle_id: int) -> str:
+    """The shell command that lists what a bundle registered. PolyScope's Felix shell
+    (org.apache.felix.shell 1.4.3) has no ``services`` ("Command not found", 2026-09-28)."""
+    return f"inspect service capability {bundle_id}"
+
+
 def missing_services(services_text: str, wanted: tuple[str, ...] = NODE_SERVICES) -> list[str]:
     """Which of ``wanted`` a ``services <id>`` listing does not name as an objectClass."""
     classes = set(re.findall(r"objectClass\s*=\s*\[?([\w.$, ]+)\]?", services_text))
@@ -348,7 +354,7 @@ def wait_for_urcap(v: Version, jar: Path, timeout: float) -> dict:
         if row:
             seen.update(id=row["id"], state=row["state"])
             if row["state"] == "Active":
-                listing = felix_shell(v, f"services {row['id']}").get(f"services {row['id']}", "")
+                listing = felix_shell(v, services_command(row["id"])).get(services_command(row["id"]), "")
                 seen["missing_services"] = missing_services(listing)
                 if not seen["missing_services"]:
                     seen["ok"] = True
@@ -408,7 +414,7 @@ def collect(v: Version, out: Path) -> list[str]:
     shell = felix_shell(v, "ps")
     row = next((r for r in parse_ps(shell.get("ps", "")) if r["name"].startswith("RealSense Pilot")), None)
     if row:
-        shell.update(felix_shell(v, f"services {row['id']}", f"headers {row['id']}"))
+        shell.update(felix_shell(v, "help", services_command(row["id"]), f"headers {row['id']}"))
     (out / "felix.txt").write_text("".join(f"### {k}\n{t}" for k, t in shell.items()), encoding="utf-8")
     saved.append(str(out / "felix.txt"))
     logs = _compose(v, "logs", "--no-color", v.service, check=False)
