@@ -60,7 +60,7 @@ PURE = (
 
 
 class World:
-    """Two parts fixed in the base frame, placed from the first request's flange pose (the
+    """Two parts fixed in the base frame, placed from the first FIND's flange pose (the
     picture point): the table 0.40 m below it, the parts 35 mm either side of straight
     below. Every view is ray-cast from the flange pose its request carries."""
 
@@ -72,13 +72,16 @@ class World:
 
     def view(self, line: str) -> None:
         try:
-            flange = parse_request(line).get("flange")
+            req = parse_request(line)
         except Exception:  # noqa: BLE001 — the planner itself answers a bad request
             return
+        flange = req.get("flange")
         if not flange:
             return
         self.flange = flange
-        if not self.boxes:
+        # the parts lie under the picture point: the first FIND, not the NEXT sent from
+        # wherever the arm was when the program started
+        if not self.boxes and req.get("verb") == "FIND":
             x, y, z = flange[:3]
             self.table_z = z - self.table_below
             self.boxes = [Box(x - 0.035, y, 0.05, 0.03, 0.03, 0.2), Box(x + 0.035, y, 0.05, 0.03, 0.03, 0.2)]
