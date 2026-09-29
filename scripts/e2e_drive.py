@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end driver for the UR-Docker URSim.
+"""End-to-end driver for the perceptronics URSim.
 
 Walks a real cobot's operating envelope from "controller booted" to
 "program ran successfully", using the documented backend ports:
@@ -371,7 +371,7 @@ def phase6_play_or_primary_fallback(host: str) -> PhaseResult:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default=DEFAULT_HOST)
-    ap.add_argument("--container", default="ur-docker-ursim-1")
+    ap.add_argument("--container", default="perceptronics-ursim-1")
     ap.add_argument(
         "--docker",
         # Honour the DOCKER env var (matches tests/_ursim.py and the CI job) so a

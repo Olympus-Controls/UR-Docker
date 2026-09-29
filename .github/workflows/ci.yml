@@ -131,7 +131,7 @@ jobs:
         run: uv run pytest -m integration
       - name: dump polyscope log on failure
         if: failure()
-        run: docker exec ur-docker-ursim-1 tail -100 /ursim/polyscope.log || true
+        run: docker exec perceptronics-ursim-1 tail -100 /ursim/polyscope.log || true
       - name: tear down
         if: always()
         run: docker compose down

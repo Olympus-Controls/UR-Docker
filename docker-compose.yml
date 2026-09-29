@@ -1,7 +1,7 @@
-# The project name is pinned so the containers are ur-docker-ursim-1 / ur-docker-ursim-px-1
+# The project name is pinned so the containers are perceptronics-ursim-1 / perceptronics-ursim-px-1
 # whatever the checkout directory is called (the Makefile, tests/_ursim.py, urctl's --container
-# defaults and CI all name them; the repo rename to universal-perceptronics broke that silently).
-name: ur-docker
+# defaults and CI all name them; renaming the checkout used to rename them silently).
+name: perceptronics
 services:
   ursim:
     image: universalrobots/ursim_e-series:5.26.0
@@ -117,7 +117,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.perception
-    image: ur-utils/perception:local
+    image: perceptronics/perception:local
     privileged: true
     volumes:
       - /dev/bus/usb:/dev/bus/usb

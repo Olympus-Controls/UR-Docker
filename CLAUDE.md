@@ -1,10 +1,13 @@
 # CLAUDE.md
 
-Working notes for AI assistants (and humans) on this repo. This is a
-sandbox + tooling repo for **Universal Robots e-Series** control. Most of
-what's interesting here lives in the network protocols and file formats UR
-ships — not in the code itself — so this file captures the things that took
-me real time to discover.
+Working notes for AI assistants (and humans) on **perceptronics** — the
+project's name (the distribution on PyPI, the compose project, the docs and
+the cockpit; the import packages `urctl` / `perception`, the CLI commands,
+the `UR_*` / `PERCEPTION_*` variables and the URCap bundle IDs keep their
+names). It started as a sandbox + tooling repo for **Universal Robots
+e-Series** control. Most of what's interesting here lives in the network
+protocols and file formats UR ships — not in the code itself — so this file
+captures the things that took me real time to discover.
 
 ## What this repo is
 
@@ -638,7 +641,7 @@ checks `safetymode` when a move fails to confirm). The raw reason is in the
 container's URControl log, not `polyscope.log`:
 
 ```bash
-sudo docker exec ur-docker-ursim-1 grep -i 'protective\|C154' /ursim/URControl.log | tail
+sudo docker exec perceptronics-ursim-1 grep -i 'protective\|C154' /ursim/URControl.log | tail
 ```
 
 **`robot_mode` stays `RUNNING` through a protective stop** — only `safety_mode`
@@ -884,7 +887,7 @@ For deeper development tasks:
   it spells out exactly what's wrong even when Dashboard returns "unknown
   failure":
   ```bash
-  sudo docker exec ur-docker-ursim-1 tail -f /ursim/polyscope.log
+  sudo docker exec perceptronics-ursim-1 tail -f /ursim/polyscope.log
   ```
 
 ## Things NOT to do

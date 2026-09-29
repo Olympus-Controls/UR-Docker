@@ -1,7 +1,7 @@
 [project]
-name = "ur-docker"
+name = "perceptronics"
 version = "0.1.0"
-description = "Host-side control + perception tooling for Universal Robots e-Series (URSim sandbox)"
+description = "perceptronics — vision-guided, agent-driven control for Universal Robots arms (URSim sandbox, RGB-D cockpit, MCP tools)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

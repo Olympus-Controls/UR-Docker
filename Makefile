@@ -1,4 +1,4 @@
-# Common dev tasks for UR-Docker. Run `make help` for a list.
+# Common dev tasks for perceptronics. Run `make help` for a list.
 
 DOCKER ?= sudo docker
 COMPOSE ?= $(DOCKER) compose
@@ -8,8 +8,8 @@ PYTHON ?= $(UV) run python
 PYTEST ?= $(UV) run pytest
 RUFF ?= $(UV) run ruff
 
-CONTAINER := ur-docker-ursim-1
-PX_CONTAINER := ur-docker-ursim-px-1
+CONTAINER := perceptronics-ursim-1
+PX_CONTAINER := perceptronics-ursim-px-1
 
 # PolyScope X sim knobs (consumed by the `ursim-px` compose service).
 # ROBOT_TYPE: UR3 UR5 UR8L UR10 UR16 UR18 UR20 UR30. HOST_ARCH: amd64 | arm64.

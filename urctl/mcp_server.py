@@ -9,7 +9,7 @@ Desktop, Claude Code, or any MCP-capable agent) can drive the robot.
 2.0, so this module speaks it directly with the stdlib — no SDK, no asyncio,
 one request at a time (tool calls against a robot are serial anyway). That
 keeps the whole toolkit installable anywhere Python runs (Windows, macOS,
-Linux, any architecture) with ``pip install ur-docker`` and nothing else.
+Linux, any architecture) with ``pip install perceptronics`` and nothing else.
 
 Run it::
 

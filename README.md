@@ -1,6 +1,6 @@
 ![ur](docs/ur-hero.png)
 
-# UR-utils
+# perceptronics
 
 Drive a Universal Robots arm from your laptop. This repo gives you a PolyScope
 simulator in Docker and `urctl`, a zero-dependency Python CLI, library and MCP
