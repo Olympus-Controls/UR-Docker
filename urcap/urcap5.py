@@ -49,6 +49,7 @@ maven-bundle-plugin; this does the same steps with ``javac`` / ``jdeps`` and
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import io
 import json
@@ -767,11 +768,47 @@ def install(path: str | Path, container: str) -> dict:
 # -- is a rebuilt jar the committed one? ------------------------------------------------------
 
 
+_ANONYMOUS = re.compile(r"\$[0-9]+$")
+
+
+def _member_name(line: str) -> str:
+    """The member a ``javap -p`` line declares: the word before ``(`` (a method or constructor)
+    or before `` =`` / ``;`` (a field)."""
+    head = line.split("(", 1)[0] if "(" in line else line.split(" =", 1)[0].rstrip(";")
+    return head.split()[-1] if head.split() else ""
+
+
+def _source_members(cls: str, lines: list[str]) -> list[str]:
+    """What the sources declare, without what javac adds on its own and names differently
+    from one JDK major to the next: members named with a ``$`` (``lambda$new$0``, ``this$0``,
+    ``val$x``, ``access$000``, ``$values``) and the constructors of anonymous classes (their
+    parameters are the captured variables, in javac's order). Each member line keeps its
+    ``descriptor:`` line."""
+    out: list[str] = []
+    skip = False
+    for line in lines:
+        if line.strip().startswith("descriptor:"):
+            if not skip:
+                out.append(line)
+            continue
+        skip = False
+        if line.startswith("  ") and line.strip():
+            name = _member_name(line.strip())
+            simple = name.rsplit(".", 1)[-1]
+            ctor = name == cls
+            if ("$" in simple and not ctor) or (ctor and _ANONYMOUS.search(cls)):
+                skip = True
+                continue
+        out.append(line)
+    return out
+
+
 def class_signatures(jar: Path, javap: str | None = None) -> dict[str, str]:
     """Each class in ``jar`` as ``javap -p -s -constants`` prints it — every field, method and
-    constant with its JVM signature — minus the ``Compiled from`` line. Independent of which
-    javac built it: two JDK majors order a constant pool or name a synthetic differently, but
-    they declare the same members."""
+    constant with its JVM signature — minus the ``Compiled from`` line and the members javac
+    synthesises (:func:`_source_members`). Independent of which javac built it: two JDK majors
+    order a constant pool, number lambdas and shape anonymous classes differently, but they
+    declare the same members."""
     javap = javap or shutil.which("javap")
     if not javap:
         raise Urcap5Error("javap is not on PATH (it ships with the JDK)")
@@ -783,11 +820,16 @@ def class_signatures(jar: Path, javap: str | None = None) -> dict[str, str]:
         [javap, "-p", "-s", "-constants", "-cp", str(jar), *names], capture_output=True, text=True, check=True
     ).stdout
     sigs: dict[str, str] = {}
-    current, lines = None, []
+    current: str | None = None
+    lines: list[str] = []
+
+    def flush() -> None:
+        if current is not None:
+            sigs[current] = "\n".join(_source_members(current, lines))
+
     for line in out.splitlines():
         if line.startswith("Compiled from"):
-            if current is not None:
-                sigs[current] = "\n".join(lines)
+            flush()
             current, lines = None, []
             continue
         if current is None:
@@ -795,8 +837,7 @@ def class_signatures(jar: Path, javap: str | None = None) -> dict[str, str]:
             if m:
                 current = m.group(1)
         lines.append(line.rstrip())
-    if current is not None:
-        sigs[current] = "\n".join(lines)
+    flush()
     return sigs
 
 
@@ -820,7 +861,16 @@ def compare_jars(built: Path, committed: Path, javap: str | None = None) -> list
     sa, sb = class_signatures(built, javap), class_signatures(committed, javap)
     for cls in sorted(set(sa) | set(sb)):
         if sa.get(cls) != sb.get(cls):
-            problems.append(f"{cls}: its members differ")
+            diff = difflib.unified_diff(
+                (sb.get(cls) or "").splitlines(),
+                (sa.get(cls) or "").splitlines(),
+                "committed",
+                "rebuilt",
+                n=0,
+                lineterm="",
+            )
+            shown = [d for d in diff if d[:1] in "+-" and not d.startswith(("+++", "---"))][:6]
+            problems.append(f"{cls}: its members differ " + " | ".join(shown))
     return problems
 
 

@@ -742,3 +742,41 @@ def test_the_committed_jar_compares_equal_to_itself(tmp_path):
     shutil.copy(dist, copy)
     assert urcap5.compare_jars(copy, dist) == []
     assert len(urcap5.class_signatures(dist)) > 10
+
+
+# javac synthesises members whose names and shapes change between JDK majors (CI, 2026-09-29: the
+# JDK-21 rebuild's lambdas, this$1 and anonymous-class constructors differed from JDK 25's) —
+# they are not the sources' members, so the comparison leaves them out
+_JAVAP = """\
+class p.A$Feed$1 extends java.awt.event.MouseAdapter {
+  final p.A$Feed this$1;
+    descriptor: Lp/A$Feed;
+  final int val$n;
+    descriptor: I
+  p.A$Feed$1(p.A$Feed, int);
+    descriptor: (Lp/A$Feed;I)V
+  public void mouseMoved(java.awt.event.MouseEvent);
+    descriptor: (Ljava/awt/event/MouseEvent;)V
+  private static void lambda$new$3(java.lang.Runnable);
+    descriptor: (Ljava/lang/Runnable;)V
+  static int access$000(p.A);
+    descriptor: (Lp/A;)I
+  static final int K = 7;
+    descriptor: I
+}"""
+
+
+def test_the_comparison_ignores_what_javac_synthesises_and_keeps_what_the_sources_declare():
+    kept = "\n".join(urcap5._source_members("p.A$Feed$1", _JAVAP.splitlines()))
+    for gone in ("this$1", "val$n", "lambda$new$3", "access$000", "p.A$Feed$1(p.A$Feed, int)"):
+        assert gone not in kept, gone
+    for stays in ("mouseMoved", "static final int K = 7;", "(Ljava/awt/event/MouseEvent;)V"):
+        assert stays in kept, stays
+    # a named nested class's constructor is the sources': it stays, $ in its name or not
+    named = [
+        "class p.A$Stepper {",
+        "  p.A$Stepper(java.lang.String);",
+        "    descriptor: (Ljava/lang/String;)V",
+        "}",
+    ]
+    assert "p.A$Stepper(java.lang.String);" in "\n".join(urcap5._source_members("p.A$Stepper", named))
