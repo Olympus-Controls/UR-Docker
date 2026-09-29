@@ -3,7 +3,8 @@ the committed ``dist/`` jar, and the Java client's contract — URL rules, JSON,
 located-target text, and real HTTP against the cockpit (``perception.webapp``).
 
 The Java checks need only a JDK (the client classes import nothing from UR); the build
-checks need the URCap API jars too (``python3 urcap/urcap5.py sdk``) and skip without.
+checks need the URCap API jars too (``python3 urcap/urcap5.py sdk``: the floor's and every
+``compat.since`` version's) and skip without.
 """
 
 from __future__ import annotations
@@ -43,7 +44,8 @@ PURE_JAVA = (
     "Ui.java",
     "Scene.java",
 )
-HAS_SDK = all(any(urcap5.SDK_DIR.glob(p + "*.jar")) for p in urcap5.SDK_JARS)
+_PLAN = urcap5.compat_plan(urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8")))
+HAS_SDK = all((urcap5.SDK_ROOT / v / urcap5.SDK_INFO).is_file() for v in (_PLAN["floor"], *_PLAN["since"]))
 
 
 # -- bundle.properties + manifest ----------------------------------------------------------
@@ -159,7 +161,7 @@ def test_package_is_reproducible(tmp_path):
 
 def test_package_reports_a_missing_sdk_clearly(tmp_path):
     with pytest.raises(urcap5.Urcap5Error, match="urcap5.py sdk"):
-        urcap5.package(SRC, tmp_path, sdk_dir=tmp_path / "no-sdk")
+        urcap5.package(SRC, tmp_path, sdk_root=tmp_path / "no-sdk")
 
 
 # -- the Java client, under a JDK -----------------------------------------------------------

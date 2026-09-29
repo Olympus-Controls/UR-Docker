@@ -13,11 +13,9 @@ import com.ur.urcap.api.domain.value.ValueFactoryProvider;
 import com.ur.urcap.api.domain.value.jointposition.JointPositions;
 import com.ur.urcap.api.domain.value.simple.Angle;
 import com.ur.urcap.api.domain.value.simple.Length;
-import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback2;
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardInputCallback;
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardNumberInput;
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardTextInput;
-import com.ur.urcap.api.domain.value.robotposition.PositionParameters;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -485,12 +483,16 @@ public class PilotContribution implements InstallationNodeContribution, Location
     /** PolyScope's move screen: touch the table with the fingertips, then OK. */
     @Override
     public void teach(final int area, final int point) {
-        api.getUserInterfaceAPI().getUserInteraction().getUserDefinedRobotPosition(new RobotPositionCallback2() {
+        TeachPosition.teacher(modelName()).teach(api.getUserInterfaceAPI().getUserInteraction(), new TeachPosition.Done() {
             @Override
-            public void onOk(PositionParameters position) {
-                double[] tcp = position.getPose().toArray(Length.Unit.M, Angle.Unit.RAD);
-                double[] off = position.getTCPOffset().toArray(Length.Unit.M, Angle.Unit.RAD);
-                double[] tip = PoseMath.fingertip(tcp, off, model.get(KEY_TIP_MM, DEFAULT_TIP_MM) / 1000.0);
+            public void taught(JointPositions joints, double[] flange) {
+                if (flange == null) {
+                    view.setStatus("this PolyScope (before 5.8) can't say where the " + modelName() + "'s flange is:"
+                            + " leave the area untaught (the table is found live) or teach it on PolyScope 5.8+",
+                            PilotView.Kind.ERR);
+                    return;
+                }
+                double[] tip = PoseMath.tipOf(flange, model.get(KEY_TIP_MM, DEFAULT_TIP_MM) / 1000.0);
                 model.set("area." + area + ".p" + point, tip);
                 model.set(KEY_AREA_SELECTED, area);
                 showAreas();
