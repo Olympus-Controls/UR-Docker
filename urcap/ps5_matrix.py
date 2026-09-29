@@ -8,8 +8,9 @@ PolyScope 5 minors), against ``docker-compose.ps5-matrix.yml``:
    ``/urcaps/realsense-pilot-ps5.jar`` (the image's entrypoint copies ``/urcaps/*.jar``
    into PolyScope's bundle dir at every start) and bring the version's service up;
 2. wait for the Dashboard to answer a ``robotmode`` other than ``NO_CONTROLLER``;
-3. wait for PolyScope to have *started* the bundle (:func:`urcap_signal` on
-   ``/ursim/polyscope.log``), failing on any exception that names the URCap's package;
+3. wait for Felix (PolyScope's OSGi framework; its remote shell on the container's
+   127.0.0.1:6666) to report the bundle ``Active`` with both node services registered,
+   failing on any polyscope.log exception that names the URCap's package;
 4. power on + brake release, then run ``urcap/pick5_e2e.py`` — the Pick node's own
    URScript on this controller, against a pick server on this machine that the container
    reaches at its network's gateway;
@@ -153,45 +154,70 @@ def fetch_tags(url: str = HUB_TAGS) -> list[str]:
     return names
 
 
-# -- the URCap's evidence in polyscope.log --------------------------------------------------
+# -- the URCap's evidence ------------------------------------------------------------------
+#
+# polyscope.log never says a URCap *started*: on 5.24.0 / 5.25.2 / 5.26.1 it logs only
+# "Adding 'reference:' to bundle uri : file:/ursim/GUI/bundle/realsense-pilot-ps5.jar" and
+# (5.24, 5.25) URCapHelper's "Removing 'reference:' from bundle location" lines — found by
+# the first matrix run, 2026-09-28. The runtime truth is Felix's own: PolyScope's
+# /ursim/GUI/conf/config.properties enables the Felix remote shell on 127.0.0.1:6666 inside
+# the container (osgi.shell.telnet.ip/port), where `ps` gives each bundle's state and
+# `services <id>` the services its activator registered — the two node services.
 
-# A line naming the bundle (symbolic name, package, or the jar) with an OSGi / PolyScope
-# "it is running" verb. Extended from real logs in tests/fixtures/ps5_matrix/.
-_OURS = re.compile(r"com\.olympuscontrols|realsense-?pilot", re.I)
-_STARTED = re.compile(
-    r"\b(start(ed|ing)?|activ(e|ated|ating)|register(ed|ing)?|install(ed|ing)?|load(ed|ing)?)\b", re.I
+NODE_SERVICES = (
+    "com.ur.urcap.api.contribution.installation.swing.SwingInstallationNodeService",
+    "com.ur.urcap.api.contribution.program.swing.SwingProgramNodeService",
 )
-_ERROR = re.compile(r"exception|\berror\b|severe|could not|failed|unresolved", re.I)
+_PS_ROW = re.compile(r"^\[\s*(\d+)\]\s*\[\s*([A-Za-z]+)\s*\]\s*\[\s*(\d+)\]\s*(.*?)\s*$")
+_OURS = re.compile(r"com\.olympuscontrols|realsense-?pilot", re.I)
+_ERROR = re.compile(
+    r"exception|\berror\b|severe|could not|failed|unresolved|omitted|refused|rejected|incompatible", re.I
+)
 
 
-def urcap_signal(log: str, package: str = PACKAGE) -> dict:
-    """What ``polyscope.log`` says about the URCap: ``{"started": [...], "errors": [...]}``.
+def parse_ps(text: str) -> list[dict]:
+    """Felix shell ``ps`` rows: ``[ 164] [Active     ] [    1] RealSense Pilot (0.4.0)``."""
+    rows = []
+    for line in text.splitlines():
+        m = _PS_ROW.match(line.strip())
+        if m:
+            rows.append(
+                {"id": int(m.group(1)), "state": m.group(2), "level": int(m.group(3)), "name": m.group(4)}
+            )
+    return rows
 
-    ``errors`` are lines that are both about the URCap and look like a failure, plus any
-    Java stack frame inside the URCap's package (``at com.olympuscontrols...``) with the
-    exception line that heads it. ``started`` are lines about the URCap with a
-    start/activate/register/install verb and no failure word."""
+
+def find_bundle(rows: list[dict], name: str, version: str) -> dict | None:
+    """The row for ``Bundle-Name (Bundle-Version)`` exactly; None when absent."""
+    want = f"{name} ({version})"
+    return next((r for r in rows if r["name"] == want), None)
+
+
+def missing_services(services_text: str, wanted: tuple[str, ...] = NODE_SERVICES) -> list[str]:
+    """Which of ``wanted`` a ``services <id>`` listing does not name as an objectClass."""
+    classes = set(re.findall(r"objectClass\s*=\s*\[?([\w.$, ]+)\]?", services_text))
+    named = {c.strip() for group in classes for c in group.split(",")}
+    return [w for w in wanted if w not in named]
+
+
+def log_errors(log: str, package: str = PACKAGE) -> list[str]:
+    """polyscope.log lines that say something went wrong with the URCap: any Java stack
+    frame inside its package (``at com.olympuscontrols...``) with the exception line that
+    heads it, and any line naming the URCap together with a failure word."""
     lines = log.splitlines()
-    started: list[str] = []
     errors: list[str] = []
     for i, line in enumerate(lines):
-        frame = line.strip().startswith("at ") and package in line
-        if frame:
+        text = line.strip()
+        if text.startswith("at ") and package in text:
             head = next(
-                (lines[j] for j in range(i - 1, -1, -1) if not lines[j].strip().startswith("at ")), ""
+                (lines[j].strip() for j in range(i - 1, -1, -1) if not lines[j].strip().startswith("at ")), ""
             )
-            for text in (head.strip(), line.strip()):
-                if text and text not in errors:
-                    errors.append(text)
-            continue
-        if not _OURS.search(line):
-            continue
-        if _ERROR.search(line):
-            if line.strip() not in errors:
-                errors.append(line.strip())
-        elif _STARTED.search(line):
-            started.append(line.strip())
-    return {"started": started, "errors": errors}
+            for t in (head, text):
+                if t and t not in errors:
+                    errors.append(t)
+        elif _OURS.search(text) and _ERROR.search(text) and text not in errors:
+            errors.append(text)
+    return errors
 
 
 # -- docker ---------------------------------------------------------------------------------
@@ -258,15 +284,78 @@ def wait_for_dashboard(v: Version, timeout: float) -> str:
     raise TimeoutError(f"Dashboard :{v.dashboard} not ready after {timeout:.0f} s (last reply {reply!r})")
 
 
-def wait_for_urcap(v: Version, timeout: float) -> dict:
-    t0 = time.monotonic()
-    sig: dict = {"started": [], "errors": []}
-    while time.monotonic() - t0 < timeout:
-        sig = urcap_signal(_exec(v, "cat /ursim/polyscope.log 2>/dev/null"))
-        if sig["errors"] or sig["started"]:
+# Runs inside the container: connect to the Felix remote shell, run each argv command,
+# print "### <command>" and its output up to the next "-> " prompt.
+FELIX_SHELL = r"""
+import socket, sys, time
+s = socket.create_connection(("127.0.0.1", 6666), 5)
+s.settimeout(10)
+def until_prompt():
+    buf, end = b"", time.monotonic() + 20
+    while not buf.rstrip().endswith(b"->") and time.monotonic() < end:
+        chunk = s.recv(65536)
+        if not chunk:
             break
+        buf += chunk
+    return buf.decode(errors="replace")
+until_prompt()
+for c in sys.argv[1:]:
+    s.sendall(c.encode() + b"\n")
+    print("### " + c)
+    print(until_prompt())
+"""
+
+
+def felix_shell(v: Version, *commands: str, timeout: float = 60) -> dict[str, str]:
+    """``{command: output}`` from the container's Felix remote shell ({} when it is not up)."""
+    r = subprocess.run(
+        [*DOCKER, "exec", "-i", _container(v), "python3", "-", *commands],
+        input=FELIX_SHELL,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    out: dict[str, str] = {}
+    for chunk in r.stdout.split("### ")[1:]:
+        cmd, _, body = chunk.partition("\n")
+        out[cmd.strip()] = body
+    return out
+
+
+def urcap_identity(jar: Path) -> tuple[str, str]:
+    """``(Bundle-Name, Bundle-Version)`` from the jar's own manifest."""
+    sys.path.insert(0, str(REPO / "urcap"))
+    from urcap5 import read_bundle
+
+    h = read_bundle(jar)["headers"]
+    return h["Bundle-Name"], h["Bundle-Version"]
+
+
+def wait_for_urcap(v: Version, jar: Path, timeout: float) -> dict:
+    """Poll the Felix shell until the URCap's bundle is Active with both node services
+    registered (``ok``), or ``timeout``; always reports the last state seen."""
+    name, version = urcap_identity(jar)
+    t0 = time.monotonic()
+    seen: dict = {
+        "ok": False,
+        "bundle": f"{name} ({version})",
+        "state": None,
+        "missing_services": list(NODE_SERVICES),
+    }
+    while time.monotonic() - t0 < timeout:
+        row = find_bundle(parse_ps(felix_shell(v, "ps").get("ps", "")), name, version)
+        if row:
+            seen.update(id=row["id"], state=row["state"])
+            if row["state"] == "Active":
+                listing = felix_shell(v, f"services {row['id']}").get(f"services {row['id']}", "")
+                seen["missing_services"] = missing_services(listing)
+                if not seen["missing_services"]:
+                    seen["ok"] = True
+                    break
         time.sleep(3)
-    return sig
+    seen["waited_s"] = round(time.monotonic() - t0, 1)
+    return seen
 
 
 def gateway(v: Version) -> str:
@@ -301,22 +390,6 @@ for d in $(grep -l -i realsense /ursim/GUI/felix-cache/bundle*/bundle.info 2>/de
 done
 echo '## felix / shell config'; ls /ursim/GUI/conf 2>&1
 grep -r -n -i -E 'shell|telnet|felix' /ursim/GUI/conf 2>/dev/null | head -40
-echo '## listening tcp ports (hex)'
-awk 'NR>1 && $4=="0A" {print $2}' /proc/net/tcp /proc/net/tcp6 | sort -u
-echo '## felix remote shell ps'
-python3 - <<'EOF' 2>&1 | tail -250
-import socket, time
-s = socket.create_connection(("127.0.0.1", 6666), 3)
-time.sleep(1)
-s.settimeout(3)
-try:
-    print(s.recv(4096).decode(errors="replace"))
-except OSError as exc:
-    print("no banner:", exc)
-s.sendall(b"ps\n")
-time.sleep(2)
-print(s.recv(65536).decode(errors="replace"))
-EOF
 """
 
 
@@ -332,6 +405,12 @@ def collect(v: Version, out: Path) -> list[str]:
             saved.append(str(dst))
     (out / "evidence.txt").write_text(_exec(v, EVIDENCE, timeout=120), encoding="utf-8")
     saved.append(str(out / "evidence.txt"))
+    shell = felix_shell(v, "ps")
+    row = next((r for r in parse_ps(shell.get("ps", "")) if r["name"].startswith("RealSense Pilot")), None)
+    if row:
+        shell.update(felix_shell(v, f"services {row['id']}", f"headers {row['id']}"))
+    (out / "felix.txt").write_text("".join(f"### {k}\n{t}" for k, t in shell.items()), encoding="utf-8")
+    saved.append(str(out / "felix.txt"))
     logs = _compose(v, "logs", "--no-color", v.service, check=False)
     (out / "container.log").write_text(logs.stdout + logs.stderr, encoding="utf-8")
     saved.append(str(out / "container.log"))
@@ -347,18 +426,23 @@ def run_version(v: Version, artifacts: Path, *, boot_timeout: float, urcap_timeo
     stages = report["stages"]
     t0 = time.monotonic()
     try:
-        report["urcap"] = stage_urcap().name
+        jar = stage_urcap()
+        report["urcap"] = jar.name
         _compose(v, "pull", "--quiet", v.service)
         _compose(v, "up", "-d", v.service)
         stages["dashboard"] = wait_for_dashboard(v, boot_timeout)
         stages["boot_s"] = round(time.monotonic() - t0, 1)
-        sig = wait_for_urcap(v, urcap_timeout)
-        stages["urcap_signal"] = sig
-        if sig["errors"]:
-            raise RuntimeError(f"PolyScope logged {len(sig['errors'])} error line(s) about the URCap")
-        if not sig["started"] and not os.environ.get("PS5_MATRIX_DISCOVER"):
+        stages["urcap"] = wait_for_urcap(v, jar, urcap_timeout)
+        stages["urcap"]["log_errors"] = log_errors(_exec(v, "cat /ursim/polyscope.log 2>/dev/null"))
+        if stages["urcap"]["log_errors"]:
             raise RuntimeError(
-                f"no sign in polyscope.log that the URCap started within {urcap_timeout:.0f} s"
+                f"PolyScope logged {len(stages['urcap']['log_errors'])} error line(s) about the URCap"
+            )
+        if not stages["urcap"]["ok"]:
+            u = stages["urcap"]
+            raise RuntimeError(
+                f"{u['bundle']} not started with its node services within {urcap_timeout:.0f} s "
+                f"(state {u['state']}, missing {', '.join(u['missing_services']) or 'none'})"
             )
         sys.path.insert(0, str(REPO))
         from urctl import Robot, RobotConfig
@@ -392,9 +476,9 @@ def run_version(v: Version, artifacts: Path, *, boot_timeout: float, urcap_timeo
         e2e = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env, check=False)
         stages["pick_e2e"] = {"exit": e2e.returncode, "output": (e2e.stdout + e2e.stderr).splitlines()[-60:]}
         # A late exception (e.g. when the node's classes are touched at program run) still fails.
-        late = urcap_signal(_exec(v, "cat /ursim/polyscope.log 2>/dev/null"))["errors"]
+        late = log_errors(_exec(v, "cat /ursim/polyscope.log 2>/dev/null"))
         if late:
-            stages["urcap_signal"]["errors"] = late
+            stages["urcap"]["log_errors"] = late
             raise RuntimeError(f"PolyScope logged {len(late)} error line(s) about the URCap during the run")
         if e2e.returncode != 0:
             raise RuntimeError("pick5_e2e failed")

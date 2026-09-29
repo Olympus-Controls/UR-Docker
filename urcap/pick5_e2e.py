@@ -34,12 +34,65 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from perception.picknode import PickPlanner, PickServer  # noqa: E402
+from perception.picknode import PickPlanner, PickServer, parse_request  # noqa: E402
 from tests.test_pickcycle import H, K, W, scene  # noqa: E402
 from tests.test_urcap5 import HARNESS, JAVA  # noqa: E402
 from urctl import Robot, RobotConfig  # noqa: E402
+from urctl.pose import Transform  # noqa: E402
 
 READY = [0.0, -1.0, 1.2, -1.8, -1.5708, 0.0]  # elbow bent, tool down: no singular movel
+
+
+class World:
+    """The synthetic block, fixed in the base frame. The first request's view is exactly
+    ``scene([BOX])`` (camera = flange, the hand-eye is identity); every later view — the
+    node's closer, tilted look — is ray-cast from the flange pose its request carries, so
+    REFINE finds the block where FIND put it, as a real camera would."""
+
+    def __init__(self, box=(40, 30, 70, 54), floor=0.40, height=0.04):
+        self.box, self.floor, self.top = box, floor, floor - height
+        self.frame: Transform | None = None  # the first view: defines the world
+        self.flange: list[float] | None = None  # the newest request's flange pose
+
+    def view(self, line: str) -> None:
+        try:
+            flange = parse_request(line).get("flange")
+        except Exception:  # noqa: BLE001 — the planner itself answers a bad request
+            return
+        if flange:
+            self.flange = flange
+            self.frame = self.frame or Transform.from_pose(flange)
+
+    def render(self) -> tuple[bytes, bytes]:
+        if self.frame is None or self.flange is None:
+            return scene([self.box])
+        f0, cam = self.frame, Transform.from_pose(self.flange)
+        n, o0 = f0.rotate((0, 0, 1)), f0.apply((0, 0, 0))
+        a1, a2 = f0.rotate((1, 0, 0)), f0.rotate((0, 1, 0))
+        x0, y0, x1, y1 = self.box
+        dot = lambda a, b: a[0] * b[0] + a[1] * b[1] + a[2] * b[2]  # noqa: E731
+        o = cam.apply((0, 0, 0))
+        h_top, h_floor, h_o = dot(n, o0) + self.top, dot(n, o0) + self.floor, dot(n, o)
+        rgb, depth = bytearray(b"\x80\x70\x50" * (W * H)), bytearray(W * H * 2)
+        for v in range(H):
+            for u in range(W):
+                d = cam.rotate(((u - K["ppx"]) / K["fx"], (v - K["ppy"]) / K["fy"], 1.0))
+                den = dot(n, d)
+                if den <= 1e-6:
+                    continue
+                t = (h_top - h_o) / den  # the ray has camera-z 1: t is the depth
+                q = [o[i] + t * d[i] - o0[i] for i in range(3)]
+                i = v * W + u
+                # the hit, as a pixel of the first view (1e-9: that view is exactly scene())
+                u0 = dot(a1, q) / self.top * K["fx"] + K["ppx"] + 1e-9
+                v0 = dot(a2, q) / self.top * K["fy"] + K["ppy"] + 1e-9
+                if t > 0 and x0 <= u0 < x1 and y0 <= v0 < y1:
+                    rgb[3 * i : 3 * i + 3] = b"\xf0\xf0\xf2"
+                else:
+                    t = (h_floor - h_o) / den
+                mm = max(0, min(65535, int(round(t / 0.001))))
+                depth[2 * i], depth[2 * i + 1] = mm & 0xFF, mm >> 8
+        return bytes(rgb), bytes(depth)
 
 
 def generate(host: str, port: int, children: str) -> str:
@@ -87,12 +140,13 @@ def main() -> int:
     args = ap.parse_args()
     ports = {"dashboard_port": args.dash_port, "primary_port": args.primary_port}
 
-    frame = scene([(40, 30, 70, 54)])
+    world = World()
     seq = {"n": 0}
 
     def source(after):
         seq["n"] = max(seq["n"], after) + 1
-        return seq["n"], W, H, 3, frame[0], frame[1], 0.001, K
+        rgb, depth = world.render()
+        return seq["n"], W, H, 3, rgb, depth, 0.001, K
 
     log: list[str] = []
     planner = PickPlanner(
@@ -103,6 +157,8 @@ def main() -> int:
         min_radius_m=0.0,
         log=lambda text, ok: log.append(text),
     )
+    answer = planner.answer
+    planner.answer = lambda line: (world.view(line), answer(line))[1]
     server = PickServer(args.bind, args.port, planner)
     server.start()
     try:
