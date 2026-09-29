@@ -105,3 +105,27 @@ jar is reproducible, and carries a digest of its sources so a test flags a stale
   builds inside a panel it owns. **The node's screen has not been seen rendering yet** —
   PolyScope's JVM crashes in JIT-compiled code under emulation — so the first look at it is
   on the robot (`scripts/urcap5-usb.sh`, then the install steps above).
+
+## Tested PolyScope versions
+
+Every change to the URCap runs on the newest patch of each of the newest three PolyScope 5
+minors, in URSim on GitHub's amd64 runners (`.github/workflows/urcap5-matrix.yml`;
+`docker-compose.ps5-matrix.yml`, `urcap/ps5_matrix.py`):
+
+| PolyScope | URSim image | Result (2026-09-28, URCap 0.4.0) |
+| --------- | ----------- | -------------------------------- |
+| 5.24 | `ursim_e-series:5.24.0` | bundle Active, both node services registered, pick e2e PASS |
+| 5.25 | `ursim_e-series:5.25.2` | bundle Active, both node services registered, pick e2e PASS |
+| 5.26 | `ursim_e-series:5.26.1` | bundle Active, both node services registered, pick e2e PASS |
+
+Per version: the committed `dist/` jar goes in `/urcaps`; the check asks PolyScope's own
+Felix shell (`127.0.0.1:6666` inside the container) for the bundle's state and the
+services its activator registered, since polyscope.log never says a URCap started; any
+polyscope.log line or stack frame naming the URCap with a failure fails the run. Then the
+arm is brought up and the Pick node's own URScript runs on that controller against a pick
+server on the runner (`urcap/pick5_e2e.py`: FIND → closer look → REFINE → grip → child
+nodes → lift). What this does not cover: the node's screens rendering on a pendant.
+
+A weekly job fails when Docker Hub has a newer 5.x minor or patch than the matrix
+(`python3 urcap/ps5_matrix.py check-tags`: "PolyScope 5.27 exists: add it and drop 5.24").
+On an amd64 Linux host: `make urcap5-matrix PS5_VERSION=5.26` (or `all`).

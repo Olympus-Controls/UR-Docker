@@ -1,5 +1,7 @@
 """The PolyScope 5 version matrix's pure parts (urcap/ps5_matrix.py): the port table, the
-compose file held to it, the Docker Hub tag checker, and the polyscope.log matcher."""
+compose file held to it, the Docker Hub tag checker, and the URCap evidence parsers
+(polyscope.log errors, the Felix shell's ps / inspect output — real captures under
+tests/fixtures/ps5_matrix/)."""
 
 from __future__ import annotations
 
@@ -272,5 +274,6 @@ def test_missing_services_names_what_the_activator_did_not_register():
 
 @pytest.mark.parametrize("fixture", sorted(FIXTURES.glob("felix-services-*.txt")))
 def test_missing_services_on_real_listings(fixture):
-    """Real ``services <id>`` listings of the URCap from the CI matrix (one per version)."""
+    """Real ``inspect service capability <id>`` listings of the URCap, one per version (CI
+    matrix run 36512194205, 2026-09-28, URCap 0.4.0)."""
     assert m.missing_services(fixture.read_text(encoding="utf-8")) == [], fixture.name
