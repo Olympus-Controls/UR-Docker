@@ -491,7 +491,7 @@ class PickPlanner:
         else:
             got = self._refine2(req, opts)
         status = got["status"]
-        what = STATUS.get(status, "?")
+        what = "nothing queued" if verb == "NEXT" and status == 0 else STATUS.get(status, "?")
         at = got.get("loc", 0)
         where = f" #{got.get('order', 0)} at {at}" if status == 1 else f" (next: {at})"
         self.log(f"pick {verb} [{opts.node or '-'}]: {what}{where}", status in (0, 1))
