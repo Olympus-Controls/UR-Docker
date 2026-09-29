@@ -4,7 +4,7 @@ package com.olympuscontrols.realsensepilot;
  * UR pose math with no UR API — rotation vectors, {@code pose_trans}, {@code pose_inv} — and
  * the pick area a Pick location is taught as: three points touched with the fingertips
  * (the area's corner, a point along its X edge, a point on its far side), the same
- * construction as {@code perception.volume.Surface.from_points}.
+ * construction as {@code perceptronics.volume.Surface.from_points}.
  */
 final class PoseMath {
     private PoseMath() {
@@ -62,7 +62,7 @@ final class PoseMath {
 
     /**
      * UR's published nominal DH table {d[6], a[6]} (m) of each e-Series arm by PolyScope's robot
-     * type name — the same rows as {@code perception.armfk.DH} (the UR3e row checked on the
+     * type name — the same rows as {@code perceptronics.armfk.DH} (the UR3e row checked on the
      * cell at 0.84 mm); alpha is {π/2, 0, 0, π/2, −π/2, 0} for all. Null when not in the table.
      */
     static double[][] dh(String robotType) {

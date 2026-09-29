@@ -173,7 +173,7 @@ final class PickScript {
 
     /**
      * {base outer radius, rated reach} (m) by PolyScope's robot type name — the same table as
-     * {@code perception.volume.BASE_RADIUS_M} / {@code urctl.safety.MODEL_REACH_M}; null when unknown.
+     * {@code perceptronics.volume.BASE_RADIUS_M} / {@code urctl.safety.MODEL_REACH_M}; null when unknown.
      */
     static double[] modelReach(String type) {
         String t = type == null ? "" : type.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");

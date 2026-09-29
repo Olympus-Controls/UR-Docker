@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 
 /**
- * The RealSense cockpit's HTTP API (``perception gui``), from the controller: the same
+ * The RealSense cockpit's HTTP API (``perceptronics gui``), from the controller: the same
  * routes the PolyScope X node calls from the browser — ``GET /api/color.png`` long-polled
  * by sequence number, ``GET /api/point``, ``POST /api/segment`` → ``POST
  * /api/robot/locate``, ``/api/robot/{move,bring_up,stop}``. No UR API here, so it runs
@@ -188,7 +188,7 @@ final class Cockpit {
 
     /** Why a request to the cockpit failed, and what to do about it — one message per cause. */
     static String explain(Exception e, String base) {
-        String how = "\nStart one where the camera is:  perception --cell <cell> gui --bind 0.0.0.0"
+        String how = "\nStart one where the camera is:  perceptronics --cell <cell> gui --bind 0.0.0.0"
                 + "\nthen set its URL above (http://<camera-computer-ip>:" + DEFAULT_PORT + ").";
         if (e instanceof java.net.MalformedURLException || e instanceof IllegalArgumentException) {
             return "\"" + base + "\" is not a URL — enter it as http://<host>:" + DEFAULT_PORT;

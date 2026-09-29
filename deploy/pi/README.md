@@ -52,7 +52,7 @@ From a checkout of this repo on the laptop (it needs `uv` and `ssh`):
     scripts/deploy-pi.sh pi@192.168.3.10 --cell ur3 --robot-host 192.168.3.3
 
 This builds the wheel (`uv build`, the repo's locked tooling), copies it and `deploy/pi/`
-to the PC, runs `install.sh` there under `sudo`, and prints `perception doctor` from the
+to the PC, runs `install.sh` there under `sudo`, and prints `perceptronics doctor` from the
 PC. The first run compiles librealsense, which takes tens of minutes on a Pi 5. Later runs
 reuse it. Run from a terminal, and sudo on the PC prompts for your password. Run from an
 agent's shell (no terminal), the PC's sudo must be passwordless (Raspberry Pi OS's first
@@ -63,13 +63,13 @@ What `install.sh` does, idempotently:
 | Step | Result |
 | --- | --- |
 | apt | `python3 python3-venv git ca-certificates cmake build-essential pkg-config libusb-1.0-0-dev libudev-dev nftables usbutils` (each one's reason is in the script) |
-| librealsense | **v2.58.4** (the ctypes binding checks enum ordinals written against 2.58; the same tag as `Dockerfile.perception`), commit-checked after the clone, built with `-DFORCE_RSUSB_BACKEND=ON` (libusb, no kernel patches), no examples, tools, graphical examples or Python bindings, and `CHECK_FOR_UPDATES=OFF`. Installed to `/opt/librealsense-2.58.4` (`/opt/librealsense` → it), registered with `ldconfig`. |
+| librealsense | **v2.58.4** (the ctypes binding checks enum ordinals written against 2.58; the same tag as `Dockerfile.perceptronics`), commit-checked after the clone, built with `-DFORCE_RSUSB_BACKEND=ON` (libusb, no kernel patches), no examples, tools, graphical examples or Python bindings, and `CHECK_FOR_UPDATES=OFF`. Installed to `/opt/librealsense-2.58.4` (`/opt/librealsense` → it), registered with `ldconfig`. |
 | udev | the SDK's own `99-realsense-libusb.rules` (MODE 0666, group plugdev), so the service opens the camera **without root** |
-| user | system user `perception` in `plugdev` + `video`, state in `/var/lib/perception` |
-| app | a venv per wheel under `/opt/perception/releases/<version>-<sha>`, `pip install --no-index --no-deps` (nothing fetched), `/opt/perception/current` and `previous` symlinks, the three newest releases kept |
-| config | `/etc/perception/cell.env` from the shipped cell (`perception/cells/<cell>.env`) minus the Mac's webcam lines, plus `cell.env.template`, plus `--robot-host`. Written only when missing or with `--reconfigure` (`--cell` / `--robot-host` on `deploy-pi.sh` imply it). The old file is kept as `cell.env.<timestamp>`. |
-| firewall | `/etc/nftables.conf` (the original is kept as `.pre-perception`). Inbound traffic is dropped except loopback, replies, ICMP, SSH, and :7621/:7622 from the cell subnet (`--allow-from CIDR`, default `UR_HOST`'s /24). |
-| service | `perception-cockpit.service` enabled and restarted, plus `/usr/local/bin/perception-doctor` |
+| user | system user `perceptronics` in `plugdev` + `video`, state in `/var/lib/perceptronics` |
+| app | a venv per wheel under `/opt/perceptronics/releases/<version>-<sha>`, `pip install --no-index --no-deps` (nothing fetched), `/opt/perceptronics/current` and `previous` symlinks, the three newest releases kept |
+| config | `/etc/perceptronics/cell.env` from the shipped cell (`perceptronics/cells/<cell>.env`) minus the Mac's webcam lines, plus `cell.env.template`, plus `--robot-host`. Written only when missing or with `--reconfigure` (`--cell` / `--robot-host` on `deploy-pi.sh` imply it). The old file is kept as `cell.env.<timestamp>`. |
+| firewall | `/etc/nftables.conf` (the original is kept as `.pre-perceptronics`). Inbound traffic is dropped except loopback, replies, ICMP, SSH, and :7621/:7622 from the cell subnet (`--allow-from CIDR`, default `UR_HOST`'s /24). |
+| service | `perceptronics-cockpit.service` enabled and restarted, plus `/usr/local/bin/perceptronics-doctor` |
 
 ## 3. Point the pendant at it
 
@@ -82,39 +82,39 @@ because the node is Java on the controller, not a web page.
 
 | | |
 | --- | --- |
-| health | `sudo perception-doctor` (add `--json`, `--no-robot`; `--stream` opens the camera, so stop the service first) |
-| logs | `journalctl -u perception-cockpit -f` |
-| stop / start | `sudo systemctl stop perception-cockpit` / `sudo systemctl start perception-cockpit` |
+| health | `sudo perceptronics-doctor` (add `--json`, `--no-robot`; `--stream` opens the camera, so stop the service first) |
+| logs | `journalctl -u perceptronics-cockpit -f` |
+| stop / start | `sudo systemctl stop perceptronics-cockpit` / `sudo systemctl start perceptronics-cockpit` |
 | the cockpit UI from a laptop | `ssh -L 7621:127.0.0.1:7621 pi@192.168.3.10`, then open http://127.0.0.1:7621 |
-| config | edit `/etc/perception/cell.env`, then `sudo systemctl restart perception-cockpit` |
-| calibration | `perception calibrate --apply` saves to `/var/lib/perception/captures/calibration/handeye.json`. Then **delete the `PERCEPTION_T_FLANGE_CAMERA` line** in `cell.env` and restart, because an environment value wins over the file (CLAUDE.md, the stale hand-eye gotcha). |
-| audit | every robot action: `/var/lib/perception/audit.jsonl` |
+| config | edit `/etc/perceptronics/cell.env`, then `sudo systemctl restart perceptronics-cockpit` |
+| calibration | `perceptronics calibrate --apply` saves to `/var/lib/perceptronics/captures/calibration/handeye.json`. Then **delete the `PERCEPTRONICS_T_FLANGE_CAMERA` line** in `cell.env` and restart, because an environment value wins over the file (CLAUDE.md, the stale hand-eye gotcha). |
+| audit | every robot action: `/var/lib/perceptronics/audit.jsonl` |
 
 **Update:** run the same `scripts/deploy-pi.sh pi@<ip>` from a newer checkout. It
 installs a new release beside the old one, moves `current`, and restarts the service.
 `cell.env` is kept.
 
 **Rollback:** `scripts/deploy-pi.sh pi@<ip> --rollback`, or on the PC
-`sudo /opt/perception/deploy/install.sh --rollback`. This swaps `current` and `previous`
+`sudo /opt/perceptronics/deploy/install.sh --rollback`. This swaps `current` and `previous`
 and restarts the service.
 
-**Uninstall:** `sudo /opt/perception/deploy/install.sh --uninstall` removes the service,
-the firewall table and `/opt/perception`. It keeps `/etc/perception`, the calibrations
-in `/var/lib/perception`, librealsense and the user. Add `--purge` to remove those too.
+**Uninstall:** `sudo /opt/perceptronics/deploy/install.sh --uninstall` removes the service,
+the firewall table and `/opt/perceptronics`. It keeps `/etc/perceptronics`, the calibrations
+in `/var/lib/perceptronics`, librealsense and the user. Add `--purge` to remove those too.
 
 ## Ports
 
 | Port | Direction | What | Who may connect |
 | --- | --- | --- | --- |
 | 22/tcp | in | SSH | anyone (key auth; tighten in `nftables.conf` if the PC is on a wider network) |
-| 7621/tcp | in | cockpit HTTP API (`perception gui --port`), incl. `/api/color.png` | cell subnet only |
+| 7621/tcp | in | cockpit HTTP API (`perceptronics gui --port`), incl. `/api/color.png` | cell subnet only |
 | 7622/tcp | in | pick server for the RealSense Pick node (`--pick-port`) | cell subnet only |
 | 29999, 30001, 30004/tcp | out | robot Dashboard, Primary, RTDE (`UR_*_PORT` in `cell.env`) | — |
 
 Both inbound services are **unauthenticated** (a trusted cell network, like the robot's
 own ports). The firewall is what keeps them on the cell.
 
-A `perception pick-server` sidecar also binds **:7622**. Never run one next to this
+A `perceptronics pick-server` sidecar also binds **:7622**. Never run one next to this
 service. If you did, `pkill -f "pick-server --bind"` before restarting the cockpit, or the
 cockpit warns and runs without its pick server.
 
@@ -124,10 +124,10 @@ cockpit warns and runs without its pick server.
 | --- | --- |
 | doctor: `no RealSense device enumerated` | `lsusb` must list `8086:0b07`. If it doesn't, check the cable and power. If it does, the udev rules are missing: `ls /etc/udev/rules.d/99-realsense-libusb.rules`, then re-plug. |
 | doctor: camera `usb 2.x` (warn) | The link fell back to USB 2. The cockpit negotiates 640×480 @ 15 by itself. For 848×480 @ 30, use a blue port, a short cable, no hub. `lsusb -t` shows the link speed: `5000M` is USB 3, `480M` is USB 2. |
-| `RS2_USB_STATUS_ACCESS` / `claim usb interface` | udev rules not applied to an already-plugged camera: re-plug it. Check that `id perception` lists `plugdev`. |
+| `RS2_USB_STATUS_ACCESS` / `claim usb interface` | udev rules not applied to an already-plugged camera: re-plug it. Check that `id perceptronics` lists `plugdev`. |
 | pendant: cockpit unreachable | `sudo nft list ruleset`: the pendant's address must be inside `CELL_NET`. Re-run with `--allow-from <subnet>`. |
-| Pick node answers `-4` (no fresh frame) over and over | The camera dropped out. The cockpit re-opens it by itself, and `journalctl -u perception-cockpit` says why. Re-plug if it doesn't recover. |
-| service restarts in a loop | `journalctl -u perception-cockpit -b`. A bad value in `cell.env` is the usual cause. Compare it with `perception cells`. |
+| Pick node answers `-4` (no fresh frame) over and over | The camera dropped out. The cockpit re-opens it by itself, and `journalctl -u perceptronics-cockpit` says why. Re-plug if it doesn't recover. |
+| service restarts in a loop | `journalctl -u perceptronics-cockpit -b`. A bad value in `cell.env` is the usual cause. Compare it with `perceptronics cells`. |
 
 ## Open items (not verified yet)
 

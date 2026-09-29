@@ -5,7 +5,7 @@ run the cockpit as an unprivileged user with a restart policy and a command line
 CLI accepts, the installer must pin librealsense to the release the ctypes binding was
 written against and never pipe a download into a shell, every variable the cell.env
 template sets must be one the code reads, the cell.env the installer writes must parse
-the same under perception's own parser, and the firewall must drop by default.
+the same under perceptronics's own parser, and the firewall must drop by default.
 """
 
 from __future__ import annotations
@@ -18,17 +18,17 @@ from pathlib import Path
 
 import pytest
 
-from perception import webapp
-from perception.cell import list_cells, parse_env_text
-from perception.picknode import DEFAULT_PICK_PORT
+from perceptronics import webapp
+from perceptronics.cell import list_cells, parse_env_text
+from perceptronics.picknode import DEFAULT_PICK_PORT
 
 ROOT = Path(__file__).resolve().parents[1]
 PI = ROOT / "deploy" / "pi"
 INSTALL = PI / "install.sh"
-UNIT = PI / "perception-cockpit.service"
+UNIT = PI / "perceptronics-cockpit.service"
 NFT = PI / "nftables.conf"
 TEMPLATE = PI / "cell.env.template"
-DOCTOR = PI / "perception-doctor"
+DOCTOR = PI / "perceptronics-doctor"
 DEPLOY = ROOT / "scripts" / "deploy-pi.sh"
 BASH_SCRIPTS = [INSTALL, DEPLOY]
 
@@ -129,11 +129,11 @@ def test_librealsense_is_pinned_to_the_binding_release():
     assert re.fullmatch(r"v\d+\.\d+\.\d+", tag), f"not a release tag: {tag}"
     assert re.fullmatch(r"[0-9a-f]{40}", commit), "the tag's commit must be pinned too"
     # the ctypes binding checks enum ordinals written against this minor
-    binding = _text(ROOT / "perception" / "realsense.py")
+    binding = _text(ROOT / "perceptronics" / "realsense.py")
     minor = re.search(r"written against librealsense (\d+\.\d+)", binding).group(1)
     assert tag.lstrip("v").startswith(minor + "."), f"{tag} is not librealsense {minor}.x"
     # and the container builds the same release
-    docker_ref = re.search(r"LIBREALSENSE_REF=(\S+)", _text(ROOT / "Dockerfile.perception")).group(1)
+    docker_ref = re.search(r"LIBREALSENSE_REF=(\S+)", _text(ROOT / "Dockerfile.perceptronics")).group(1)
     assert docker_ref == tag
     assert 'rev-parse HEAD)"' in text and "$LIBREALSENSE_COMMIT" in text, "the clone's commit is checked"
 
@@ -220,27 +220,27 @@ def test_unit_state_is_writable_where_the_cockpit_writes():
     writable = " ".join(svc.get("ReadWritePaths", [])).split()
     assert workdir in writable, "captures/ (relative to the working directory) must be writable"
     template = parse_env_text(_text(TEMPLATE))
-    for key in ("PERCEPTION_HANDEYE_FILE", "UR_AUDIT_LOG"):
+    for key in ("PERCEPTRONICS_HANDEYE_FILE", "UR_AUDIT_LOG"):
         assert Path(template[key]).is_relative_to(workdir), f"{key} is outside ReadWritePaths"
 
 
 def test_unit_reads_the_cell_file_the_installer_writes():
     svc = _unit(UNIT)["Service"]
-    cell_env = _assignment("CELL_ENV", _text(INSTALL).replace("${ETC_DIR}", "/etc/perception"))
+    cell_env = _assignment("CELL_ENV", _text(INSTALL).replace("${ETC_DIR}", "/etc/perceptronics"))
     assert _one(svc, "EnvironmentFile") == cell_env
     assert f"--cell {cell_env}" in _text(DOCTOR).replace('"$CELL"', cell_env)
 
 
 def test_unit_execstart_parses_under_the_real_cli(monkeypatch):
     argv = _one(_unit(UNIT)["Service"], "ExecStart").split()
-    assert argv[0] == "/opt/perception/current/bin/perception"
+    assert argv[0] == "/opt/perceptronics/current/bin/perceptronics"
     monkeypatch.delenv("UR_CELL", raising=False)
     served = {}
     monkeypatch.setattr(webapp, "camera_from_args", lambda args, config: None)
     monkeypatch.setattr(webapp, "robot_from_args", lambda args: None)
     monkeypatch.setattr(webapp, "views_from_args", lambda args, config: [])
     monkeypatch.setattr(webapp, "serve", lambda *a, **kw: served.update(kw))
-    from perception import cli
+    from perceptronics import cli
 
     assert cli.main(argv[1:]) == 0  # argparse exits 2 on an unknown flag
     assert served["bind"] == "0.0.0.0"
@@ -252,7 +252,7 @@ def test_unit_execstart_parses_under_the_real_cli(monkeypatch):
 def test_unit_documents_ports_and_stop_command():
     text = _text(UNIT)
     assert str(webapp.DEFAULT_PORT) in text and str(DEFAULT_PICK_PORT) in text
-    assert "systemctl stop perception-cockpit" in text
+    assert "systemctl stop perceptronics-cockpit" in text
     assert "pick-server" in text, "the :7622 clash with the sidecar is written where the next person looks"
 
 
@@ -261,9 +261,9 @@ def test_unit_documents_ports_and_stop_command():
 
 def _env_names_read_by_code() -> set[str]:
     names: set[str] = set()
-    for pkg in ("perception", "urctl"):
+    for pkg in ("perceptronics", "urctl"):
         for path in (ROOT / pkg).rglob("*.py"):
-            names.update(re.findall(r"[\"']((?:UR|PERCEPTION|REALSENSE)_[A-Z0-9_]+)[\"']", _text(path)))
+            names.update(re.findall(r"[\"']((?:UR|PERCEPTRONICS|REALSENSE)_[A-Z0-9_]+)[\"']", _text(path)))
     return names
 
 
@@ -308,7 +308,7 @@ def test_written_cell_env_parses_and_is_self_contained(tmp_path, cell):
     assert result.returncode == 0, result.stderr
     values = parse_env_text((tmp_path / "cell.env").read_text(encoding="utf-8"))
     assert values["UR_HOST"] == "192.168.3.3"
-    assert "PERCEPTION_VIEWS" not in values, "the Mac's webcam names must not reach the pick PC"
+    assert "PERCEPTRONICS_VIEWS" not in values, "the Mac's webcam names must not reach the pick PC"
     assert values["REALSENSE_LIB"] == parse_env_text(_text(TEMPLATE))["REALSENSE_LIB"]
     assert set(values) <= _env_names_read_by_code()
 
@@ -317,7 +317,7 @@ def test_cell_env_needs_a_robot_host(tmp_path):
     empty = [
         c
         for c in list_cells()
-        if not parse_env_text(_text(ROOT / "perception" / "cells" / f"{c}.env")).get("UR_HOST")
+        if not parse_env_text(_text(ROOT / "perceptronics" / "cells" / f"{c}.env")).get("UR_HOST")
     ]
     if not empty:
         pytest.skip("every shipped cell has a UR_HOST")

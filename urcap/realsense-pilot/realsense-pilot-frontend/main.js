@@ -2,7 +2,7 @@
 // framework, no build). PolyScope X sets `applicationNode`, `applicationAPI`,
 // `robotSettings` and `robotContext` on it (SDK 6.5.65 JavaScript template).
 //
-// The page talks to the RealSense cockpit (`perception gui --cors <this origin>`)
+// The page talks to the RealSense cockpit (`perceptronics gui --cors <this origin>`)
 // over its HTTP API: the colour feed is `GET /api/color.png` long-polled by
 // sequence number, hover reads `GET /api/point`, a click runs
 // `POST /api/segment` → `POST /api/robot/locate` (hand-eye → base frame,
@@ -199,7 +199,7 @@
         await fetch(`${base}/api/info`, { mode: "no-cors", cache: "no-store", signal: ctl ? ctl.signal : undefined });
         return (
           `the cockpit at ${base} is running but refuses this page (origin ${origin}).\n` +
-          `Restart it with  --cors ${origin}  (or PERCEPTION_CORS=${origin}); ` +
+          `Restart it with  --cors ${origin}  (or PERCEPTRONICS_CORS=${origin}); ` +
           `a cockpit started before --cors existed needs a restart on the new code.`
         );
       } catch (e) {
@@ -357,7 +357,7 @@
           const up = detail && detail.includes("is running but");
           this.setStatus(
             (detail || `no cockpit at ${this.cockpitUrl()} (${why}).`) +
-            (up ? "" : `\nStart one where the camera is:  perception --cell <cell> gui --cors ${location.origin}` +
+            (up ? "" : `\nStart one where the camera is:  perceptronics --cell <cell> gui --cors ${location.origin}` +
               `\nthen set its URL above.`),
             "err",
           );

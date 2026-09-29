@@ -1,6 +1,6 @@
 """The PolyScope 5 (e-Series) RealSense Pilot URCap: the packager (``urcap/urcap5.py``),
 the committed ``dist/`` jar, and the Java client's contract — URL rules, JSON, the
-located-target text, and real HTTP against the cockpit (``perception.webapp``).
+located-target text, and real HTTP against the cockpit (``perceptronics.webapp``).
 
 The Java checks need only a JDK (the client classes import nothing from UR); the build
 checks need the URCap API jars too (``python3 urcap/urcap5.py sdk``: the floor's and every
@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from perception.config import PerceptionConfig
-from perception.realsense import SyntheticRgbdCamera
-from perception.webapp import ViewerApp, ViewerHandler
+from perceptronics.config import PerceptionConfig
+from perceptronics.realsense import SyntheticRgbdCamera
+from perceptronics.webapp import ViewerApp, ViewerHandler
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "urcap"))

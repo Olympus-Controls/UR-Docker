@@ -20,11 +20,11 @@ Download: [`../dist/realsense-pilot-ps5-0.5.0.urcap`](../dist/realsense-pilot-ps
 
 ## The cockpit it talks to
 
-The node is a client of the RealSense cockpit (`perception gui`) running on the computer
+The node is a client of the RealSense cockpit (`perceptronics gui`) running on the computer
 the camera is plugged into. The controller reaches it over the cell network, so start it
 listening on the network:
 
-    perception --cell ur3 gui --bind 0.0.0.0
+    perceptronics --cell ur3 gui --bind 0.0.0.0
 
 and type `http://<that-computer's-ip>:7621` into **Cockpit** (the pendant keyboard opens
 when you tap the field), then **Save** — it is kept in the installation. No `--cors` is
@@ -117,7 +117,7 @@ and the node's **children run — the routine after the pick** (place it…) wit
 back. With **A routine per picture point** on, the node holds one **After picture N** child
 per point, each run only for parts from that point.
 
-**The detector** (`perception/volume.py`) is depth only — no colour threshold: a part is
+**The detector** (`perceptronics/volume.py`) is depth only — no colour threshold: a part is
 what stands the part's height above the surface, with a top face the part's length ×
 width. The surface is the picture point's **taught pick area** (its plane, nudged ≤ 15 mm to
 the live table) or, without one, the table found live (level in the base frame). Each
@@ -149,7 +149,7 @@ One line per request, one parenthesised list per answer (URScript's
 `socket_read_ascii_float`). Every request carries the node's options:
 `part=50x30x30 tol=25 order=LR,FB grip=15 stroke=50 [reach=0.214,0.350]
 [plane=p[…] area=300x200] node=<id> loc=<i> locs=<n> proto=2`
-(`perception/picknode.py` `parse_options`; the Java `PickScript.tokens` writes it, and a test
+(`perceptronics/picknode.py` `parse_options`; the Java `PickScript.tokens` writes it, and a test
 reads the Java's tokens back with the Python parser). Verbs: `NEXT` (the queue), `FIND`,
 `LOOK`, `REFINE`, `LOG`. Answers: `(status, centre xyz, flange pose ×6, loc, order,
 remaining, L, W, H)`. The teach screen asks `GET /api/pick/scene?opts=<the same tokens>`
@@ -181,7 +181,7 @@ first in 5.8 — lives in `TeachPosition2` (`compat.since.5.8`), compiled agains
 and loaded by name only when the PolyScope has that class; its package is imported
 `resolution:=optional`. Before 5.8 a pick-area touch takes the flange from the joints
 through the arm's nominal geometry (UR3e/5e/10e/16e; `PoseMath.flange`, the rows of
-`perception/armfk.py`). `python3 urcap/urcap5.py check --sdk <dir>` holds the URCap to any
+`perceptronics/armfk.py`). `python3 urcap/urcap5.py check --sdk <dir>` holds the URCap to any
 version's jars (`urcap5.py sdk --image 5.12.8 --dir <dir>`).
 
 ## Status (2026-09-28, 0.5.0)

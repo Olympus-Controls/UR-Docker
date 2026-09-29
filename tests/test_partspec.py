@@ -11,9 +11,9 @@ import random
 
 import pytest
 
-from perception import partspec
-from perception.partspec import PartSpec
-from perception.pickcycle import detect_blocks, surface_height, top_face, white_blobs
+from perceptronics import partspec
+from perceptronics.partspec import PartSpec
+from perceptronics.pickcycle import detect_blocks, surface_height, top_face, white_blobs
 from tests.test_pickcycle import H, K, W, scene
 from urctl.pose import Transform
 

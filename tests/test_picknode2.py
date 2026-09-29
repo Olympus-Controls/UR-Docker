@@ -12,8 +12,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from perception.partspec import PartSpec
-from perception.picknode import (
+from perceptronics.partspec import PartSpec
+from perceptronics.picknode import (
     PROTO2_FIELDS,
     QUEUE_TTL_S,
     PickPlanner,
@@ -23,7 +23,7 @@ from perception.picknode import (
     parse_request,
     scene_report,
 )
-from perception.synthscene import Box, render_depth
+from perceptronics.synthscene import Box, render_depth
 from urctl.pose import Transform, pose_trans
 
 W, H = 320, 180
@@ -329,9 +329,9 @@ def test_the_cockpit_scene_route_answers_the_teach_screen_over_http():
     import urllib.request
     from http.server import ThreadingHTTPServer
 
-    from perception.config import PerceptionConfig
-    from perception.synthscene import BoxSceneCamera
-    from perception.webapp import ViewerApp, ViewerHandler
+    from perceptronics.config import PerceptionConfig
+    from perceptronics.synthscene import BoxSceneCamera
+    from perceptronics.webapp import ViewerApp, ViewerHandler
 
     app = ViewerApp(BoxSceneCamera(ROW, Transform.from_pose(FLANGE), w=W, h=H), config=PerceptionConfig())
     srv = ThreadingHTTPServer(("127.0.0.1", 0), ViewerHandler)
@@ -358,9 +358,9 @@ def test_the_cockpit_scene_route_answers_the_teach_screen_over_http():
 def test_check_approach_gets_the_approach_in_polyscopes_active_tcp():
     import time
 
-    from perception.config import PerceptionConfig
-    from perception.synthscene import BoxSceneCamera
-    from perception.webapp import ViewerApp
+    from perceptronics.config import PerceptionConfig
+    from perceptronics.synthscene import BoxSceneCamera
+    from perceptronics.webapp import ViewerApp
 
     offset = [0.0, 0.0, 0.10, 0.0, 0.0, 0.0]  # the pendant's active TCP: 100 mm out along the flange Z
 

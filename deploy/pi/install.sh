@@ -5,23 +5,23 @@
 #
 #   sudo ./install.sh --wheel ur_docker-0.1.0-py3-none-any.whl [--cell ur3] \
 #                     [--robot-host 192.168.3.3] [--allow-from 192.168.3.0/24] [--reconfigure]
-#   sudo /opt/perception/deploy/install.sh --rollback        # back to the previous release
-#   sudo /opt/perception/deploy/install.sh --uninstall [--purge]
+#   sudo /opt/perceptronics/deploy/install.sh --rollback        # back to the previous release
+#   sudo /opt/perceptronics/deploy/install.sh --uninstall [--purge]
 #
 # Idempotent: re-running with the same wheel installs nothing new (the service is only
 # restarted); librealsense is rebuilt only when its pinned tag/commit/options change;
-# /etc/perception/cell.env is written only when missing or with --reconfigure (the old
+# /etc/perceptronics/cell.env is written only when missing or with --reconfigure (the old
 # one is kept as cell.env.<timestamp>).
 #
-# Long-lived process this installs: perception-cockpit.service, the cockpit on TCP :7621 and
+# Long-lived process this installs: perceptronics-cockpit.service, the cockpit on TCP :7621 and
 # the PolyScope Pick node's pick server on TCP :7622.
-#   stop:  sudo systemctl stop perception-cockpit     logs: journalctl -u perception-cockpit -f
-# A `perception pick-server` sidecar also binds :7622 — stop it before (re)starting the unit.
+#   stop:  sudo systemctl stop perceptronics-cockpit     logs: journalctl -u perceptronics-cockpit -f
+# A `perceptronics pick-server` sidecar also binds :7622 — stop it before (re)starting the unit.
 set -euo pipefail
 
 # ---- pins ----------------------------------------------------------------------------
-# perception/realsense.py binds the C API with ctypes and checks enum ordinals written
-# against librealsense 2.58 (`_check_enums`); v2.58.4 is also what Dockerfile.perception
+# perceptronics/realsense.py binds the C API with ctypes and checks enum ordinals written
+# against librealsense 2.58 (`_check_enums`); v2.58.4 is also what Dockerfile.perceptronics
 # builds. It was the newest release tag on 2026-09-28 (`git ls-remote --tags`); the commit
 # is checked after the clone so a moved tag cannot slip a different tree in.
 readonly LIBREALSENSE_TAG="v2.58.4"
@@ -45,22 +45,22 @@ readonly LIBREALSENSE_CMAKE_OPTS=(
 )
 
 # ---- layout --------------------------------------------------------------------------
-readonly APP_ROOT="/opt/perception"
+readonly APP_ROOT="/opt/perceptronics"
 readonly RELEASES="${APP_ROOT}/releases"
 readonly CURRENT="${APP_ROOT}/current"
 readonly PREVIOUS="${APP_ROOT}/previous"
 readonly DEPLOY_COPY="${APP_ROOT}/deploy"
-readonly ETC_DIR="/etc/perception"
+readonly ETC_DIR="/etc/perceptronics"
 readonly CELL_ENV="${ETC_DIR}/cell.env"
-readonly STATE_DIR="/var/lib/perception"
-readonly SVC_USER="perception"
-readonly UNIT="perception-cockpit.service"
+readonly STATE_DIR="/var/lib/perceptronics"
+readonly SVC_USER="perceptronics"
+readonly UNIT="perceptronics-cockpit.service"
 readonly UDEV_RULES="/etc/udev/rules.d/99-realsense-libusb.rules"
 readonly LDCONF="/etc/ld.so.conf.d/librealsense.conf"
 readonly NFT_CONF="/etc/nftables.conf"
-readonly NFT_BACKUP="/etc/nftables.conf.pre-perception"
-readonly NFT_MARKER="# perception-cockpit firewall"
-readonly BUILD_ROOT="/var/tmp/perception-build"
+readonly NFT_BACKUP="/etc/nftables.conf.pre-perceptronics"
+readonly NFT_MARKER="# perceptronics-cockpit firewall"
+readonly BUILD_ROOT="/var/tmp/perceptronics-build"
 readonly KEEP_RELEASES=3
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -153,7 +153,7 @@ prepare_build_memory() {
 }
 
 install_librealsense() {
-    local stamp_file="${LIBREALSENSE_PREFIX}/.perception-build-stamp"
+    local stamp_file="${LIBREALSENSE_PREFIX}/.perceptronics-build-stamp"
     if [ -f "$stamp_file" ] && [ "$(cat "$stamp_file")" = "$(build_stamp)" ] \
         && [ -e "${LIBREALSENSE_PREFIX}/lib/librealsense2.so" ]; then
         log "librealsense ${LIBREALSENSE_TAG}: already built (${LIBREALSENSE_PREFIX})"
@@ -231,7 +231,7 @@ install_app() {
     id="${version}-${sha}"
     dest="${RELEASES}/${id}"
     mkdir -p "$RELEASES" "${APP_ROOT}/wheels"
-    if [ -x "${dest}/bin/perception" ] && [ -f "${dest}/.complete" ]; then
+    if [ -x "${dest}/bin/perceptronics" ] && [ -f "${dest}/.complete" ]; then
         log "app: release ${id} already installed"
     else
         log "app: installing release ${id}"
@@ -269,11 +269,11 @@ prune_releases() {
     done < <(find "$RELEASES" -mindepth 1 -maxdepth 1 -type d ! -name '*.tmp' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
 }
 
-# ---- /etc/perception/cell.env ----------------------------------------------------------
-# The shipped cell profile (perception/cells/<cell>.env, read with the package's own parser)
+# ---- /etc/perceptronics/cell.env ----------------------------------------------------------
+# The shipped cell profile (perceptronics/cells/<cell>.env, read with the package's own parser)
 # minus the lines that describe another computer (the Mac's webcam names), plus this PC's
 # lines from cell.env.template, plus --robot-host. One flat KEY=VALUE file that both systemd
-# (EnvironmentFile=) and `perception --cell /etc/perception/cell.env` read the same way.
+# (EnvironmentFile=) and `perceptronics --cell /etc/perceptronics/cell.env` read the same way.
 write_cell_env() {
     local cell="$1" robot_host="$2"
     local py="${CURRENT}/bin/python"
@@ -283,13 +283,13 @@ write_cell_env() {
     fi
     "$py" - "$cell" "$robot_host" "${HERE}/cell.env.template" "${CELL_ENV}.new" <<'PY'
 import sys
-from perception.cell import load_cell, parse_env_text
+from perceptronics.cell import load_cell, parse_env_text
 
 cell, robot_host, template, out = sys.argv[1:5]
 # Host-specific to the Mac Studio the shipped cells were written on: webcams by
-# AVFoundation name and their focus lock. A Pi with extra webcams sets PERCEPTION_VIEWS
+# AVFoundation name and their focus lock. A Pi with extra webcams sets PERCEPTRONICS_VIEWS
 # to /dev/videoN by hand.
-DROP = {"PERCEPTION_VIEWS", "PERCEPTION_VIEW_FOCUS"}
+DROP = {"PERCEPTRONICS_VIEWS", "PERCEPTRONICS_VIEW_FOCUS"}
 try:
     values = {k: v for k, v in load_cell(cell).items() if k not in DROP}
 except ValueError as exc:
@@ -302,10 +302,10 @@ if not values.get("UR_HOST"):
     sys.exit(f"cell {cell!r} has no UR_HOST: pass --robot-host <controller IP>")
 bad = set('"\'\\$`#\n\r')
 lines = [
-    "# /etc/perception/cell.env - written by /opt/perception/deploy/install.sh",
-    f"# from the shipped cell {cell!r} + cell.env.template. Read by perception-cockpit.service",
-    "# (EnvironmentFile=) and by `perception --cell /etc/perception/cell.env ...`.",
-    "# After `perception calibrate --apply` on this PC, delete the PERCEPTION_T_FLANGE_CAMERA",
+    "# /etc/perceptronics/cell.env - written by /opt/perceptronics/deploy/install.sh",
+    f"# from the shipped cell {cell!r} + cell.env.template. Read by perceptronics-cockpit.service",
+    "# (EnvironmentFile=) and by `perceptronics --cell /etc/perceptronics/cell.env ...`.",
+    "# After `perceptronics calibrate --apply` on this PC, delete the PERCEPTRONICS_T_FLANGE_CAMERA",
     "# line and restart: an environment value wins over the saved hand-eye file.",
 ]
 for key, value in values.items():
@@ -359,7 +359,7 @@ install_firewall() {
 # ---- systemd ---------------------------------------------------------------------------
 install_units() {
     install -m 0644 "${HERE}/${UNIT}" "/etc/systemd/system/${UNIT}"
-    install -m 0755 "${HERE}/perception-doctor" /usr/local/bin/perception-doctor
+    install -m 0755 "${HERE}/perceptronics-doctor" /usr/local/bin/perceptronics-doctor
     systemctl daemon-reload
     systemctl enable -q "$UNIT"
     systemctl restart "$UNIT"
@@ -369,11 +369,11 @@ install_units() {
 copy_deploy_files() {
     mkdir -p "$DEPLOY_COPY"
     local f
-    for f in install.sh perception-cockpit.service nftables.conf cell.env.template perception-doctor README.md; do
+    for f in install.sh perceptronics-cockpit.service nftables.conf cell.env.template perceptronics-doctor README.md; do
         [ "${HERE}/${f}" -ef "${DEPLOY_COPY}/${f}" ] && continue
         install -m 0644 "${HERE}/${f}" "${DEPLOY_COPY}/${f}"
     done
-    chmod 0755 "${DEPLOY_COPY}/install.sh" "${DEPLOY_COPY}/perception-doctor"
+    chmod 0755 "${DEPLOY_COPY}/install.sh" "${DEPLOY_COPY}/perceptronics-doctor"
 }
 
 # ---- rollback / uninstall -------------------------------------------------------------
@@ -382,7 +382,7 @@ rollback() {
     local cur prev
     cur="$(readlink -f "$CURRENT")"
     prev="$(readlink -f "$PREVIOUS")"
-    [ -x "${prev}/bin/perception" ] || die "previous release ${prev} is incomplete"
+    [ -x "${prev}/bin/perceptronics" ] || die "previous release ${prev} is incomplete"
     ln -sfn "$prev" "$CURRENT"
     ln -sfn "$cur" "$PREVIOUS"
     systemctl restart "$UNIT"
@@ -392,7 +392,7 @@ rollback() {
 uninstall() {
     local purge="$1"
     systemctl disable --now "$UNIT" 2>/dev/null || true
-    rm -f "/etc/systemd/system/${UNIT}" /usr/local/bin/perception-doctor
+    rm -f "/etc/systemd/system/${UNIT}" /usr/local/bin/perceptronics-doctor
     systemctl daemon-reload
     if [ -f "$NFT_CONF" ] && grep -qF "$NFT_MARKER" "$NFT_CONF"; then
         if [ -f "$NFT_BACKUP" ]; then
@@ -400,7 +400,7 @@ uninstall() {
         else
             rm -f "$NFT_CONF"
         fi
-        nft delete table inet perception 2>/dev/null || true
+        nft delete table inet perceptronics 2>/dev/null || true
         systemctl restart nftables.service 2>/dev/null || true
     fi
     rm -rf "$APP_ROOT"
@@ -460,7 +460,7 @@ main() {
     install_firewall "$net"
     copy_deploy_files
     install_units
-    log "done. Check it: sudo perception-doctor"
+    log "done. Check it: sudo perceptronics-doctor"
 }
 
 main "$@"

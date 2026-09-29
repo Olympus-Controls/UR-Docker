@@ -65,12 +65,12 @@ jobs:
             echo
             echo "**Install:** copy \`$name\` to a FAT32 USB stick (on a Mac: \`scripts/urcap5-usb.sh\`, which keeps macOS \`._\` files off it), then on the pendant ☰ → Settings → System → URCaps → **+** → the file → Open → **Restart**."
             echo
-            echo "**Needs** the RealSense cockpit (\`perception gui\`) or \`perception pick-server\` from this release's commit (\`${GITHUB_SHA::12}\`) or later on the computer the camera is plugged into — the node's requests follow the pick server's protocol at that commit."
+            echo "**Needs** the RealSense cockpit (\`perceptronics gui\`) or \`perceptronics pick-server\` from this release's commit (\`${GITHUB_SHA::12}\`) or later on the computer the camera is plugged into — the node's requests follow the pick server's protocol at that commit."
             echo
             echo "sha256 \`$SHA256\`"
             echo
             echo "### Changes to the URCap${prev:+ since $prev}"
-            git log --format='- %s (%h)' ${prev:+"$prev.."}"$TAG" -- urcap/realsense-pilot-ps5 perception/picknode.py perception/partspec.py
+            git log --format='- %s (%h)' ${prev:+"$prev.."}"$TAG" -- urcap/realsense-pilot-ps5 perceptronics/picknode.py perceptronics/partspec.py
           } > notes.md
           cat notes.md
       - name: create the GitHub release

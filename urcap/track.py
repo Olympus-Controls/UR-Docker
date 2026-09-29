@@ -92,7 +92,7 @@ class Sources:
 
 
 def _get(url: str, *, accept: str | None = None) -> tuple[int, bytes]:
-    headers = {"User-Agent": "UR-utils-urcap-track (+https://github.com/Olympus-Controls/UR-utils)"}
+    headers = {"User-Agent": "perceptronics-urcap-track (+https://github.com/Olympus-Controls/UR-utils)"}
     if accept:
         headers["Accept"] = accept
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")

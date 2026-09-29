@@ -29,12 +29,12 @@ in a window, fed by a simulated camera computer (or `--cockpit http://<ip>:7621`
 
        scripts/deploy-pi.sh pi@192.168.3.10 --cell ur3 --robot-host 192.168.3.3
 
-   It ends with `perception doctor`'s verdict: camera, robot ports, hand-eye, tool length.
+   It ends with `perceptronics doctor`'s verdict: camera, robot ports, hand-eye, tool length.
 3. **Install the URCap** from a USB stick: Settings → System → URCaps → **+** →
    `realsense-pilot-ps5-0.5.0.urcap` → Restart.
 4. **Installation → URCaps → RealSense Pilot**: type the camera computer's address
    (`http://192.168.3.10:7621`); the live picture appears.
-5. **Calibrate the camera to the flange** once (`perception calibrate` on the camera
+5. **Calibrate the camera to the flange** once (`perceptronics calibrate` on the camera
    computer: the arm orbits a part and solves where the camera sits; `docs/realsense.md`
    §Hand-eye without a mark). Re-run it if the bracket is ever re-mounted.
 6. **Pick areas + reach** (same Installation node, second tab): for each place parts are
@@ -60,7 +60,7 @@ in a window, fed by a simulated camera computer (or `--cockpit http://<ip>:7621`
 A run: the picture (or, when the last picture already showed more parts, straight to the
 next one), a close look to re-measure it, the approach, the grip, the lift, then your
 routine. Anything that stops a run says why in a popup and on the camera computer's log
-(`journalctl -u perception-cockpit -f`).
+(`journalctl -u perceptronics-cockpit -f`).
 
 ## What is verified, and what is not (2026-09-28)
 

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from perception import armfk
+from perceptronics import armfk
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "urcap"))
@@ -563,7 +563,7 @@ def test_callback2_on_the_classpath_without_teachposition2_falls_back(tmp_path):
     assert got["flange"][:3] == pytest.approx(armfk.frames(Q, "UR5E")[-1][:3], abs=1e-9)
 
 
-# -- PoseMath.flange: the nominal DH table, the same as perception/armfk.py -------------------
+# -- PoseMath.flange: the nominal DH table, the same as perceptronics/armfk.py -------------------
 
 FK = r"""
 package com.olympuscontrols.realsensepilot;
