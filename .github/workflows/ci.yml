@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 # A superseded push to the same PR cancels the older run.
@@ -101,6 +101,23 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  # The one required check on `dev` (branch protection + automerge.yml rely on
+  # the name): green only when lint, every unit leg and the package job passed.
+  # Integration stays out — it only runs on pushes and labelled PRs.
+  gate:
+    if: always()
+    needs: [lint, unit, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: every required job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "needs: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "::error::a required job ended $r"; exit 1; }
+          done
 
   integration:
     runs-on: ubuntu-latest
