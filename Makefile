@@ -103,7 +103,7 @@ urcap-e2e:  ## Boot target.json's simulator, install a fresh build, load + click
 
 # ---- PolyScope 5 (e-Series) URCap (urcap/realsense-pilot-ps5, urcap/urcap5.py) --------
 URCAP5_CONTAINER ?= ur-utils-ursim-e-ur3e
-urcap5-sdk:  ## Copy the URCap API jars out of the e-Series URSim image into target/ (never committed).
+urcap5-sdk:  ## The URCap API jars of the oldest supported PolyScope (+ compat.since) into target/ (registry; never committed).
 	$(PYTHON) urcap/urcap5.py sdk
 
 urcap5-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-ps5-<ver>.urcap (JDK; commit it).
@@ -112,14 +112,17 @@ urcap5-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-ps5-<ver
 urcap5-install: urcap5-package  ## Install it in the e-Series sim container $(URCAP5_CONTAINER) (restarts it).
 	$(PYTHON) urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-*.urcap --container $(URCAP5_CONTAINER)
 
-# The URCap on the last three PolyScope 5 minors (docker-compose.ps5-matrix.yml; amd64 host).
+# The URCap on every PolyScope 5 minor from 5.4 (urcap/ps5_matrix.py MATRIX; amd64 host).
 PS5_VERSION ?= all
-.PHONY: urcap5-matrix urcap5-matrix-down
-urcap5-matrix:  ## Boot each PS5 URSim, check the URCap starts, run the pick e2e, down -v (PS5_VERSION=5.26).
+.PHONY: urcap5-matrix urcap5-matrix-down urcap5-matrix-compose
+urcap5-matrix:  ## Per PS5 URSim: API check, boot, URCap starts, pick e2e, down -v (PS5_VERSION=5.4 / 5.26 / all).
 	DOCKER="$(DOCKER)" $(PYTHON) urcap/ps5_matrix.py run --version $(PS5_VERSION) --artifacts target/ps5-matrix/artifacts
 
 urcap5-matrix-down:  ## Tear the PS5 matrix sims down with their volumes.
 	DOCKER="$(DOCKER)" $(PYTHON) urcap/ps5_matrix.py down --version $(PS5_VERSION)
+
+urcap5-matrix-compose:  ## Regenerate docker-compose.ps5-matrix.yml from ps5_matrix.py's MATRIX (commit it).
+	$(PYTHON) urcap/ps5_matrix.py compose > docker-compose.ps5-matrix.yml
 
 # ---- RealSense perception (docs/realsense.md) ----------------------------------
 # On macOS librealsense needs root to claim the camera's USB interface, hence

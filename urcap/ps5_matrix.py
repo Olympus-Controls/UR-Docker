@@ -466,12 +466,21 @@ def dashboard(port: int, command: str, host: str = "127.0.0.1", timeout: float =
         return ""
 
 
+def controller_ready(reply: str) -> bool:
+    """Has PolyScope connected to URControl? ``NO_CONTROLLER`` and ``DISCONNECTED`` say not:
+    a ``power on`` then is dropped ("Not connected to controller, trying to send string:
+    power on" — PolyScope 5.5's polyscope.log, 2026-09-29, where it answered DISCONNECTED
+    for a second after its Dashboard came up)."""
+    m = re.fullmatch(r"Robotmode: ([A-Z_]+)", reply.strip())
+    return bool(m) and m.group(1) not in ("NO_CONTROLLER", "DISCONNECTED", "BOOTING")
+
+
 def wait_for_dashboard(v: Version, timeout: float) -> str:
     t0 = time.monotonic()
     reply = ""
     while time.monotonic() - t0 < timeout:
         reply = dashboard(v.dashboard, "robotmode")
-        if reply.startswith("Robotmode:") and "NO_CONTROLLER" not in reply:
+        if controller_ready(reply):
             return reply
         time.sleep(3)
     raise TimeoutError(f"Dashboard :{v.dashboard} not ready after {timeout:.0f} s (last reply {reply!r})")

@@ -372,3 +372,21 @@ def test_missing_services_on_real_listings(fixture):
     """Real ``inspect service capability <id>`` listings of the URCap, one per version (CI
     matrix run 36512194205, 2026-09-28, URCap 0.4.0)."""
     assert m.missing_services(fixture.read_text(encoding="utf-8")) == [], fixture.name
+
+
+@pytest.mark.parametrize(
+    "reply, ready",
+    [
+        ("Robotmode: POWER_OFF", True),
+        ("Robotmode: IDLE", True),
+        ("Robotmode: RUNNING\n", True),
+        ("Robotmode: NO_CONTROLLER", False),
+        ("Robotmode: DISCONNECTED", False),  # PolyScope 5.5 answered this, then dropped `power on`
+        ("Robotmode: BOOTING", False),
+        ("", False),
+        ("Connected: Universal Robots Dashboard Server", False),
+        ("Robotmode: POWER_OFF; rm -rf /", False),
+    ],
+)
+def test_the_controller_is_ready_only_once_polyscope_is_connected_to_it(reply, ready):
+    assert m.controller_ready(reply) is ready

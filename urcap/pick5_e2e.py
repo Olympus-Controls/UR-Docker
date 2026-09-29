@@ -157,6 +157,40 @@ def compile_probe(robot: Robot, spec: dict) -> tuple[bool, bool]:
     return compiled, control_ran
 
 
+def polyscope_version(robot: Robot) -> list[int] | None:
+    """The controller's PolyScope ``[major, minor, bugfix]`` — what the node reads from
+    ``SystemAPI.getSoftwareVersion()`` on a pendant (Dashboard ``PolyscopeVersion``:
+    ``URSoftware 5.9.4.1031232 (...)``)."""
+    try:
+        reply = robot.dashboard.command("PolyscopeVersion")
+    except OSError:
+        return None
+    m = re.search(r"([0-9]+)\.([0-9]+)\.([0-9]+)", reply)
+    return [int(g) for g in m.groups()] if m else None
+
+
+def timeout_probe(robot: Robot, host: str, port: int) -> bool:
+    """The node's error paths lean on ``socket_read_ascii_float`` timing out (status -8): does
+    a timed-out read of 16 numbers land in a list that already holds 17 without stopping the
+    program? (An older controller keeps a list at its first size.) The pick server stays
+    silent until it reads a line, so the read times out."""
+    body = (
+        "rs_r = [16, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]\n"
+        f'if socket_open("{host}", {port}, "rs_to"):\n'
+        '  rs_r = socket_read_ascii_float(16, "rs_to", 0.5)\n'
+        '  socket_close("rs_to")\n'
+        "end\n"
+        'textmsg("rs_e2e/timeout=", rs_r[0])\n'
+    )
+    captured = robot.primary.run_and_capture(
+        body, fn_name="rs_e2e_timeout", marker="", collect_for=20.0, stop_marker="rs_e2e/timeout="
+    )
+    for c in captured:
+        if ERRORS.search(c) or "rs_e2e/timeout=" in c:
+            print("  controller:", c)
+    return any("rs_e2e/timeout=" in c for c in captured)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--host", default="127.0.0.1", help="the simulator (Primary/Dashboard)")
@@ -192,6 +226,11 @@ def main() -> int:
         robot = Robot(RobotConfig.from_env(host=args.host, **{k: v for k, v in ports.items() if v}))
         up = robot.bring_up()
         print("bring-up:", up.get("ok"), up.get("robot_mode") or "", up.get("safety_mode") or "")
+        version = polyscope_version(robot)
+        print(
+            "PolyScope:",
+            ".".join(map(str, version)) if version else "unknown (the script assumes the newest)",
+        )
         spec = {
             "host": args.reach_back,
             "port": args.port,
@@ -201,6 +240,7 @@ def main() -> int:
             "values": {"speedPct": 100, "settleS": 0.1, "gripperWaitS": 0.1},
             "popup": False,  # a blocking popup would hold the run until someone taps it
             "children": '  textmsg("rs_e2e/child=", rs_pick_loc)',
+            **({"polyscope": version} if version else {}),
         }
         once = generate(spec)
         body = once + 'textmsg("rs_e2e/first=", rs_pick_found)\n'
@@ -211,12 +251,16 @@ def main() -> int:
         )
         took = time.monotonic() - t0
         compiled, control = compile_probe(robot, spec)
+        timed_out = timeout_probe(robot, args.reach_back, args.port)
     finally:
         server.stop()
     marks = [c for c in captured if "rs_e2e/" in c or "RealSense Pick" in c]
     print(f"ran {took:.1f} s")
     print("pick server:", *log, sep="\n  ")
     print("controller:", *marks, sep="\n  ")
+    for c in captured:
+        if ERRORS.search(c) and "rs_e2e" not in c:
+            print("  controller:", c)
     flat = [c.replace(" ", "") for c in captured]
     first = any("rs_e2e/first=True" in c for c in flat)
     found = any("rs_e2e/found=True" in c for c in flat)
@@ -234,7 +278,8 @@ def main() -> int:
     print("controller compiles the full script (Robotiq + popup):", compiled)
     if control:
         print("  (inconclusive: this controller also ran a dead branch naming an undefined function)")
-    ok = ok and compiled
+    print("a timed-out read into a 16-number list leaves the program running:", timed_out)
+    ok = ok and compiled and timed_out
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 
