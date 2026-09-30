@@ -15,16 +15,17 @@ runtime is stdlib-only Python plus librealsense, which the installer builds from
 
 | | |
 | --- | --- |
-| Board | Raspberry Pi 5 (4 GB or 8 GB recommended), or a CM4/CM5 industrial box — any **arm64** board with a USB 3 port and Ethernet. 2 GB boards work: the installer adds a temporary swapfile for the build. |
+| Board | **Raspberry Pi 4 Model B, 4 GB** (the kit board, `hardware/BOM.md` K1; Nick, 2026-09-29: efficient compute), a Pi 5, or a CM4/CM5 industrial box — any **arm64** board with a **USB 3** port and Ethernet. Not a Pi 3 (USB 2 only). 2 GB boards work: the installer adds a temporary swapfile for the build. |
 | OS | **Debian arm64** (the target — Nick, 2026-09-28), bookworm (12) or trixie (13), minimal, no desktop; Raspberry Pi OS Lite (64-bit) is Debian and works the same. A RevPi Connect 5 gets a Debian image, not RevPi OS. Needs Python ≥ 3.10 (bookworm has 3.11, trixie 3.13) and systemd. |
 | Camera | One Intel RealSense **D435** (USB ID `8086:0b07`), connected **straight to a USB 3 port** (blue) with a short cable, no hub. |
 | Network | Ethernet on the robot's subnet. A static address is easiest to type into the pendant. |
 | Robot | UR e-Series on PolyScope 5 with the Perceptronic URCap (`urcap/dist/perceptronic-ps5-*.urcap`, see `urcap/perceptronic-ps5/README.md`). |
 
-**Power:** the D435 is powered from the USB port. Raspberry Pi's documentation says a
-Pi 5 limits the total USB current unless it runs on the 5 V / 5 A supply (or
-`usb_max_current_enable=1` is set in `config.txt`). This has **not been tested with a
-D435 in this repo**. If the camera drops out under load, check the supply first.
+**Power:** the D435 is powered from the USB port. Raspberry Pi's documentation gives a
+Pi 4 **1.2 A total** for USB peripherals on the recommended 3 A supply (the kit's 5 V
+HDR-30-5, trimmed to 5.1 V). A Pi 5 limits USB to 600 mA unless it runs on the 5 V / 5 A
+supply (or `usb_max_current_enable=1` is set in `config.txt`). Neither has **been tested
+with a D435 in this repo**. If the camera drops out under load, check the supply first.
 
 ## 1. Flash and first boot
 
@@ -53,7 +54,7 @@ From a checkout of this repo on the laptop (it needs `uv` and `ssh`):
 
 This builds the wheel (`uv build`, the repo's locked tooling), copies it and `deploy/pi/`
 to the PC, runs `install.sh` there under `sudo`, and prints `perceptronics doctor` from the
-PC. The first run compiles librealsense, which takes tens of minutes on a Pi 5. Later runs
+PC. The first run compiles librealsense, which takes tens of minutes on a Pi 5 and longer on a Pi 4 (not yet timed). Later runs
 reuse it. Run from a terminal, and sudo on the PC prompts for your password. Run from an
 agent's shell (no terminal), the PC's sudo must be passwordless (Raspberry Pi OS's first
 user is), or the script stops with sudo's error rather than hanging.
