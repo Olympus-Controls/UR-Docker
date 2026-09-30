@@ -1,4 +1,4 @@
-"""The 0.5.0 RealSense Pick node's contract, under a JDK: the URScript it writes, the request
+"""The 0.5.0 Perceptronic Pick node's contract, under a JDK: the URScript it writes, the request
 options it sends (read back by the Python pick server's own parser), and the pendant's
 drawings and pose math agreeing with the Python side they stand for.
 

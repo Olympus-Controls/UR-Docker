@@ -11,7 +11,7 @@ across its short side.
 | Bill of materials | [`hardware/BOM.md`](../hardware/BOM.md) | Every part with links, the price seen 2026-09-28 and its history (kit ≈ $1,420 per cell with a RevPi Connect 5; ≈ $1,112 with a CompuLab IOT-GATE-RPI5) |
 | Camera bracket | [`hardware/d435-tool-bracket/`](../hardware/d435-tool-bracket/) | Parametric CadQuery source; print-ready STL and STEP for e-Series (ISO 9409-1-50-4-M6) and UR20 flanges in `out/`; the spec, fasteners and the nominal camera pose in its README |
 | Camera computer | [`deploy/pi/`](../deploy/pi/README.md) | A Raspberry-Pi-class arm64 box on minimal Debian: one command installs librealsense, the cockpit as a hardened systemd service (:7621 HTTP, :7622 pick server) and a firewall |
-| URCap | [`urcap/realsense-pilot-ps5/`](../urcap/realsense-pilot-ps5/README.md) | `urcap/dist/realsense-pilot-ps5-0.5.0.urcap`: the **RealSense Pick** program node and the **RealSense Pilot** installation node |
+| URCap | [`urcap/perceptronic-ps5/`](../urcap/perceptronic-ps5/README.md) | `urcap/dist/perceptronic-ps5-0.6.0.urcap`: the **Perceptronic Pick** program node and the **Perceptronic** installation node |
 | Self-deploy | [`.claude/skills/deploy-pick-pc/`](../.claude/skills/deploy-pick-pc/SKILL.md) | Claude Code deploys, checks, updates or rolls back the camera computer: "deploy the pick PC at 192.168.3.10" |
 | Tested PolyScope | [`.github/workflows/urcap5-matrix.yml`](../.github/workflows/urcap5-matrix.yml) | Every change: the URCap loads and the node's own URScript picks on PolyScope 5.24, 5.25 and 5.26 (URSim) |
 
@@ -31,11 +31,11 @@ in a window, fed by a simulated camera computer (or `--cockpit http://<ip>:7621`
 
    It ends with `perceptronics doctor`'s verdict: camera, robot ports, hand-eye, tool length.
 3. **Install the URCap** from a USB stick: Settings → System → URCaps → **+** →
-   `realsense-pilot-ps5-0.5.0.urcap` → Restart.
+   `perceptronic-ps5-0.6.0.urcap` → Restart.
    Or leave it to the stick: `scripts/urcap5-usb.sh` writes a magic file that installs it by
    itself when **Settings → Security → General → Run magic files** is on
-   (`urcap/realsense-pilot-ps5/README.md`, *Or let the stick install it*).
-4. **Installation → URCaps → RealSense Pilot**: type the camera computer's address
+   (`urcap/perceptronic-ps5/README.md`, *Or let the stick install it*).
+4. **Installation → URCaps → Perceptronic**: type the camera computer's address
    (`http://192.168.3.10:7621`); the live picture appears.
 5. **Calibrate the camera to the flange** once (`perceptronics calibrate` on the camera
    computer: the arm orbits a part and solves where the camera sits; `docs/realsense.md`
@@ -47,7 +47,7 @@ in a window, fed by a simulated camera computer (or `--cockpit http://<ip>:7621`
 
 ## Programming a pick
 
-**Program tab → URCaps → RealSense Pick**, inside a loop:
+**Program tab → URCaps → Perceptronic Pick**, inside a loop:
 
 1. **Add picture point here** — as many as needed; each looks at a pick area (tap its
    second line to choose) or the live table. The arm visits them in turn.
@@ -73,6 +73,6 @@ routine. Anything that stops a run says why in a popup and on the camera compute
   and settings under a JDK, cross-checked against the Python; the bundle loading and the
   node's own URScript running a two-part pick on PolyScope 5.24.0, 5.25.2 and 5.26.1.
 - **Not yet seen:** the 0.5.0 screens on a real pendant (they render in a harness —
-  `urcap/realsense-pilot-ps5/screens/`); the node driving the Hand-E on the UR3e; the
+  `urcap/perceptronic-ps5/screens/`); the node driving the Hand-E on the UR3e; the
   camera computer on real Pi-class hardware (the installer and service are tested as
   files, not on a board). Those are the first things to do on the cell.

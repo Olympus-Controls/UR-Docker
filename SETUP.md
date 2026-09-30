@@ -41,10 +41,12 @@ changed since 2026-09-28. Everything below that says "verified" was verified bef
 - **SSH :22 on the controller times out from the Mac** (2026-09-27); file placement by
   `scp` has worked on the UR10 at `192.168.1.50` but not been exercised on this UR3e.
 - **URCap on it:** RealSense Pilot 0.2.0 installed and rendered on the pendant 2026-09-27;
-  0.3.0 is on the "URE MODELS" USB stick; **0.5.0 has never been on a pendant**
-  (`urcap/dist/realsense-pilot-ps5-0.5.0.urcap`). Auto-install from the stick needs
+  0.3.0 is on the "URE MODELS" USB stick; **0.5.0 has never been on a pendant**, and the
+  URCap is now **Perceptronic 0.6.0** (`urcap/dist/perceptronic-ps5-0.6.0.urcap`, bundle
+  `com.nickarmenta.perceptronic` — a different URCap to PolyScope: remove RealSense Pilot
+  on the pendant, its node data and Pick nodes don't carry over). Auto-install from the stick needs
   **Settings → Security → General → Run magic files** on (`scripts/urcap5-usb.sh`,
-  `scripts/urmagic_realsense_pilot.sh`) — also never run on this robot yet.
+  `scripts/urmagic_perceptronic.sh`) — also never run on this robot yet.
 
 ## 2. Computers
 

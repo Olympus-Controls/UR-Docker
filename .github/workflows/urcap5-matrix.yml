@@ -3,7 +3,7 @@
 # comes from `ps5_matrix.py list`, never from this file; docker-compose.ps5-matrix.yml is
 # generated from it too).
 #
-# build: the committed urcap/dist/realsense-pilot-ps5-*.urcap is rebuilt against the OLDEST
+# build: the committed urcap/dist/perceptronic-ps5-*.urcap is rebuilt against the OLDEST
 #   supported PolyScope's URCap API jars (bundle.properties compat.floor; each
 #   compat.since group against its version's) with a different JDK from the one that built
 #   the committed jar, and must be the same jar (`urcap5.py compare`: entries, non-class
@@ -118,7 +118,7 @@ jobs:
 
       - name: rebuild the URCap against them; it must be the committed jar (JDK-independent)
         run: |
-          python3 urcap/urcap5.py package urcap/realsense-pilot-ps5 --out target/rebuilt
+          python3 urcap/urcap5.py package urcap/perceptronic-ps5 --out target/rebuilt
           for jar in target/rebuilt/*.urcap; do
             python3 urcap/urcap5.py compare "$jar" "urcap/dist/$(basename "$jar")" || {
               echo "::error::urcap/dist/$(basename "$jar") is not what the floor build makes — run \`make urcap5-package\` and commit it"

@@ -1,4 +1,4 @@
-"""The USB stick's PolyScope 5 magic file (scripts/urmagic_realsense_pilot.sh) and what
+"""The USB stick's PolyScope 5 magic file (scripts/urmagic_perceptronic.sh) and what
 scripts/urcap5-usb.sh writes into it, run against a temporary robot: a `.urcaps` directory
 and a fake Dashboard on a local port. No robot, no stick."""
 
@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-MAGIC = ROOT / "scripts" / "urmagic_realsense_pilot.sh"
+MAGIC = ROOT / "scripts" / "urmagic_perceptronic.sh"
 USB = ROOT / "scripts" / "urcap5-usb.sh"
-PROPS = ROOT / "urcap" / "realsense-pilot-ps5" / "bundle.properties"
+PROPS = ROOT / "urcap" / "perceptronic-ps5" / "bundle.properties"
 PLACEHOLDERS = ("@URCAP_FILE@", "@URCAP_SHA256@", "@SYMBOLIC_NAME@")
 
 pytestmark = pytest.mark.skipif(
@@ -78,14 +78,14 @@ def _stick(tmp_path: Path, payload: bytes = b"PK\x03\x04 not really a jar") -> t
     """A stick directory with the .urcap and the magic file rendered the way urcap5-usb.sh does."""
     stick = tmp_path / "stick"
     stick.mkdir()
-    urcap = stick / "realsense-pilot-ps5-9.9.9.urcap"
+    urcap = stick / "perceptronic-ps5-9.9.9.urcap"
     urcap.write_bytes(payload)
     sha = hashlib.sha256(payload).hexdigest()
     script = MAGIC.read_text()
     for key, val in zip(PLACEHOLDERS, (urcap.name, sha, _symbolic_name()), strict=True):
         assert key in script
         script = script.replace(key, val)
-    magic = stick / "urmagic_realsense_pilot.sh"
+    magic = stick / "urmagic_perceptronic.sh"
     magic.write_text(script)
     magic.chmod(0o755)
     return stick, sha, magic
@@ -109,7 +109,7 @@ def test_placeholders_are_what_the_stick_script_fills_in():
     for key in PLACEHOLDERS:
         assert key in MAGIC.read_text()
         assert key in usb, f"urcap5-usb.sh no longer substitutes {key}"
-    assert "urmagic_realsense_pilot.sh" in usb
+    assert "urmagic_perceptronic.sh" in usb
 
 
 def test_fresh_install_copies_the_jar_and_restarts_a_powered_off_robot(tmp_path):
@@ -125,7 +125,7 @@ def test_fresh_install_copies_the_jar_and_restarts_a_powered_off_robot(tmp_path)
         assert "REBOOT-CALLED" in r.stdout
         assert any(c.startswith("addToLog") for c in dash.commands)
         assert not any(c.startswith("popup") for c in dash.commands), "no popup when it restarts itself"
-        log = (stick / "urmagic_realsense_pilot.log").read_text()
+        log = (stick / "urmagic_perceptronic.log").read_text()
         assert "installed" in log and "restarting" in log
     finally:
         dash.close()
@@ -185,7 +185,7 @@ def test_a_damaged_file_installs_nothing(tmp_path):
     dash = FakeDashboard()
     try:
         stick, _, magic = _stick(tmp_path)
-        (stick / "realsense-pilot-ps5-9.9.9.urcap").write_bytes(b"truncated")
+        (stick / "perceptronic-ps5-9.9.9.urcap").write_bytes(b"truncated")
         r = _run(magic, tmp_path / ".urcaps", dash)
         assert r.returncode == 1
         assert not (tmp_path / ".urcaps").exists()
@@ -197,7 +197,7 @@ def test_a_damaged_file_installs_nothing(tmp_path):
 
 def test_missing_urcap_next_to_the_script(tmp_path):
     stick, _, magic = _stick(tmp_path)
-    (stick / "realsense-pilot-ps5-9.9.9.urcap").unlink()
+    (stick / "perceptronic-ps5-9.9.9.urcap").unlink()
     r = _run(magic, tmp_path / ".urcaps", None)
     assert r.returncode == 1 and not (tmp_path / ".urcaps").exists()
 

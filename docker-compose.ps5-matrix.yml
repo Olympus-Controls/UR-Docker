@@ -55,9 +55,9 @@
 # Docker's port mapping is the supported way to offset them.
 #
 # URCaps: the entrypoint runs `cp -r /urcaps/*.jar /ursim/GUI/bundle/` at every start, so
-# /urcaps must hold *.jar files. The committed urcap/dist/realsense-pilot-ps5-<ver>.urcap
+# /urcaps must hold *.jar files. The committed urcap/dist/perceptronic-ps5-<ver>.urcap
 # is a jar under another suffix; ps5_matrix.py stages it as
-# target/ps5-matrix/urcaps/realsense-pilot-ps5.jar (PS5_URCAPS_DIR overrides) — that
+# target/ps5-matrix/urcaps/perceptronic-ps5.jar (PS5_URCAPS_DIR overrides) — that
 # keeps this file free of the version number.
 #
 # The images declare no VOLUME, but teardown is `docker compose down -v` anyway (the

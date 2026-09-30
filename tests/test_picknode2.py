@@ -1,4 +1,4 @@
-"""The pick server's protocol 2 (the 0.5.0 RealSense Pick node): the part by its volume, the
+"""The pick server's protocol 2 (the 0.5.0 Perceptronic Pick node): the part by its volume, the
 pick order, the per-node queue that lets the next pick skip the picture point, the reach and
 area limits, and the wire — against ray-cast scenes seen from a known flange pose."""
 

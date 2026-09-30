@@ -13,8 +13,8 @@ cd "$(dirname "$0")/.."
 host="${1:?usage: $0 <robot-host> [port]}"
 port="${2:-80}"
 wait_s="${URCAPX_WAIT_S:-1800}"
-urcapx="$(find urcap/dist -maxdepth 1 -name 'realsense-pilot-*.urcapx' | sort | tail -1)"
-[[ -f "$urcapx" ]] || { echo "no urcap/dist/realsense-pilot-*.urcapx — make urcap-package"; exit 1; }
+urcapx="$(find urcap/dist -maxdepth 1 -name 'perceptronic-*.urcapx' | sort | tail -1)"
+[[ -f "$urcapx" ]] || { echo "no urcap/dist/perceptronic-*.urcapx — make urcap-package"; exit 1; }
 
 deadline=$((SECONDS + wait_s))
 until python3 urcap/urcapx.py list --host "$host" --port "$port" >/dev/null 2>&1; do

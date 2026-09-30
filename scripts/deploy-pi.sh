@@ -114,4 +114,4 @@ ssh "${ssh_opts[@]}" "$target" "$(remote_cmd rm -rf "$stage_remote")" || true
 
 run_doctor
 host="${target#*@}"
-log "done. On the pendant: Installation -> URCaps -> RealSense Pilot -> Cockpit = http://${host}:7621 -> Save"
+log "done. On the pendant: Installation -> URCaps -> Perceptronic -> Cockpit = http://${host}:7621 -> Save"

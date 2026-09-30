@@ -21,8 +21,8 @@ building):
 * ``list`` / ``delete VENDOR URCAP`` — the same endpoint. Refresh the PolyScope
   page afterwards; the simulator in this repo listens on ``localhost:8000``.
 
-    python3 urcap/urcapx.py package urcap/realsense-pilot --out urcap/dist
-    python3 urcap/urcapx.py install urcap/dist/realsense-pilot-0.1.0.urcapx --port 8000 --replace
+    python3 urcap/urcapx.py package urcap/perceptronic --out urcap/dist
+    python3 urcap/urcapx.py install urcap/dist/perceptronic-0.2.0.urcapx --port 8000 --replace
 """
 
 from __future__ import annotations

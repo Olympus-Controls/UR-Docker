@@ -3,7 +3,7 @@
 # Listens on:
 #   TCP 7621  the cockpit HTTP API (perceptronics gui --port; the PolyScope 5 URCap's
 #             "Cockpit" field is http://<this PC>:7621, and it fetches /api/color.png)
-#   TCP 7622  the pick server the RealSense Pick program node's URScript connects to
+#   TCP 7622  the pick server the Perceptronic Pick program node's URScript connects to
 #             (perceptronics gui --pick-port; FIND/LOOK/REFINE/LOG lines)
 # Both are unauthenticated: nftables.conf admits them from the cell subnet only.
 #
@@ -15,7 +15,7 @@
 #
 # A `perceptronics pick-server` sidecar also binds :7622. Kill it before (re)starting this
 # unit (`pkill -f "pick-server --bind"`) or the cockpit warns and runs without its pick
-# server (CLAUDE.md, "RealSense Pick program node").
+# server (CLAUDE.md, "Perceptronic Pick program node").
 
 [Unit]
 Description=RealSense RGB-D cockpit + pick server (perceptronics gui, :7621 / :7622)

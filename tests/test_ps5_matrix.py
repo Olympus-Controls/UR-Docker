@@ -285,7 +285,7 @@ def test_log_errors_flag_a_stack_frame_in_our_package_with_its_exception():
         "12:00:01 INFO something\n"
         "com.ur.urcap.api.domain.AuthorizationException: Method not supported from URCaps\n"
         "\tat com.ur.polyscope.Guard.check(Guard.java:10)\n"
-        "\tat com.olympuscontrols.realsensepilot.PilotView.buildUI(PilotView.java:42)\n"
+        "\tat com.nickarmenta.perceptronic.PilotView.buildUI(PilotView.java:42)\n"
     )
     errors = m.log_errors(log)
     assert errors[0].startswith("com.ur.urcap.api.domain.AuthorizationException")
@@ -359,9 +359,14 @@ def test_missing_services_names_what_the_activator_did_not_register():
         "objectClass = [com.ur.urcap.api.contribution.program.swing.SwingProgramNodeService]\n"
         "service.id = 302\n"
     )
-    assert m.missing_services(both) == []
+    toolbar = "com.ur.urcap.api.contribution.toolbar.swing.SwingToolbarService"
+    assert m.missing_services(both) == [toolbar]
+    assert m.missing_services(both + "----\nobjectClass = " + toolbar + "\nservice.id = 303\n") == []
     one = both.split("service.id = 301")[0]
-    assert m.missing_services(one) == ["com.ur.urcap.api.contribution.program.swing.SwingProgramNodeService"]
+    assert m.missing_services(one) == [
+        "com.ur.urcap.api.contribution.program.swing.SwingProgramNodeService",
+        toolbar,
+    ]
     assert m.missing_services("") == list(m.NODE_SERVICES)
     # Named in prose, not as an objectClass: not registered.
     assert m.missing_services("could not register SwingProgramNodeService") == list(m.NODE_SERVICES)
@@ -370,8 +375,8 @@ def test_missing_services_names_what_the_activator_did_not_register():
 @pytest.mark.parametrize("fixture", sorted(FIXTURES.glob("felix-services-*.txt")))
 def test_missing_services_on_real_listings(fixture):
     """Real ``inspect service capability <id>`` listings of the URCap, one per version (CI
-    matrix run 36512194205, 2026-09-28, URCap 0.4.0)."""
-    assert m.missing_services(fixture.read_text(encoding="utf-8")) == [], fixture.name
+    matrix run 36512194205, 2026-09-28, URCap 0.4.0 — before the toolbar service)."""
+    assert m.missing_services(fixture.read_text(encoding="utf-8"), m.NODE_SERVICES[:2]) == [], fixture.name
 
 
 @pytest.mark.parametrize(
