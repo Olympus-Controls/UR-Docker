@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Preview the PolyScope 5 URCap's screens in action, on a desktop — no robot, no pendant.
 
-Opens the RealSense Pick node's and the Installation node's real Swing screens in a
+Opens the Perceptronic Pick node's and the Installation node's real Swing screens in a
 1280 x 800 window (the pendant's size) and feeds them from a camera computer:
 
 * by default a **simulated** one started here: the cockpit's HTTP API over a ray-cast box
@@ -131,7 +131,7 @@ def build() -> Path:
     if not javac:
         raise SystemExit("the preview needs a JDK (javac): brew install openjdk, or apt install default-jdk")
     root = Path(tempfile.mkdtemp(prefix="urcap5-preview-"))
-    pkg = root / "src" / "com" / "olympuscontrols" / "realsensepilot"
+    pkg = root / "src" / "com" / "nickarmenta" / "perceptronic"
     pkg.mkdir(parents=True)
     for name in (*PURE_JAVA, *SCREENS):
         shutil.copy(JAVA / name, pkg / name)
@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     cmd = ["java", "-cp", str(classes)]
     if args.snapshot:
         cmd.append("-Djava.awt.headless=true")
-    cmd += ["com.olympuscontrols.realsensepilot.Preview", base]
+    cmd += ["com.nickarmenta.perceptronic.Preview", base]
     if args.snapshot:
         cmd += ["--snapshot", str(Path(args.snapshot).resolve())]
     try:

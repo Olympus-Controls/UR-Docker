@@ -218,7 +218,28 @@ answers an unsolvable pose (the node gives it 8 s). Cockpit field shorthand (`:7
 `host:port`) is completed to a URL; a bare `:7621` used to be fetched relative to
 PolyScope's own page and its 404 misread as an outdated cockpit.
 
-**PolyScope 5 (e-Series) URCap (`urcap/realsense-pilot-ps5/`, `README.md`):** the same node
+**The URCaps are "Perceptronic" (renamed from "RealSense Pilot" 2026-09-29, Nick: "not this
+weird RealSense Pilot thing"), owned by Nick personally:** PolyScope 5 bundle
+`com.nickarmenta.perceptronic` (Java package the same, `Bundle-Vendor: Nick Armenta`, jar
+`urcap/dist/perceptronic-ps5-<ver>.urcap`), PolyScope X `nickarmenta/perceptronic`
+(`urcap/perceptronic/`, element `nickarmenta-perceptronic`). A different bundle identity is a
+different URCap to PolyScope: the old one must be removed on a robot that had it, and its
+saved node data (cockpit address, pick areas) and programs' RealSense Pick nodes don't carry
+over. Node titles: **Perceptronic** (installation), **Perceptronic Pick** (program). The mark
+is `urcap/perceptronic.svg` — a P with a lens in its bowl; `Logo.java` draws the same glyph
+with Java2D (toolbar badge, screen headers, a 38 % watermark bottom-right of every live
+picture) and a test holds its `SVG` constant byte-equal to the file and to the PolyScope X
+icon copy. **The P button (0.6.0, `ToolbarService` / `ToolbarContribution`):** a
+`SwingToolbarService` — the Robotiq-style header button — that drops the live picture down
+over any screen (420 px tall, polls only while open, reads the Installation node's saved
+address through `ApplicationAPI.getInstallationNode`). The toolbar API has been in the URCap
+API since 1.7.0 (PolyScope 5.4; checked in the jars), so no compat guard; the matrix's Felix
+check requires the toolbar service registered (`ps5_matrix.NODE_SERVICES`). The feed loop
+is one class, `FeedPoller` (no UR API, tested against the real cockpit), shared by the
+Installation node and the popup. Not yet seen on a pendant: the button's icon size (30 px)
+and popup height are guesses to check on the UR3e.
+
+**PolyScope 5 (e-Series) URCap (`urcap/perceptronic-ps5/`, `README.md`):** the same node
 as a Java 8 Swing **Installation node**, same layout and buttons (Open cockpit dropped —
 no browser on the pendant); Move (PolyScope) hands `RobotMovement.requestUserToMoveRobot`
 the controller's `joint_target`. Built by `urcap/urcap5.py` (`make urcap5-sdk` reads the
@@ -240,8 +261,8 @@ bundle dir and skips those checks, so a VM load does not prove the pendant will 
 (missed once, 2026-09-27). Check with PolyScope's own `URCapFileValidationHelper` from the
 image's `/ursim/GUI/bundle`. Installed and rendered on the UR3e pendant 2026-09-27 (0.2.0).
 
-**RealSense Pick program node (same bundle, 0.4.0; `PickScript.java`, `perceptronics/picknode.py`):**
-Program tab → URCaps → RealSense Pick. Its URScript runs in the operator's program (Local mode,
+**Perceptronic Pick program node (same bundle, 0.4.0; `PickScript.java`, `perceptronics/picknode.py`):**
+Program tab → URCaps → Perceptronic Pick. Its URScript runs in the operator's program (Local mode,
 no Primary) and talks to a pick server over a plain socket (`:7622`; `FIND`/`LOOK`/`REFINE`, and
 `LOG` lines that are never answered — a stray reply would be read as the next answer). No survey
 position is needed: the first look is from where the arm is, the closer look from halfway toward
@@ -832,7 +853,7 @@ runs and one that pops "cannot reach the required pose" mid-cycle.
 | URSim container is `Up` but 29999 refuses / resets and `docker logs` shows `Trace/breakpoint trap   Xvfb` | Docker Desktop is emulating amd64 with **Rosetta**; Xvfb crashes under it, PolyScope (which serves the Dashboard) never starts, and URControl stops listening within minutes. Seen 2026-09-04 on the Mac Studio; the `Exited (101)` containers from weeks earlier were the same | **Docker Desktop's emulators can't run the e-Series sim on the Mac Studio**: with Rosetta off (QEMU user-mode) Xvfb survives but URControl dies (TODO.md, 2026-09-04; re-confirmed 2026-09-27). The image is amd64-only (every tag). `scripts/ursim-e-vm.sh up` runs it in a full x86_64 QEMU VM instead: URControl, Dashboard, Primary/RTDE and the URCap loader work (8 min to Dashboard), but PolyScope's JVM crashes in JIT code there (SIGILL/SIGSEGV, `hs_err_pid*.log`) — fine for "does the URCap load", not for clicking through PolyScope. For that: an amd64 host, CI, or the real UR3e |
 | Every cockpit click on the UR3e cell reads **OUT OF REACH** although the arm reaches the parts | The reach check was the datasheet radius (0.5 m) from the base **origin**; the parts sit 0.27 m below the base | Fixed 2026-09-27: `locate` and every absolute move ask the controller's IK (`reach_check: controller_ik`); the sphere is only the no-answer fallback. If you still see `reach_check: sphere`, Primary isn't answering (PolyScope X in Local, Primary disabled) |
 | A cockpit Move with the Hand-E on drives the fingers into the part | The standoff was measured from the **flange** (`PERCEPTRONICS_APPROACH_REFERENCE=flange`, 75 mm) — the fingertips are 163 mm past it | Fixed 2026-09-27: approach by the fingertips (the default); check `perceptronics doctor`'s `approach` line shows the tool length you measured |
-| The RealSense Pick node (or any FIND) seems **hung**: nothing moves, the pick-server log shows `FIND: no fresh camera frame` (status −4) over and over | The D435 dropped out of the cockpit: its frames freeze at one `seq` while `fps` still reads ~30, and `/api/info`'s `last_error` says `Frame didn't arrive within 5000` (the macOS USB-claim race). Each FIND waits for a frame newer than the request, gets none, answers −4, and a looping program asks again | Re-plug the camera; the lean open re-opens it by itself. The sidecar's log now says `cockpit frames stalled at seq N` with the camera's error, and 0.3.0 pops up the reason instead of looping silently |
+| The Perceptronic Pick node (or any FIND) seems **hung**: nothing moves, the pick-server log shows `FIND: no fresh camera frame` (status −4) over and over | The D435 dropped out of the cockpit: its frames freeze at one `seq` while `fps` still reads ~30, and `/api/info`'s `last_error` says `Frame didn't arrive within 5000` (the macOS USB-claim race). Each FIND waits for a frame newer than the request, gets none, answers −4, and a looping program asks again | Re-plug the camera; the lean open re-opens it by itself. The sidecar's log now says `cockpit frames stalled at seq N` with the camera's error, and 0.3.0 pops up the reason instead of looping silently |
 | The cockpit runs the **old hand-eye** although `perceptronics/cells/ur3.env` has the new solve (`/api/info` → `robot.handeye.flange_to_depth_pose` ≠ the cell file's value; seen 2026-09-27) | `apply_cell` only fills keys the environment doesn't already have, so a `PERCEPTRONICS_T_FLANGE_CAMERA` already in the cockpit's environment wins. `handeye.source` reads `env:…` either way, so it can't tell you which one won | Launch with `sudo env -u PERCEPTRONICS_T_FLANGE_CAMERA .venv/bin/perceptronics --cell ur3 gui …`; after every launch compare `flange_to_depth_pose` in `/api/info` with the cell file |
 | RealSense colour panel black, depth fine, RGB options at factory | depth and colour streaming at **different sizes** on the D435 | keep both at 848×480 (the default); `docs/realsense.md` §Depth quality |
 | Cockpit shows nothing on a **USB 2** link; log says `Couldn't resolve requests` then `RS2_USB_STATUS_ACCESS` on every retry | USB 2 lists **no 848×480 colour** (and 848×480 depth only at 10/6 Hz), so the default pair can't start; each failed open re-runs the macOS UVC race | Fixed: `open()` enumerates the camera's profiles (`Api.stream_modes`) and `negotiate_mode` picks the fastest same-size pair it offers (640×480 @ 15 on the D435) — no flags needed; re-plug once to clear the race. `docs/realsense.md` §Troubleshooting |

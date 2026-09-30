@@ -311,7 +311,7 @@ class ViewerApp:
         self._latest_t = 0.0  # host time the newest frame arrived
         self.mask_t = 0.0  # ... and the one the current mask was cut from
         # Origins allowed to call the API from another page (a PolyScope X URCap on
-        # the pendant, `urcap/realsense-pilot`). Empty = same-origin only (the default).
+        # the pendant, `urcap/perceptronic`). Empty = same-origin only (the default).
         self.cors_origins = []
         for o in (o.strip() for o in (cors or []) if o and o.strip()):
             if o == "*" or _ORIGIN_RE.match(o):
@@ -1862,7 +1862,7 @@ def serve(
     pick_port: int = DEFAULT_PICK_PORT,
 ) -> None:
     """Run the cockpit until interrupted (the ``perceptronics gui`` entry point).
-    ``pick_port`` (0 = off) serves the PolyScope 5 RealSense Pick program node's
+    ``pick_port`` (0 = off) serves the PolyScope 5 Perceptronic Pick program node's
     line protocol on the same interface (:mod:`perceptronics.picknode`).
     ``demo`` opens the browser on the classic page's demo view
     (``/classic?demo=1``: one picture, four big buttons, one light).
@@ -1902,7 +1902,7 @@ def serve(
         else:
             app.pick_port = pick.server_address[1]
             pick.start()
-            print(f"pick server (PolyScope RealSense Pick node) on {bind}:{app.pick_port}")
+            print(f"pick server (PolyScope Perceptronic Pick node) on {bind}:{app.pick_port}")
     app.start()
     if open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
@@ -1927,7 +1927,7 @@ def add_pick_port_arg(ap) -> None:
         "--pick-port",
         type=int,
         default=DEFAULT_PICK_PORT,
-        help=f"TCP port for the PolyScope RealSense Pick program node (default {DEFAULT_PICK_PORT}; 0 = off)",
+        help=f"TCP port for the PolyScope 5 Perceptronic Pick node (default {DEFAULT_PICK_PORT}; 0 = off)",
     )
 
 

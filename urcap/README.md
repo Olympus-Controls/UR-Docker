@@ -1,9 +1,12 @@
-# RealSense Pilot — the wrist camera inside PolyScope X
+# <img src="perceptronic.svg" width="28" align="top"> Perceptronic — the wrist camera inside PolyScope X
+
+*Renamed from RealSense Pilot on 2026-09-29 (vendor `nickarmenta`, URCap `perceptronic`):
+delete the old one before installing this (`urcapx.py delete olympus-controls realsense-pilot …`).*
 
 > **e-Series robot on PolyScope 5?** Use the Installation-node build instead:
-> [`realsense-pilot-ps5/`](realsense-pilot-ps5/README.md) (`dist/realsense-pilot-ps5-0.5.0.urcap`).
+> [`perceptronic-ps5/`](perceptronic-ps5/README.md) (`dist/perceptronic-ps5-0.6.0.urcap`).
 
-A URCap for **PolyScope X** (PolyScope 10) robots. It adds a **RealSense Pilot**
+A URCap for **PolyScope X** (PolyScope 10) robots. It adds a **Perceptronic**
 node under **Application** that shows the live colour feed from an Intel
 RealSense D435 on the tool flange, right in PolyScope's own screen:
 
@@ -19,7 +22,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
 
 ```
  ┌───────────── PolyScope X pendant ─────────────┐          ┌──── computer next to the robot ────┐
- │ Application → RealSense Pilot  (this URCap)   │  HTTP    │ perceptronics gui  (the cockpit)       │
+ │ Application → Perceptronic  (this URCap)      │  HTTP    │ perceptronics gui  (the cockpit)       │
  │   feed · hover · click · Move                 │ ───────► │   :7621   D435 on USB               │
  └───────────────────────────────────────────────┘          │   talks to the robot on 30001/30004 │
                                                             └─────────────────────────────────────┘
@@ -33,7 +36,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
 
 ## Quick start
 
-1. **Download** [`dist/realsense-pilot-0.1.0.urcapx`](dist/realsense-pilot-0.1.0.urcapx)
+1. **Download** [`dist/perceptronic-0.2.0.urcapx`](dist/perceptronic-0.2.0.urcapx)
    (on GitHub: open the file, then the download button). The single file is the
    whole URCap.
 2. **Install it** on the robot (see [Install the URCap](#1-install-the-urcap)).
@@ -41,7 +44,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
    ```bash
    uv run perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
    ```
-4. On the pendant: **Application → RealSense Pilot**, type
+4. On the pendant: **Application → Perceptronic**, type
    `http://<camera-computer-ip>:7621` in **Cockpit**, press **Save**. The feed
    appears.
 
@@ -69,13 +72,13 @@ Pick one of the two ways. You only do this once per robot (and again to update).
 
 ### A. On the pendant, from a USB stick
 
-1. Copy `realsense-pilot-0.1.0.urcapx` onto a USB stick and plug it into the
+1. Copy `perceptronic-0.2.0.urcapx` onto a USB stick and plug it into the
    teach pendant.
 2. Open the **☰ menu** (top-left) → **System Manager** → **URCaps**, and
    unlock it with the **admin password**.
-3. Add a URCap and pick `realsense-pilot-0.1.0.urcapx` from the USB stick.
+3. Add a URCap and pick `perceptronic-0.2.0.urcapx` from the USB stick.
 4. When it's listed, open **☰ → Reload**.
-   **RealSense Pilot** now appears under **Application**.
+   **Perceptronic** now appears under **Application**.
 
 ### B. Over the network, from any computer
 
@@ -83,7 +86,7 @@ Pick one of the two ways. You only do this once per robot (and again to update).
 to install. Download it next to the `.urcapx` and run:
 
 ```bash
-python3 urcapx.py install realsense-pilot-0.1.0.urcapx --host <robot-ip> --port 80
+python3 urcapx.py install perceptronic-0.2.0.urcapx --host <robot-ip> --port 80
 ```
 
 It posts the package to the same endpoint PolyScope's System Manager uses, which
@@ -95,8 +98,8 @@ Other commands from the same file:
 
 ```bash
 python3 urcapx.py list --host <robot-ip> --port 80                                          # what's installed
-python3 urcapx.py install realsense-pilot-0.1.0.urcapx --host <robot-ip> --port 80 --replace   # update
-python3 urcapx.py delete olympus-controls realsense-pilot --host <robot-ip> --port 80        # uninstall
+python3 urcapx.py install perceptronic-0.2.0.urcapx --host <robot-ip> --port 80 --replace   # update
+python3 urcapx.py delete nickarmenta perceptronic --host <robot-ip> --port 80        # uninstall
 ```
 
 ---
@@ -176,7 +179,7 @@ hand-eye**. See [docs/realsense.md §Hand-eye](../docs/realsense.md).
 
 ## 4. Use it
 
-1. On the pendant: **Application → RealSense Pilot** (add it to a program like
+1. On the pendant: **Application → Perceptronic** (add it to a program like
    any other node).
 2. **Cockpit**: `http://<camera-computer-ip>:7621`, then **Save**. It's stored in
    the node, so you do this once. Left empty, the node looks for a cockpit on the
@@ -205,7 +208,7 @@ The node tells a cockpit that **refuses** the pendant apart from one that
 | *locate failed: no TCP pose/offset surfaced on the Primary broadcast* | The robot ignored the pose query: Local mode, Primary interface off, or the controller was busy for a moment | Enable Primary (§2), switch to Remote, and click again. |
 | Feed works but **OUT OF REACH** on every click | The object is farther than the arm reaches, or `UR_ROBOT_MODEL` is wrong | Move the part closer; check the model in `mycell.env`. |
 | Point lands a few cm off | No hand-eye calibration yet | Calibrate (§3). |
-| RealSense Pilot isn't under Application after installing | PolyScope hasn't reloaded | **☰ → Reload**, or refresh the browser tab on a simulator. |
+| Perceptronic isn't under Application after installing | PolyScope hasn't reloaded | **☰ → Reload**, or refresh the browser tab on a simulator. |
 | `urcapx.py install` prints `409` / *already installed* | That version is installed | Add `--replace`. |
 
 The cockpit's own log names every refused origin (`CORS: refused a page from …`),
@@ -224,11 +227,11 @@ a synthetic camera stands in for the D435:
 
 ```bash
 make simx-up          # PolyScope X 10.13.0 → http://localhost:8000 (HOST_ARCH=arm64 on Apple Silicon)
-make urcap-install    # installs dist/realsense-pilot-*.urcapx into it
+make urcap-install    # installs dist/perceptronic-*.urcapx into it
 make urcap-cockpit    # a fake cockpit on :7621 with --cors for the simulator
 ```
 
-Open `http://localhost:8000`, **Application → RealSense Pilot**, leave
+Open `http://localhost:8000`, **Application → Perceptronic**, leave
 **Cockpit** empty, and the synthetic scene appears. Locate/Move need a real robot
 link behind the cockpit.
 

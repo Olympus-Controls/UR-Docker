@@ -33,6 +33,10 @@
 - 2026-09-28 — The librealsense build fetches nlohmann/json, fastcdr, yaml-cpp and sqlite at configure time (first install needs internet). Turn off rosbag support to cut that, or ship a prebuilt `.deb` per board?
 - 2026-09-28 — Bracket tool bolts: the BOM lists M6 × 16 low-head (plate 6 mm + Hand-E's M6 × 10 → the README's "+8 mm" gives only 2 mm more engagement vs the flange's 8 mm limit). Measure before ordering.
 
+- 2026-09-29 — **Perceptronic namespace**: the URCap is now owned by you personally (`Bundle-Vendor: Nick Armenta`), and the bundle / Java package became `com.nickarmenta.perceptronic` (PolyScope X vendor `nickarmenta`) — a guess at your personal reverse-DNS from the GitHub handle. Want a different namespace (e.g. your own domain)? It is one `perl -pi` over `urcap/` + tests, but it must happen before the 0.6.0 jar lands on the UR3e (a new symbolic name = a third URCap to remove).
+- 2026-09-29 — The README screenshots (`urcap/perceptronic-ps5/screens/*.png`, 1000 × 560) came from a one-off harness that isn't in the repo; they still say "RealSense Pick" and lack the P mark. Re-render them (`preview5.py --snapshot` gives the whole 1280 × 772 window, not that framing) or accept the drift?
+- 2026-09-29 — The P button's icon (30 px badge) and popup (420 px tall) are unverified on a pendant: if the header button looks wrong-sized or the popup clips, `ToolbarService.ICON_PX` / `HEIGHT_PX` are the two numbers.
+
 ## After the demo (2026-09-28)
 
 - 2026-09-25 — (held until after the demo, Nick 09-27) Four pick-cycle faults could not be injected from the desk and are untested claims until someone does them once: pendant flipped to **Local** mid-run, a webcam or the D435 **unplugged** mid-run, the cockpit **restarted** while the routine is on a block, robot **power cut**. Note what the routine did in the field log.

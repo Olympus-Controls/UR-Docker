@@ -2,11 +2,11 @@
 """The URCap in the simulator it is built for: boot, install, load, click — end to end.
 
 Runs the pinned PolyScope X simulator (``urcap/target.json``, by digest) in a
-throwaway container, installs a fresh build of ``urcap/realsense-pilot`` through
+throwaway container, installs a fresh build of ``urcap/perceptronic`` through
 the System Manager endpoint (``urcapx.install``), checks nginx serves exactly the
 files that were packaged, then drives PolyScope's own UI headlessly:
 
-* Application → RealSense Pilot: the node's element renders with its i18n title,
+* Application → Perceptronic: the node's element renders with its i18n title,
   the behavior worker and presenter load without a page error from our files;
 * the node goes live against a synthetic cockpit (``perceptronics gui --fake --no-robot``,
   with none of the shell's ``UR_*`` / ``PERCEPTRONICS_*``: it never reaches a robot);
@@ -53,8 +53,8 @@ import track  # noqa: E402
 import urcapx  # noqa: E402
 
 REPO = HERE.parent
-VENDOR, URCAP_ID, ARCHIVE = "olympus-controls", "realsense-pilot", "realsense-pilot-frontend"
-TAG = "olympus-realsense-pilot"
+VENDOR, URCAP_ID, ARCHIVE = "nickarmenta", "perceptronic", "perceptronic-frontend"
+TAG = "nickarmenta-perceptronic"
 
 
 class E2EError(RuntimeError):
@@ -389,7 +389,7 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
                 if nav.is_visible():
                     break
             nav.click(timeout=30_000)
-            page.get_by_text("RealSense Pilot").first.click(timeout=60_000)
+            page.get_by_text("Perceptronic").first.click(timeout=60_000)
             page.wait_for_selector(TAG, state="attached", timeout=60_000)
 
         def shot(name: str) -> None:
@@ -400,7 +400,7 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
             open_node()
             node = page.locator(TAG)
             checks.expect(
-                "RealSense Pilot" in node.inner_text(timeout=30_000), "node renders", "i18n title shown"
+                "Perceptronic" in node.inner_text(timeout=30_000), "node renders", "i18n title shown"
             )
             url_box = node.locator('[data-rsp="url"]')
             url_box.fill(cockpit)
@@ -514,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="e2e", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--image", help="simulator image (default: target.json's, by digest)")
-    ap.add_argument("--package", help="a built .urcapx (default: build urcap/realsense-pilot now)")
+    ap.add_argument("--package", help="a built .urcapx (default: build urcap/perceptronic now)")
     ap.add_argument(
         "--port", type=int, default=0, help="host port for the sim's web UI (default: a free one)"
     )

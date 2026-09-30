@@ -161,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser(
         "pick-server",
-        help="the PolyScope RealSense Pick node's server beside an already-running cockpit "
+        help="the PolyScope Perceptronic Pick node's server beside an already-running cockpit "
         "(its pick socket + teach routes; everything else forwarded to the cockpit)",
     )
     add_pick_server_args(ps)

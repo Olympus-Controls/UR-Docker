@@ -8,8 +8,8 @@ Docker Hub, oldest first — nothing is ever dropped), against
 1. pull the image and hold the committed URCap to its URCap API (``urcap5.py check``:
    the sources it loads compile against the jars in this image, and every package the jar
    imports is one this PolyScope exports);
-2. stage the committed ``urcap/dist/realsense-pilot-ps5-<ver>.urcap`` as
-   ``/urcaps/realsense-pilot-ps5.jar`` (the image's entrypoint copies ``/urcaps/*.jar``
+2. stage the committed ``urcap/dist/perceptronic-ps5-<ver>.urcap`` as
+   ``/urcaps/perceptronic-ps5.jar`` (the image's entrypoint copies ``/urcaps/*.jar``
    into PolyScope's bundle dir at every start) and bring the version's service up;
 3. wait for the Dashboard to answer a ``robotmode`` other than ``NO_CONTROLLER``;
 4. wait for Felix (PolyScope's OSGi framework; its remote shell on the container's
@@ -51,13 +51,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = REPO / "docker-compose.ps5-matrix.yml"
 DIST = REPO / "urcap" / "dist"
-SRC = REPO / "urcap" / "realsense-pilot-ps5"
+SRC = REPO / "urcap" / "perceptronic-ps5"
 STAGE = REPO / "target" / "ps5-matrix" / "urcaps"
 SDK = REPO / "target" / "ps5-matrix" / "sdk"
-JAR_NAME = "realsense-pilot-ps5.jar"
+JAR_NAME = "perceptronic-ps5.jar"
 IMAGE = "universalrobots/ursim_e-series"
 HUB_TAGS = f"https://hub.docker.com/v2/repositories/{IMAGE}/tags?page_size=100"
-PACKAGE = "com.olympuscontrols.realsensepilot"
+PACKAGE = "com.nickarmenta.perceptronic"
 # `sudo docker` where the user is not in the docker group (the Makefile passes its DOCKER).
 DOCKER = os.environ.get("DOCKER", "docker").split()
 
@@ -225,9 +225,9 @@ COMPOSE_HEAD = """\
 # Docker's port mapping is the supported way to offset them.
 #
 # URCaps: the entrypoint runs `cp -r /urcaps/*.jar /ursim/GUI/bundle/` at every start, so
-# /urcaps must hold *.jar files. The committed urcap/dist/realsense-pilot-ps5-<ver>.urcap
+# /urcaps must hold *.jar files. The committed urcap/dist/perceptronic-ps5-<ver>.urcap
 # is a jar under another suffix; ps5_matrix.py stages it as
-# target/ps5-matrix/urcaps/realsense-pilot-ps5.jar (PS5_URCAPS_DIR overrides) — that
+# target/ps5-matrix/urcaps/perceptronic-ps5.jar (PS5_URCAPS_DIR overrides) — that
 # keeps this file free of the version number.
 #
 # The images declare no VOLUME, but teardown is `docker compose down -v` anyway (the
@@ -396,26 +396,28 @@ def fetch_tags(url: str = HUB_TAGS) -> list[str]:
 # -- the URCap's evidence ------------------------------------------------------------------
 #
 # polyscope.log never says a URCap *started*: on 5.24.0 / 5.25.2 / 5.26.1 it logs only
-# "Adding 'reference:' to bundle uri : file:/ursim/GUI/bundle/realsense-pilot-ps5.jar" and
+# "Adding 'reference:' to bundle uri : file:/ursim/GUI/bundle/perceptronic-ps5.jar" and
 # (5.24, 5.25) URCapHelper's "Removing 'reference:' from bundle location" lines — found by
 # the first matrix run, 2026-09-28. The runtime truth is Felix's own: PolyScope's
 # /ursim/GUI/conf/config.properties enables the Felix remote shell on 127.0.0.1:6666 inside
 # the container (osgi.shell.telnet.ip/port), where `ps` gives each bundle's state and
-# `services <id>` the services its activator registered — the two node services.
+# `services <id>` the services its activator registered — the node and toolbar services.
 
 NODE_SERVICES = (
     "com.ur.urcap.api.contribution.installation.swing.SwingInstallationNodeService",
     "com.ur.urcap.api.contribution.program.swing.SwingProgramNodeService",
+    "com.ur.urcap.api.contribution.toolbar.swing.SwingToolbarService",  # the P button (0.6.0)
 )
 _PS_ROW = re.compile(r"^\[\s*(\d+)\]\s*\[\s*([A-Za-z]+)\s*\]\s*\[\s*(\d+)\]\s*(.*?)\s*$")
-_OURS = re.compile(r"com\.olympuscontrols|realsense-?pilot", re.I)
+# ... and the old identity (RealSense Pilot, Olympus Controls): the real logs in tests/fixtures
+_OURS = re.compile(r"com\.nickarmenta|perceptronic|com\.olympuscontrols|realsense-?pilot", re.I)
 _ERROR = re.compile(
     r"exception|\berror\b|severe|could not|failed|unresolved|omitted|refused|rejected|incompatible", re.I
 )
 
 
 def parse_ps(text: str) -> list[dict]:
-    """Felix shell ``ps`` rows: ``[ 164] [Active     ] [    1] RealSense Pilot (0.4.0)``."""
+    """Felix shell ``ps`` rows: ``[ 164] [Active     ] [    1] Perceptronic (0.4.0)``."""
     rows = []
     for line in text.splitlines():
         m = _PS_ROW.match(line.strip())
@@ -447,7 +449,7 @@ def missing_services(services_text: str, wanted: tuple[str, ...] = NODE_SERVICES
 
 def log_errors(log: str, package: str = PACKAGE) -> list[str]:
     """polyscope.log lines that say something went wrong with the URCap: any Java stack
-    frame inside its package (``at com.olympuscontrols...``) with the exception line that
+    frame inside its package (``at com.nickarmenta...``) with the exception line that
     heads it, and any line naming the URCap together with a failure word."""
     lines = log.splitlines()
     errors: list[str] = []
@@ -494,9 +496,9 @@ def _exec(v: Version, script: str, timeout: float = 60) -> str:
 
 
 def stage_urcap(dist: Path = DIST, stage: Path = STAGE) -> Path:
-    jars = sorted(dist.glob("realsense-pilot-ps5-*.urcap"))
+    jars = sorted(dist.glob("perceptronic-ps5-*.urcap"))
     if len(jars) != 1:
-        raise RuntimeError(f"expected one realsense-pilot-ps5-*.urcap in {dist}, found {len(jars)}")
+        raise RuntimeError(f"expected one perceptronic-ps5-*.urcap in {dist}, found {len(jars)}")
     stage.mkdir(parents=True, exist_ok=True)
     for old in stage.glob("*.jar"):
         old.unlink()
@@ -660,7 +662,7 @@ def collect(v: Version, out: Path) -> list[str]:
     (out / "evidence.txt").write_text(_exec(v, EVIDENCE, timeout=120), encoding="utf-8")
     saved.append(str(out / "evidence.txt"))
     shell = felix_shell(v, "ps")
-    row = next((r for r in parse_ps(shell.get("ps", "")) if r["name"].startswith("RealSense Pilot")), None)
+    row = next((r for r in parse_ps(shell.get("ps", "")) if r["name"].startswith("Perceptronic")), None)
     if row:
         shell.update(felix_shell(v, "help", services_command(row["id"]), f"headers {row['id']}"))
     (out / "felix.txt").write_text("".join(f"### {k}\n{t}" for k, t in shell.items()), encoding="utf-8")

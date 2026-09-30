@@ -1,6 +1,6 @@
-"""``perceptronics pick-server`` — the RealSense Pick node's server beside a running cockpit.
+"""``perceptronics pick-server`` — the Perceptronic Pick node's server beside a running cockpit.
 
-The cockpit (``perceptronics gui``) serves the PolyScope 5 **RealSense Pick** program node
+The cockpit (``perceptronics gui``) serves the PolyScope 5 **Perceptronic Pick** program node
 itself: the ``--pick-port`` socket the node's URScript talks to, and the two teach-screen
 routes (``GET /api/pick/detect``, ``POST /api/pick/preview``). One process owns the USB
 camera, so a cockpit that is already running — one that predates the node, or one another

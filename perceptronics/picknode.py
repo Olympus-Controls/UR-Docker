@@ -1,4 +1,4 @@
-"""The pick server — what the PolyScope 5 **RealSense Pick** program node talks to.
+"""The pick server — what the PolyScope 5 **Perceptronic Pick** program node talks to.
 
 The node's URScript runs *inside* the robot program the operator plays from the
 pendant, so it runs in Local mode, needs no Primary connection and no cockpit robot

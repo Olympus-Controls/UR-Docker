@@ -1,4 +1,4 @@
-package com.olympuscontrols.realsensepilot;
+package com.nickarmenta.perceptronic;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
@@ -19,7 +19,7 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
 /**
- * The RealSense Pick node's and the Installation node's screens in a desktop window, driven by
+ * The Perceptronic Pick node's and the Installation node's screens in a desktop window, driven by
  * a live camera computer — the pendant's own Swing classes ({@link PickScreen},
  * {@link LocationsScreen}), with desktop stand-ins for what only PolyScope provides: typed
  * values come from a dialog instead of PolyScope's keypad, a picture point is added where the
@@ -27,7 +27,7 @@ import javax.swing.SwingUtilities;
  * sample points on the demo table. Everything drawn on the picture is the camera computer's
  * real answer ({@code GET /api/pick/scene}) to exactly the options the program would send.
  *
- * <p>Not part of the URCap (it is outside {@code realsense-pilot-ps5/src}). Run it with
+ * <p>Not part of the URCap (it is outside {@code perceptronic-ps5/src}). Run it with
  * {@code uv run python urcap/preview5.py}.
  *
  * <pre>java … Preview http://127.0.0.1:7650 [--snapshot out.png]</pre>
@@ -102,7 +102,7 @@ public final class Preview {
         top.setBorder(BorderFactory.createEmptyBorder(8, 12, 0, 12));
         top.add(Ui.label("Preview — " + cockpit.base + "   (desktop stand-ins for the arm and PolyScope's keypad)",
                 12f, false, Ui.MUTED), BorderLayout.WEST);
-        Ui.Segmented tabs = new Ui.Segmented(new String[] {"Program: RealSense Pick", "Installation: pick areas"}, 0,
+        Ui.Segmented tabs = new Ui.Segmented(new String[] {"Program: Perceptronic Pick", "Installation: pick areas"}, 0,
                 i -> ((java.awt.CardLayout) deck.getLayout()).show(deck, i == 0 ? "pick" : "areas"));
         tabs.setPreferredSize(new Dimension(460, 40));
         top.add(tabs, BorderLayout.EAST);
@@ -111,7 +111,7 @@ public final class Preview {
         root.add(top, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
         if (show) {
-            JFrame f = new JFrame("RealSense Pick " + PickScript.VERSION + " — preview");
+            JFrame f = new JFrame("Perceptronic Pick " + PickScript.VERSION + " — preview");
             f.setContentPane(root);
             f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             f.setSize(1280, 800); // the e-Series pendant's screen

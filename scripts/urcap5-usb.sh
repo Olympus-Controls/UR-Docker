@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Put the current PolyScope 5 URCap on a USB stick for the pendant, safely:
 # no macOS "._" AppleDouble files (PolyScope's URCap picker would list
-# "._realsense-pilot-….urcap" and fail on it), checksum-verified, then ejected.
+# "._perceptronic-….urcap" and fail on it), checksum-verified, then ejected.
 #
 #   scripts/urcap5-usb.sh                 # the stick named "URE MODELS"
 #   scripts/urcap5-usb.sh "MY STICK"      # another FAT32 stick
@@ -11,12 +11,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 volume="/Volumes/${1:-URE MODELS}"
-urcap="$(find urcap/dist -maxdepth 1 -name 'realsense-pilot-ps5-*.urcap' | sort | tail -1)"
+urcap="$(find urcap/dist -maxdepth 1 -name 'perceptronic-ps5-*.urcap' | sort | tail -1)"
 [[ -d "$volume" ]] || { echo "no stick at $volume — plug it in (or pass its name)"; exit 1; }
 [[ -f "$urcap" ]] || { echo "no $urcap — make urcap5-package"; exit 1; }
 
 # replace any earlier build of this URCap on the stick
-find "$volume" -maxdepth 1 \( -name 'realsense-pilot-ps5-*.urcap' -o -name '._realsense-pilot-ps5-*' \) -delete
+find "$volume" -maxdepth 1 \( -name 'perceptronic-ps5-*.urcap' -o -name '._perceptronic-ps5-*' \) -delete
 cp -X "$urcap" "$volume/"
 dot_clean -m "$volume" 2>/dev/null || true
 sync

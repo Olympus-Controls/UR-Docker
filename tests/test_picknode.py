@@ -1,4 +1,4 @@
-"""The pick server the PolyScope 5 RealSense Pick program node talks to.
+"""The pick server the PolyScope 5 Perceptronic Pick program node talks to.
 
 Contract, not implementation: a synthetic scene under a known flange pose goes in,
 the reply the robot program parses comes out, and the fingertips it implies must

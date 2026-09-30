@@ -1,0 +1,14 @@
+{
+  "applicationNodes": [
+    {
+      "translationPath": "assets/i18n/",
+      "behaviorURI": "perceptronic-node.worker.js",
+      "presenterURI": "main.js",
+      "componentTagName": "nickarmenta-perceptronic"
+    }
+  ],
+  "programNodes": [],
+  "smartSkills": [],
+  "sidebarItems": [],
+  "operatorScreens": []
+}

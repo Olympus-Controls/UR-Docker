@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Keep the PolyScope X URCap on UR's newest release — stdlib only.
 
-The URCap (``urcap/realsense-pilot``) is built and tested for exactly one
+The URCap (``urcap/perceptronic``) is built and tested for exactly one
 PolyScope X release: the newest patch of the newest minor UR has published
 release notes for. ``urcap/target.json`` pins it, together with what that
 release pairs with — the simulator image (by digest) and the URCap SDK
@@ -38,8 +38,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TARGET = HERE / "target.json"
-URCAP = HERE / "realsense-pilot"
-FRONTEND = URCAP / "realsense-pilot-frontend"
+URCAP = HERE / "perceptronic"
+FRONTEND = URCAP / "perceptronic-frontend"
 DOCS = (HERE / "README.md", HERE / "DEVELOPING.md")
 DOC_MARK = re.compile(r"(<!-- urcap-target -->)(.*?)(<!-- /urcap-target -->)", re.S)
 
@@ -672,7 +672,7 @@ def compat(target: dict, src: Sources | None = None, urcap: Path = URCAP) -> lis
     if sdk.get("threads") != WORKER_THREADS:
         problems.append(
             f"the SDK template uses threads {sdk.get('threads')}, the worker speaks {WORKER_THREADS}'s "
-            "protocol — re-verify realsense-pilot-node.worker.js against it"
+            "protocol — re-verify perceptronic-node.worker.js against it"
         )
     problems += check_api_surface(contribution_api_types(src, sdk["contribution_api"]))
     spec = manifest_spec(sdk_zip(src, sdk["tag"], sdk["version"]), sdk["manifest_spec"])

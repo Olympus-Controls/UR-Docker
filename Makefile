@@ -83,11 +83,11 @@ simx-bring-up:  ## Power on + brake release the PolyScope X robot (needs Remote 
 	$(PX_ENV) $(PYTHON) -m urctl bring-up
 
 # ---- PolyScope X URCap (urcap/: README.md to install, DEVELOPING.md to work on it) --
-urcap-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-<ver>.urcapx (no npm; commit it).
-	$(PYTHON) urcap/urcapx.py package urcap/realsense-pilot --out urcap/dist
+urcap-package:  ## Rebuild the downloadable urcap/dist/perceptronic-<ver>.urcapx (no npm; commit it).
+	$(PYTHON) urcap/urcapx.py package urcap/perceptronic --out urcap/dist
 
 urcap-install: urcap-package  ## Install (or replace) it in the PolyScope X sim on :8000; then refresh the page.
-	$(PYTHON) urcap/urcapx.py install urcap/dist/realsense-pilot-*.urcapx --port 8000 --replace
+	$(PYTHON) urcap/urcapx.py install urcap/dist/perceptronic-*.urcapx --port 8000 --replace
 
 urcap-cockpit:  ## A synthetic cockpit on :7621 (the normal port) the URCap page may call from the sim's origin.
 	$(PYTHON) -m perceptronics gui --fake --no-browser --port 7621 --cors http://localhost:8000,http://127.0.0.1:8000
@@ -101,16 +101,16 @@ urcap-compat:  ## The URCap against the pinned SDK: contribution-api members, ma
 urcap-e2e:  ## Boot target.json's simulator, install a fresh build, load + click the node headlessly.
 	$(UV) run --with playwright==1.63.0 python urcap/e2e.py
 
-# ---- PolyScope 5 (e-Series) URCap (urcap/realsense-pilot-ps5, urcap/urcap5.py) --------
+# ---- PolyScope 5 (e-Series) URCap (urcap/perceptronic-ps5, urcap/urcap5.py) --------
 URCAP5_CONTAINER ?= ur-utils-ursim-e-ur3e
 urcap5-sdk:  ## The URCap API jars of the oldest supported PolyScope (+ compat.since) into target/ (registry; never committed).
 	$(PYTHON) urcap/urcap5.py sdk
 
-urcap5-package:  ## Rebuild the downloadable urcap/dist/realsense-pilot-ps5-<ver>.urcap (JDK; commit it).
-	$(PYTHON) urcap/urcap5.py package urcap/realsense-pilot-ps5 --out urcap/dist
+urcap5-package:  ## Rebuild the downloadable urcap/dist/perceptronic-ps5-<ver>.urcap (JDK; commit it).
+	$(PYTHON) urcap/urcap5.py package urcap/perceptronic-ps5 --out urcap/dist
 
 urcap5-install: urcap5-package  ## Install it in the e-Series sim container $(URCAP5_CONTAINER) (restarts it).
-	$(PYTHON) urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-*.urcap --container $(URCAP5_CONTAINER)
+	$(PYTHON) urcap/urcap5.py install urcap/dist/perceptronic-ps5-*.urcap --container $(URCAP5_CONTAINER)
 
 # The URCap on every PolyScope 5 minor from 5.4 (urcap/ps5_matrix.py MATRIX; amd64 host).
 PS5_VERSION ?= all

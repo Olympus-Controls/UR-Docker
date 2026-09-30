@@ -1,4 +1,4 @@
-"""The PolyScope 5 (e-Series) RealSense Pilot URCap: the packager (``urcap/urcap5.py``),
+"""The PolyScope 5 (e-Series) Perceptronic URCap: the packager (``urcap/urcap5.py``),
 the committed ``dist/`` jar, and the Java client's contract — URL rules, JSON, the
 located-target text, and real HTTP against the cockpit (``perceptronics.webapp``).
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -30,9 +31,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "urcap"))
 import urcap5  # noqa: E402
 
-SRC = ROOT / "urcap" / "realsense-pilot-ps5"
-JAVA = SRC / "src" / "com" / "olympuscontrols" / "realsensepilot"
-DIST = ROOT / "urcap" / "dist" / "realsense-pilot-ps5-0.5.0.urcap"
+SRC = ROOT / "urcap" / "perceptronic-ps5"
+JAVA = SRC / "src" / "com" / "nickarmenta" / "perceptronic"
+DIST = ROOT / "urcap" / "dist" / "perceptronic-ps5-0.6.0.urcap"
 JAVAC = shutil.which("javac")
 # the pure-Java classes the harness compiles (no UR API)
 PURE_JAVA = (
@@ -43,7 +44,10 @@ PURE_JAVA = (
     "Diagrams.java",
     "Ui.java",
     "Scene.java",
+    "Logo.java",
+    "FeedPoller.java",
 )
+SVG = ROOT / "urcap" / "perceptronic.svg"
 _PLAN = urcap5.compat_plan(urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8")))
 HAS_SDK = all((urcap5.SDK_ROOT / v / urcap5.SDK_INFO).is_file() for v in (_PLAN["floor"], *_PLAN["since"]))
 
@@ -101,7 +105,7 @@ def test_embedded_pom_names_the_api_version_the_way_polyscope_reads_it():
     # artifactId api -> <version>. Parse it the same way.
     props = urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8"))
     path, body = urcap5.pom_xml(props)
-    assert path == "META-INF/maven/com.olympuscontrols/realsensepilot/pom.xml"
+    assert path == "META-INF/maven/com.nickarmenta/perceptronic/pom.xml"
     ns = {"m": "http://maven.apache.org/POM/4.0.0"}
     deps = ET.fromstring(body).findall("m:dependencies/m:dependency", ns)
     versions = [
@@ -130,6 +134,11 @@ def test_the_downloadable_urcap_is_built_from_the_current_sources():
     imports = h["Import-Package"].split(",")
     assert not [p for p in imports if p.startswith("java.")]
     assert any(p.startswith("com.ur.urcap.api.domain.userinteraction.robot.movement;") for p in imports)
+    # the toolbar button (0.6.0): in the API since 1.7.0 (PolyScope 5.4), so a required import
+    assert any(p.startswith("com.ur.urcap.api.contribution.toolbar.swing;") for p in imports)
+    assert not any("toolbar" in p and "optional" in p for p in imports)
+    for cls in ("ToolbarService", "ToolbarContribution", "Logo", "FeedPoller"):
+        assert f"com/nickarmenta/perceptronic/{cls}.class" in bundle["names"], cls
     assert bundle["names"][:2] == ["META-INF/", "META-INF/MANIFEST.MF"]
     activator = props["Bundle-Activator"].replace(".", "/") + ".class"
     assert activator in bundle["names"]
@@ -167,7 +176,7 @@ def test_package_reports_a_missing_sdk_clearly(tmp_path):
 # -- the Java client, under a JDK -----------------------------------------------------------
 
 HARNESS = r"""
-package com.olympuscontrols.realsensepilot;
+package com.nickarmenta.perceptronic;
 
 import java.util.*;
 
@@ -324,6 +333,78 @@ public class Harness {
                 out = Cockpit.explain(e, a[2]);
                 break;
             }
+            case "svg": out = Logo.SVG; break;
+            case "logo": {
+                // the mark at the toolbar's size: badge pixels, white glyph pixels, clear corners
+                java.awt.image.BufferedImage img =
+                        Logo.image(Integer.parseInt(a[1]), java.awt.Color.WHITE, Ui.ACCENT);
+                int white = 0, badge = 0, clear = 0;
+                for (int y = 0; y < img.getHeight(); y++) {
+                    for (int x = 0; x < img.getWidth(); x++) {
+                        int p = img.getRGB(x, y);
+                        if ((p >>> 24) < 16) clear++;
+                        else if ((p & 0xffffff) == 0xffffff) white++;
+                        else badge++;
+                    }
+                }
+                Map<String, Object> m = new LinkedHashMap<String, Object>();
+                m.put("white", white); m.put("badge", badge); m.put("clear", clear);
+                m.put("corner_clear", (img.getRGB(0, 0) >>> 24) < 16);
+                m.put("size", img.getWidth());
+                // a plain glyph on nothing: only its ink is opaque
+                java.awt.image.BufferedImage glyph = Logo.image(64, java.awt.Color.BLACK, null);
+                int ink = 0;
+                for (int y = 0; y < 64; y++) {
+                    for (int x = 0; x < 64; x++) if ((glyph.getRGB(x, y) >>> 24) > 200) ink++;
+                }
+                m.put("glyph_ink", ink);
+                m.put("lens", (glyph.getRGB(36, 24) >>> 24) > 200);      // the dot in the bowl
+                m.put("bowl_hole", (glyph.getRGB(36, 16) >>> 24) < 16);   // between dot and bowl
+                m.put("stem", (glyph.getRGB(22, 46) >>> 24) > 200);
+                out = m;
+                break;
+            }
+            case "poll": {
+                // FeedPoller against a cockpit: until `want` frames or 6 s; every callback in order
+                final List<Object> events = new ArrayList<Object>();
+                final int want = Integer.parseInt(a[2]);
+                final Object lock = new Object();
+                FeedPoller p = new FeedPoller(new Cockpit(a[1]), new FeedPoller.Listener() {
+                    public void frame(java.awt.image.BufferedImage image, String fps) {
+                        synchronized (lock) {
+                            events.add("frame " + image.getWidth() + "x" + image.getHeight() + " fps=" + fps);
+                            lock.notifyAll();
+                        }
+                    }
+                    public void live(String base) { synchronized (lock) { events.add("live " + base); } }
+                    public void waiting(String why) {
+                        synchronized (lock) { events.add("waiting"); lock.notifyAll(); }
+                    }
+                    public void failed(String why) {
+                        synchronized (lock) { events.add("failed " + why.split("\\n")[0]); lock.notifyAll(); }
+                    }
+                });
+                p.start("poll-test");
+                long until = System.currentTimeMillis() + 6000;
+                synchronized (lock) {
+                    while (System.currentTimeMillis() < until) {
+                        int frames = 0;
+                        for (Object e : events) if (e.toString().startsWith("frame")) frames++;
+                        if (frames >= want) break;
+                        if (want == 0 && !events.isEmpty()) break;
+                        lock.wait(200);
+                    }
+                }
+                boolean wasRunning = p.running();
+                p.stop();
+                Thread.sleep(300);
+                Map<String, Object> m = new LinkedHashMap<String, Object>();
+                synchronized (lock) { m.put("events", new ArrayList<Object>(events)); }
+                m.put("was_running", wasRunning);
+                m.put("stopped", !p.running());
+                out = m;
+                break;
+            }
             case "color": {
                 Cockpit.Frame f = new Cockpit(a[1]).colorPng(Long.parseLong(a[2]), 500);
                 Map<String, Object> m = new LinkedHashMap<String, Object>();
@@ -356,7 +437,7 @@ def java_client(tmp_path_factory):
     if not JAVAC:
         pytest.skip("javac is not installed")
     root = tmp_path_factory.mktemp("java")
-    pkg = root / "src" / "com" / "olympuscontrols" / "realsensepilot"
+    pkg = root / "src" / "com" / "nickarmenta" / "perceptronic"
     pkg.mkdir(parents=True)
     (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
     for name in PURE_JAVA:
@@ -381,7 +462,7 @@ def java_client(tmp_path_factory):
 
     def run(*args: str):
         proc = subprocess.run(
-            ["java", "-cp", str(classes), "com.olympuscontrols.realsensepilot.Harness", *args],
+            ["java", "-cp", str(classes), "com.nickarmenta.perceptronic.Harness", *args],
             capture_output=True,
             timeout=60,
         )
@@ -574,3 +655,50 @@ def test_release_check_cli_prints_json_or_fails_with_the_reason(capsys):
     assert json.loads(capsys.readouterr().out)["version"] == version
     assert urcap5.main(["release-check", "urcap5-v9.9.9", "--src", str(SRC), "--dist", str(DIST.parent)]) == 1
     assert "Bundle-Version=" in capsys.readouterr().err
+
+
+# -- the mark and the feed poller (0.6.0) ---------------------------------------------------
+
+
+def test_the_logo_java_carries_the_svg_the_docs_and_polyscope_x_use(java_client):
+    """One glyph everywhere: ``urcap/perceptronic.svg`` (the README's mark), the PolyScope X
+    node's icon, and the Java constant next to the Java2D drawing of the same path."""
+    svg = SVG.read_text(encoding="utf-8")
+    assert java_client("svg") == svg
+    px_icon = (
+        ROOT / "urcap" / "perceptronic" / "perceptronic-frontend" / "assets" / "icons" / "perceptronic.svg"
+    )
+    assert px_icon.read_text(encoding="utf-8") == svg
+    assert 'd="M22 54V10h14a14 14 0 0 1 0 28H22"' in svg and 'cx="36" cy="24" r="5"' in svg
+
+
+@pytest.mark.parametrize("size", [24, 30, 64])
+def test_the_logo_renders_a_p_with_a_lens_on_a_badge(java_client, size):
+    got = java_client("logo", str(size))
+    assert got["size"] == size
+    # a rounded badge: transparent corners, mostly badge, a readable share of white glyph
+    assert got["corner_clear"] is True and got["clear"] > 0
+    assert got["badge"] > got["white"] > 0.08 * size * size
+    # the plain glyph: stem where the SVG's stem is, the lens dot filled, a hole between dot and bowl
+    assert got["stem"] and got["lens"] and got["bowl_hole"]
+    assert 0.15 * 64 * 64 < got["glyph_ink"] < 0.45 * 64 * 64
+
+
+def test_feed_poller_streams_frames_and_stops(java_client, cockpit):
+    """Against the real cockpit (a synthetic camera): frames arrive in sequence order with
+    the fps header, `live` is announced once on the first frame, and stop() ends the thread."""
+    got = java_client("poll", cockpit, "3")
+    frames = [e for e in got["events"] if e.startswith("frame ")]
+    assert len(frames) >= 3, got
+    assert re.fullmatch(r"frame \d+x\d+ fps=\d+(\.\d+)?", frames[0]), frames[0]  # its size + X-Fps
+    live = [e for e in got["events"] if e.startswith("live ")]
+    assert live == [f"live http://{cockpit}"], got["events"]  # once, as Cockpit.base spells it
+    assert got["events"].index(live[0]) == 1  # right after the first frame
+    assert got["was_running"] and got["stopped"]
+
+
+def test_feed_poller_explains_a_dead_cockpit_and_keeps_going(java_client):
+    got = java_client("poll", "http://127.0.0.1:9", "0")  # port 9: nothing listens
+    assert got["events"], got
+    assert got["events"][0].startswith("failed nothing answers at http://127.0.0.1:9"), got["events"]
+    assert got["was_running"] and got["stopped"]

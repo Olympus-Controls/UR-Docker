@@ -39,10 +39,10 @@ maven-bundle-plugin; this does the same steps with ``javac`` / ``jdeps`` and
   Settings → System → URCaps → ``+``.
 
     python3 urcap/urcap5.py sdk
-    python3 urcap/urcap5.py package urcap/realsense-pilot-ps5 --out urcap/dist
+    python3 urcap/urcap5.py package urcap/perceptronic-ps5 --out urcap/dist
     python3 urcap/urcap5.py sdk --image 5.12.8 && \
         python3 urcap/urcap5.py check --sdk target/urcap5-sdk/5.12.8
-    python3 urcap/urcap5.py install urcap/dist/realsense-pilot-ps5-0.5.0.urcap \
+    python3 urcap/urcap5.py install urcap/dist/perceptronic-ps5-0.5.0.urcap \
         --container ur-utils-ursim-e-ur3e
 """
 
@@ -680,9 +680,9 @@ def check(src: str | Path, sdk_dir: Path, dist: Path, version: str | None = None
 
 
 def dist_name(props: dict[str, str]) -> str:
-    """The jar's file name for these bundle properties: ``realsense-pilot-ps5-0.5.0.urcap``."""
+    """The jar's file name for these bundle properties: ``perceptronic-ps5-0.5.0.urcap``."""
     artifact = props["Bundle-SymbolicName"].rpartition(".")[2]
-    name = "realsense-pilot-ps5" if artifact == "realsensepilot" else artifact
+    name = f"{artifact}-ps5"
     return f"{name}-{props['Bundle-Version']}.urcap"
 
 
@@ -881,7 +881,7 @@ def main(argv: list[str] | None = None) -> int:
     sd.add_argument(
         "--image", action="append", help="image or tag (repeatable); default: what the build needs"
     )
-    sd.add_argument("--src", default="urcap/realsense-pilot-ps5")
+    sd.add_argument("--src", default="urcap/perceptronic-ps5")
     sd.add_argument("--source", choices=("registry", "docker"), default="registry")
     sd.add_argument("--dir", help="where to put them (one --image only); default target/urcap5-sdk/<tag>")
     pk = sub.add_parser("package", help="build SRC into a .urcap")
@@ -889,7 +889,7 @@ def main(argv: list[str] | None = None) -> int:
     pk.add_argument("--out", default="urcap/dist")
     ck = sub.add_parser("check", help="does the URCap work with the PolyScope whose API jars are in --sdk")
     ck.add_argument("--sdk", required=True, help="a directory `urcap5.py sdk` wrote")
-    ck.add_argument("--src", default="urcap/realsense-pilot-ps5")
+    ck.add_argument("--src", default="urcap/perceptronic-ps5")
     ck.add_argument("--dist", help="the built jar (default: the committed one for this version)")
     ck.add_argument("--version", help="the PolyScope version (default: the image tag)")
     cj = sub.add_parser("compare", help="is a rebuilt jar the committed one (entries, bytes, class members)")
@@ -897,7 +897,7 @@ def main(argv: list[str] | None = None) -> int:
     cj.add_argument("committed", type=Path)
     rc = sub.add_parser("release-check", help="check a urcap5-v<version> tag against the committed jar")
     rc.add_argument("tag")
-    rc.add_argument("--src", default="urcap/realsense-pilot-ps5")
+    rc.add_argument("--src", default="urcap/perceptronic-ps5")
     rc.add_argument("--dist", default="urcap/dist")
     ins = sub.add_parser("install", help="install a .urcap into a running e-Series URSim container")
     ins.add_argument("file")

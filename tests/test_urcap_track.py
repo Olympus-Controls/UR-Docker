@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "urcap"))
 import track  # noqa: E402
 
-FRONTEND = ROOT / "urcap" / "realsense-pilot" / "realsense-pilot-frontend"
+FRONTEND = ROOT / "urcap" / "perceptronic" / "perceptronic-frontend"
 
 
 # -- fixtures: a synthetic UR ---------------------------------------------------------------------
@@ -566,7 +566,7 @@ def test_api_surface_covers_every_call_the_urcap_makes():
     """The list is only a gate if it is complete: every service member main.js
     touches and every behavior the worker implements must be in it."""
     main_js = (FRONTEND / "main.js").read_text(encoding="utf-8")
-    worker = (FRONTEND / "realsense-pilot-node.worker.js").read_text(encoding="utf-8")
+    worker = (FRONTEND / "perceptronic-node.worker.js").read_text(encoding="utf-8")
     surface = track.API_SURFACE
     for m in re.finditer(r"\brps\.(\w+)", main_js):
         assert m.group(1) in surface["RobotPositionService"], m.group(0)
@@ -587,11 +587,11 @@ def test_api_surface_covers_every_call_the_urcap_makes():
 
 
 def test_read_yaml_reads_the_real_manifest():
-    manifest = track.read_yaml((ROOT / "urcap/realsense-pilot/manifest.yaml").read_text(encoding="utf-8"))
-    assert manifest["metadata"]["vendorID"] == "olympus-controls"
-    assert manifest["metadata"]["version"] == "0.1.0"
+    manifest = track.read_yaml((ROOT / "urcap/perceptronic/manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["metadata"]["vendorID"] == "nickarmenta"
+    assert manifest["metadata"]["version"] == "0.2.0"
     assert manifest["artifacts"]["webArchives"] == [
-        {"id": "realsense-pilot-frontend", "folder": "realsense-pilot-frontend"}
+        {"id": "perceptronic-frontend", "folder": "perceptronic-frontend"}
     ]
     assert track.validate(manifest, SPEC) == []
 
@@ -632,7 +632,7 @@ def test_read_yaml_fuzz_raises_only_trackerror():
     ],
 )
 def test_validate_catches_what_a_new_spec_would_reject(mutate, expect):
-    manifest = track.read_yaml((ROOT / "urcap/realsense-pilot/manifest.yaml").read_text(encoding="utf-8"))
+    manifest = track.read_yaml((ROOT / "urcap/perceptronic/manifest.yaml").read_text(encoding="utf-8"))
     mutate(manifest)
     assert any(expect in e for e in track.validate(manifest, SPEC))
 

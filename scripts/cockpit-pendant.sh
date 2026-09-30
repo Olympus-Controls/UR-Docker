@@ -20,5 +20,5 @@ iface="$(route -n get "${robot:-192.168.3.3}" 2>/dev/null | awk '/interface:/{pr
 ip="$(ipconfig getifaddr "${iface:-en0}" 2>/dev/null || true)"
 
 echo "cell $cell · robot ${robot:-?} · this Mac ${ip:-?} (${iface:-?})"
-echo "In the pendant's RealSense Pilot node, set Cockpit to:  http://${ip:-<this-mac-ip>}:7621"
+echo "In the pendant's Perceptronic node, set Cockpit to:  http://${ip:-<this-mac-ip>}:7621"
 exec sudo .venv/bin/perceptronics --cell "$cell" gui --rs-lean --bind 0.0.0.0 --cors "$cors"

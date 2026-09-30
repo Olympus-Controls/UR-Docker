@@ -3,9 +3,9 @@
 A small arm64 computer that owns the RealSense D435 and runs the cockpit headless as
 a systemd service. The robot's PolyScope 5 URCap talks to it over Ethernet:
 
-- **RealSense Pilot** (Installation node) calls the cockpit's HTTP API on **:7621**,
+- **Perceptronic** (Installation node) calls the cockpit's HTTP API on **:7621**,
   including `GET /api/color.png` for the feed on the pendant;
-- **RealSense Pick** (program node) runs URScript that opens a socket to the pick server
+- **Perceptronic Pick** (program node) runs URScript that opens a socket to the pick server
   on **:7622**.
 
 Nothing here needs a desktop, a GPU, Docker or a network connection at runtime. The
@@ -19,7 +19,7 @@ runtime is stdlib-only Python plus librealsense, which the installer builds from
 | OS | **Debian arm64** (the target — Nick, 2026-09-28), bookworm (12) or trixie (13), minimal, no desktop; Raspberry Pi OS Lite (64-bit) is Debian and works the same. A RevPi Connect 5 gets a Debian image, not RevPi OS. Needs Python ≥ 3.10 (bookworm has 3.11, trixie 3.13) and systemd. |
 | Camera | One Intel RealSense **D435** (USB ID `8086:0b07`), connected **straight to a USB 3 port** (blue) with a short cable, no hub. |
 | Network | Ethernet on the robot's subnet. A static address is easiest to type into the pendant. |
-| Robot | UR e-Series on PolyScope 5 with the RealSense Pilot URCap (`urcap/dist/realsense-pilot-ps5-*.urcap`, see `urcap/realsense-pilot-ps5/README.md`). |
+| Robot | UR e-Series on PolyScope 5 with the Perceptronic URCap (`urcap/dist/perceptronic-ps5-*.urcap`, see `urcap/perceptronic-ps5/README.md`). |
 
 **Power:** the D435 is powered from the USB port. Raspberry Pi's documentation says a
 Pi 5 limits the total USB current unless it runs on the 5 V / 5 A supply (or
@@ -73,7 +73,7 @@ What `install.sh` does, idempotently:
 
 ## 3. Point the pendant at it
 
-On the pendant: **Installation** tab → **URCaps** → **RealSense Pilot** → **Cockpit**:
+On the pendant: **Installation** tab → **URCaps** → **Perceptronic** → **Cockpit**:
 type `http://192.168.3.10:7621` (the PC's address) → **Save**. The Pick node uses the
 same host. It learns the pick port (:7622) from the cockpit. No `--cors` is needed,
 because the node is Java on the controller, not a web page.
@@ -108,7 +108,7 @@ in `/var/lib/perceptronics`, librealsense and the user. Add `--purge` to remove 
 | --- | --- | --- | --- |
 | 22/tcp | in | SSH | anyone (key auth; tighten in `nftables.conf` if the PC is on a wider network) |
 | 7621/tcp | in | cockpit HTTP API (`perceptronics gui --port`), incl. `/api/color.png` | cell subnet only |
-| 7622/tcp | in | pick server for the RealSense Pick node (`--pick-port`) | cell subnet only |
+| 7622/tcp | in | pick server for the Perceptronic Pick node (`--pick-port`) | cell subnet only |
 | 29999, 30001, 30004/tcp | out | robot Dashboard, Primary, RTDE (`UR_*_PORT` in `cell.env`) | — |
 
 Both inbound services are **unauthenticated** (a trusted cell network, like the robot's
