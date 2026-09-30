@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """The PolyScope X URCap on the newest PolyScope X releases — stdlib + Docker + the e2e.
 
-For each release in :data:`RELEASES` (the ten newest PolyScope X release tags UR publishes
-a ``universalrobots/ursim_polyscopex`` image for — a release is ``10.<minor>.<patch>``
-with no ``-preview`` / ``-beta`` suffix; every tag is published for amd64 and arm64), run
+For each release in :data:`RELEASES` (the newest PolyScope X release tags UR publishes a
+``universalrobots/ursim_polyscopex`` image for — a release is ``10.<minor>.<patch>`` with
+no ``-preview`` / ``-beta`` suffix; every tag is published for amd64 and arm64 — up to
+:data:`KEEP` of them and none older than :data:`FLOOR`, the oldest release the URCap
+supports), run
 ``urcap/e2e.py`` against that image: boot it, install the committed package over the
 urservice endpoint, and in headless Chromium load the application node (feed, hover,
 click → segment, PolyScope's kinematics services) and the Pick program node (toolbox →
@@ -12,7 +14,7 @@ One JSON summary per release; ``--rmi`` removes each image after its run (they a
 GB each and a sim's inner Docker is ~12 GB more, which ``e2e.py`` frees with ``rm -v``).
 
 ``check-tags`` compares RELEASES with Docker Hub: a newer release UR has published that the
-list lacks is drift (the list keeps the ten newest; ``list`` prints it as JSON for CI).
+list lacks is drift (``list`` prints the list as JSON for CI).
 
     python3 urcap/psx_matrix.py run --version 10.14.0 --artifacts psx-artifacts
     python3 urcap/psx_matrix.py run --version all --rmi
@@ -37,9 +39,13 @@ E2E = REPO / "urcap" / "e2e.py"
 IMAGE = "universalrobots/ursim_polyscopex"
 HUB_TAGS = f"https://hub.docker.com/v2/repositories/{IMAGE}/tags?page_size=100"
 KEEP = 10
+# The oldest PolyScope X the URCap is built for. 10.6 and 10.7 were dropped 2026-09-30 (Nick):
+# their simulators' own web app does not start on GitHub's amd64 runners, and nobody will
+# run them — the floor moves up, never down.
+FLOOR = "10.8.0"
 
-# The ten newest PolyScope X releases with a simulator image (Docker Hub, 2026-09-29),
-# newest first. `check-tags` says when UR has published a newer one.
+# The newest PolyScope X releases with a simulator image (Docker Hub, 2026-09-30), newest
+# first, none older than FLOOR. `check-tags` says when UR has published a newer one.
 RELEASES: list[str] = [
     "10.14.0",
     "10.13.0",
@@ -49,15 +55,7 @@ RELEASES: list[str] = [
     "10.10.0",
     "10.9.0",
     "10.8.0",
-    "10.7.0",
-    "10.6.0",
 ]
-
-# Releases whose simulator's own web app fails to start on GitHub's amd64 runners ("An
-# error occurred while starting the application … no elements in sequence", before the
-# URCap is opened; 2026-09-30, three runs) while they pass on Apple silicon: CI runs them
-# but does not go red on them (`list` marks them experimental).
-RUNNER_FLAKY: frozenset[str] = frozenset({"10.6.0", "10.7.0"})
 
 _RELEASE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -71,9 +69,9 @@ def release_key(tag: str) -> tuple[int, int, int] | None:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
-def newest_releases(tags: list[str], keep: int = KEEP) -> list[str]:
-    """The ``keep`` newest release tags, newest first."""
-    rel = [t for t in tags if release_key(t)]
+def newest_releases(tags: list[str], keep: int = KEEP, floor: str = FLOOR) -> list[str]:
+    """The ``keep`` newest release tags not older than ``floor``, newest first."""
+    rel = [t for t in tags if release_key(t) and release_key(t) >= release_key(floor)]
     return sorted(set(rel), key=release_key, reverse=True)[:keep]
 
 
@@ -161,11 +159,11 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--artifacts", default="target/psx-matrix", help="per-release logs, reports, screenshots")
     rn.add_argument("--rmi", action="store_true", help="remove each image after its run")
     rn.add_argument("--docker", default=os.environ.get("DOCKER", "docker"), help=argparse.SUPPRESS)
-    sub.add_parser("list", help="the releases as JSON for CI's matrix ([{release, experimental}])")
+    sub.add_parser("list", help="the releases as JSON (CI's matrix)")
     sub.add_parser("check-tags", help="RELEASES vs Docker Hub; exit 1 on drift")
     args = ap.parse_args(argv)
     if args.cmd == "list":
-        print(json.dumps([{"release": r, "experimental": r in RUNNER_FLAKY} for r in RELEASES]))
+        print(json.dumps(RELEASES))
         return 0
     if args.cmd == "check-tags":
         drift = tag_drift(fetch_tags(), RELEASES)

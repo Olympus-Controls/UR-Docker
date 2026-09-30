@@ -37,10 +37,11 @@ HUB = [
 ]
 
 
-def test_releases_are_ten_distinct_release_tags_newest_first():
+def test_releases_are_distinct_release_tags_newest_first_from_the_floor():
     keys = [psx_matrix.release_key(t) for t in psx_matrix.RELEASES]
-    assert len(psx_matrix.RELEASES) == psx_matrix.KEEP and all(keys)
+    assert 0 < len(psx_matrix.RELEASES) <= psx_matrix.KEEP and all(keys)
     assert keys == sorted(set(keys), reverse=True)
+    assert keys[-1] == psx_matrix.release_key(psx_matrix.FLOOR)
 
 
 def test_only_plain_versions_are_releases():
@@ -52,6 +53,8 @@ def test_only_plain_versions_are_releases():
 def test_newest_releases_from_docker_hubs_tags_is_the_list():
     assert psx_matrix.newest_releases(HUB) == psx_matrix.RELEASES
     assert psx_matrix.newest_releases(HUB, keep=3) == ["10.14.0", "10.13.0", "10.12.1"]
+    assert psx_matrix.newest_releases(HUB, floor="10.6.0") == psx_matrix.RELEASES + ["10.7.0", "10.6.0"]
+    assert "10.7.0" not in psx_matrix.newest_releases(HUB)  # below the floor, however many are kept
 
 
 def test_drift_names_a_newer_release_and_a_vanished_one():
@@ -60,8 +63,8 @@ def test_drift_names_a_newer_release_and_a_vanished_one():
     assert newer == ["PolyScope X 10.15.0 exists on Docker Hub: add it (newest first) and drop the oldest"]
     gone = psx_matrix.tag_drift([t for t in HUB if t != "10.9.0"], psx_matrix.RELEASES)
     assert gone == ["10.9.0 is not on Docker Hub any more"]
-    # an older release that fell off the ten is not drift
-    assert psx_matrix.tag_drift(HUB, psx_matrix.RELEASES[:9] + ["10.5.0"]) == []
+    # an older release that fell off the list is not drift
+    assert psx_matrix.tag_drift(HUB, psx_matrix.RELEASES[:-1]) == []
 
 
 def test_the_e2es_check_lines_are_read_back():
@@ -82,10 +85,7 @@ def test_the_e2es_check_lines_are_read_back():
 
 def test_list_prints_the_releases_as_json(capsys):
     assert psx_matrix.main(["list"]) == 0
-    rows = json.loads(capsys.readouterr().out)
-    assert [r["release"] for r in rows] == psx_matrix.RELEASES
-    assert {r["release"] for r in rows if r["experimental"]} == set(psx_matrix.RUNNER_FLAKY)
-    assert psx_matrix.RUNNER_FLAKY <= set(psx_matrix.RELEASES)
+    assert json.loads(capsys.readouterr().out) == psx_matrix.RELEASES
 
 
 def test_run_refuses_a_release_that_is_not_listed(capsys):
@@ -93,6 +93,6 @@ def test_run_refuses_a_release_that_is_not_listed(capsys):
     assert "not in RELEASES" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("keep", [1, 5, 10])
+@pytest.mark.parametrize("keep", [1, 5, 8])
 def test_keep_is_honoured(keep):
     assert len(psx_matrix.newest_releases(HUB, keep=keep)) == keep
