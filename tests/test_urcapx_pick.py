@@ -85,6 +85,18 @@ if (req.cmd === "pick") {
   out.reach = P.modelReach(req.model); out.limits = P.reachLimits(req.model, req.inner, req.outer);
 } else if (req.cmd === "pose_trans") {
   out.pose = P.poseTrans(req.a, req.b); out.inv = P.poseInv(req.a);
+} else if (req.cmd === "grid") {
+  out.grid = P.orderGrid(req.first, req.rows, req.cols, req.nrows);
+} else if (req.cmd === "corners") {
+  out.corners = P.areaCorners(req.plane);
+} else if (req.cmd === "svg") {
+  out.svgs = {
+    tile: P.svgOrderTile(req.first || "LR", req.rows || "FB", !!req.selected),
+    part: P.svgPart(req.l, req.w, req.h),
+    approach: P.svgApproach(req.approach, req.grip, req.lift, req.h, Math.min(req.l, req.w), req.stroke),
+    map: P.svgReachMap(req.baseR, req.minR, req.maxR,
+      (req.areas || []).map((a) => ({ name: a.name, corners: P.areaCorners(a.plane) })), 0),
+  };
 } else if (req.cmd === "misc") {
   out.reasons = P.REASONS.map((r) => r[0]);
   out.numbers = P.NUMBERS;
@@ -439,6 +451,120 @@ def test_settings_read_the_application_node_the_way_the_pick_node_does():
     assert "camera computer's address" in out["problem"]
     out = ask(cmd="settings", params=params, app=None)
     assert "camera computer's address" in out["problem"]
+
+
+# -- the drawings (the PolyScope 5 node's Diagrams, as SVG) --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "order",
+    [(a, b) for a in ("LR", "RL") for b in ("FB", "BF")]
+    + [(b, a) for a in ("LR", "RL") for b in ("FB", "BF")],
+)
+def test_an_order_tile_numbers_a_grid_the_way_the_detector_will(order):
+    from perceptronics.synthscene import Box, camera_looking_down, render_depth
+    from perceptronics.volume import find_parts
+
+    W, H = 320, 180
+    K = {"fx": 230.0, "fy": 230.0, "ppx": W / 2, "ppy": H / 2}
+    T = camera_looking_down(0.35, 0.0, 0.12)  # image right = base +X, image down = base -Y
+    boxes = [Box(0.28 + 0.07 * c, 0.035 - 0.07 * r, 0.05, 0.035, 0.03) for r in range(2) for c in range(3)]
+    sc = find_parts(
+        W,
+        H,
+        render_depth(W, H, K, T, boxes, table_z=-0.27),
+        0.001,
+        K,
+        T,
+        spec=PartSpec.from_mm(50, 35, 30),
+        order=order,
+    )
+    got = [[0] * 3 for _ in range(2)]
+    for p in sc.parts:
+        c = round((p.centre[0] - 0.28) / 0.07)
+        r = round((0.035 - p.centre[1]) / 0.07)  # row 0 = the top of the picture
+        got[r][c] = p.order
+    assert got == ask(cmd="grid", first=order[0], rows=order[1], cols=3, nrows=2)["grid"]
+
+
+@settings(max_examples=30, deadline=None)
+@given(
+    ox=st.floats(-0.5, 0.5),
+    oy=st.floats(-0.5, 0.5),
+    heading=st.floats(-math.pi, math.pi),
+    sx=st.floats(0.03, 0.6),
+    sy=st.floats(-0.6, 0.6),
+)
+def test_area_corners_are_the_taught_planes_corners(ox, oy, heading, sx, sy):
+    plane = [ox, oy, -0.27, 0.0, 0.0, heading, sx, sy]
+    corners = ask(cmd="corners", plane=plane)["corners"]
+    surf = Surface.from_pose(plane[:6], (sx, sy))
+    want = [
+        [ox, oy],
+        [ox + sx * surf.x_axis[0], oy + sx * surf.x_axis[1]],
+        [ox + sx * surf.x_axis[0] + sy * surf.y_axis[0], oy + sx * surf.x_axis[1] + sy * surf.y_axis[1]],
+        [ox + sy * surf.y_axis[0], oy + sy * surf.y_axis[1]],
+    ]
+    for got, exp in zip(corners, want, strict=True):
+        assert got == pytest.approx(exp, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {
+            "l": 50,
+            "w": 30,
+            "h": 30,
+            "approach": 25,
+            "grip": 15,
+            "lift": 60,
+            "stroke": 50,
+            "baseR": 0.064,
+            "minR": 0.214,
+            "maxR": 0.35,
+        },
+        {
+            "l": 500,
+            "w": 5,
+            "h": 500,
+            "approach": 200,
+            "grip": 60,
+            "lift": 300,
+            "stroke": 300,
+            "baseR": 0.095,
+            "minR": 0.245,
+            "maxR": 0.0,
+            "selected": True,
+        },
+        {
+            "l": 5,
+            "w": 5,
+            "h": 5,
+            "approach": 5,
+            "grip": 0,
+            "lift": 5,
+            "stroke": 10,
+            "baseR": 0.064,
+            "minR": 0.214,
+            "maxR": 0.35,
+            "areas": [{"name": "A & <B>", "plane": [0.2, -0.1, -0.27, 0, 0, 0.3, 0.3, 0.2]}],
+        },
+    ],
+)
+def test_every_drawing_is_well_formed_svg(kw):
+    import xml.etree.ElementTree as ET
+
+    svgs = ask(cmd="svg", **kw)["svgs"]
+    assert set(svgs) == {"tile", "part", "approach", "map"}
+    for name, svg in svgs.items():
+        root = ET.fromstring(svg)
+        assert root.tag.endswith("svg") and root.get("viewBox"), name
+        assert "NaN" not in svg and "undefined" not in svg, name
+    texts = [t.text for t in ET.fromstring(svgs["part"]).iter() if t.tag.endswith("text")]
+    assert {str(max(kw["l"], kw["w"])), str(min(kw["l"], kw["w"])), str(kw["h"])} <= set(texts)
+    if kw.get("areas"):
+        assert "A &amp; &lt;B&gt;" in svgs["map"]  # names are escaped, not injected
 
 
 def test_cockpit_shorthand_and_node_ids():

@@ -72,8 +72,12 @@
     .pk .points li.sel { background: #eef2f7; }
     .pk .points li .n { width: 22px; height: 22px; border-radius: 50%; background: #1f5fbf; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; flex: 0 0 auto; }
     .pk .points li .area { flex: 1; color: #5b6b7d; font-size: 12.5px; }
-    .pk .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-    .pk .tiles button { padding: 6px 4px; font-size: 12px; }
+    .pk .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 84px)); gap: 6px; }
+    .pk .tiles button { padding: 0; border: 0; background: none; line-height: 0; }
+    .pk .tiles button svg { width: 100%; height: auto; }
+    .pk .withart { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; }
+    .pk .withart .art { grid-row: 1 / span 6; }
+    .pk .withart .art svg { display: block; }
     .pk .status { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: #eef2f7; white-space: pre-wrap; }
     .pk .status.warn { background: #fff4d6; } .pk .status.err { background: #fde2e2; } .pk .status.ok { background: #e3f5ea; }
     .pk .num { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; padding: 4px 0; border-bottom: 1px solid #eef2f7; }
@@ -423,8 +427,10 @@
           <div data-pk="options" class="hidden">
             <div class="cols">
               <div class="side">
-                <div class="card" data-pk="card-part"><h3>Part <small>as it lies</small></h3></div>
-                <div class="card" data-pk="card-approach"><h3>Approach</h3></div>
+                <div class="card"><h3>Part <small>as it lies</small></h3>
+                  <div class="withart"><div data-pk="card-part"></div><div class="art" data-pk="part-art"></div></div></div>
+                <div class="card"><h3>Approach</h3>
+                  <div class="withart"><div data-pk="card-approach"></div><div class="art" data-pk="approach-art"></div></div></div>
               </div>
               <div class="side">
                 <div class="card" data-pk="card-gripper">
@@ -458,8 +464,8 @@
         const b = document.createElement("button");
         b.dataset.first = first;
         b.dataset.rows = rows;
-        b.textContent = `${first} · ${rows}`;
         b.title = P.orderText(first, rows);
+        b.setAttribute("aria-label", P.orderText(first, rows));
         b.addEventListener("click", () => { this.params().orderFirst = first; this.params().orderRows = rows; this.save(); this.sync(); });
         tiles.appendChild(b);
       });
@@ -551,8 +557,13 @@
       this.$("add").disabled = (p.points || []).length >= P.MAX_POINTS;
       // order
       this.$("tiles").querySelectorAll("button").forEach((b) => {
-        b.classList.toggle("on", b.dataset.first === st.orderFirst && b.dataset.rows === st.orderRows);
+        const on = b.dataset.first === st.orderFirst && b.dataset.rows === st.orderRows;
+        if (b.dataset.on !== String(on)) { b.dataset.on = String(on); b.innerHTML = P.svgOrderTile(b.dataset.first, b.dataset.rows, on, 62, 50); }
       });
+      // the drawings that explain the numbers as they change
+      const v = st.values;
+      this.$("part-art").innerHTML = P.svgPart(v.partLengthMm, v.partWidthMm, v.partHeightMm, 140, 140);
+      this.$("approach-art").innerHTML = P.svgApproach(v.approachMm, v.gripBelowTopMm, v.liftMm, v.partHeightMm, Math.min(v.partLengthMm, v.partWidthMm), v.strokeMm, 150, 170);
       this.$("order-text").textContent = P.orderText(st.orderFirst, st.orderRows);
       // options
       this.querySelectorAll(".num").forEach((row) => {

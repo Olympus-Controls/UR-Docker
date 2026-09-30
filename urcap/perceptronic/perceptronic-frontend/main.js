@@ -47,6 +47,7 @@
     .rsp .area .plane { grid-column: 1 / -1; font-size: 12px; color: #5b6b7d; }
     .rsp .area .plane.warn { color: #9a6b00; }
     .rsp .reach-card input { padding: 5px 8px; border: 1px solid #b9c3cf; border-radius: 6px; font: inherit; width: 64px; text-align: right; }
+    .rsp .reach-map { margin: 4px 0 8px; } .rsp .reach-map svg { display: block; max-width: 100%; height: auto; }
   `;
 
   const ARCHIVE_PATH = "/nickarmenta/perceptronic/perceptronic-frontend/";
@@ -299,6 +300,7 @@
             </div>
             <div class="card reach-card" data-rsp="reach-card">
               <h3>Reach <small data-rsp="reach-model"></small></h3>
+              <div class="reach-map" data-rsp="reach-map"></div>
               <div class="row">
                 <label>Tool length <input type="text" inputmode="numeric" data-rsp="tipMm" /> mm</label>
                 <label>Inner margin <input type="text" inputmode="numeric" data-rsp="reachInnerMm" /> mm</label>
@@ -430,6 +432,11 @@
       });
       const model = node.robotModel || "";
       const reach = P.reachLimits(model, node.reachInnerMm, node.reachOuterMm);
+      const mr = P.modelReach(model);
+      // the cell from above: the base, the reach ring, every taught area (the PolyScope 5 node's map)
+      const drawn = areas.map((a, i) => ({ a, pl: P.plane(a.p0, a.p1, a.p2), i })).filter((x) => x.pl)
+        .map((x) => ({ name: x.a.name || `Area ${x.i + 1}`, corners: P.areaCorners(x.pl) }));
+      this.$("reach-map").innerHTML = P.svgReachMap(mr ? mr[0] : 0.064, reach ? reach.min : (mr ? mr[0] : 0.064) + 0.15, reach ? reach.max : 0, drawn, -1, 240, 240);
       this.$("reach-model").textContent = model ? `robot ${model}` : "robot model unknown";
       this.$("reach-text").textContent = reach
         ? `parts are picked between ${(reach.min * 1000).toFixed(0)} mm and ${reach.max ? `${(reach.max * 1000).toFixed(0)} mm` : "any distance"} from the base axis`

@@ -24,7 +24,7 @@ urcap/
       contribution.json                    the applicationNode (tag nickarmenta-perceptronic) + two programNodes
       main.js                              the application node's presenter (a custom element): feed, click → locate, pick areas, reach
       perceptronic-node.worker.js       its behavior worker (node factory / upgrade)
-      pickscript.js                        the Pick node's settings + URScript + pose math (worker, page and tests share it)
+      pickscript.js                        the Pick node's settings + URScript + pose math + the drawings as SVG (worker, page and tests share it)
       pick.js                              the program nodes' presenters: the Pick row + its dialog, the After picture row
       pick-node.worker.js                  the Pick node's behaviors (label, validator, code before/after children)
       after-node.worker.js                 the After picture N node's behaviors
@@ -117,6 +117,10 @@ out of PolyScope 10.13's own bundles (`web-app/main.js`, `web-program-nodes/*`),
   `variableService.createVariable(name, "boolean" | "integer")`; the declaration
   (`{id, name, valueType, _IDENTIFIER}`) is stored in the node, the script writes
   `global <name> = …` (what UR's Assignment node emits for a declaration).
+- **The drawings are the PolyScope 5 node's** (`Diagrams.java`: the order tiles, the part
+  in isometric with the jaws, the approach from the side, the reach map) as SVG strings
+  from `pickscript.js` — pure functions, so the tests hold `orderGrid` to the Python
+  detector's numbering and every drawing to well-formed, escaped SVG.
 - **The URScript the node writes is the PolyScope 5 node's** (`PickScript.java`) —
   `pickscript.js` is its port, `tests/test_urcapx_pick.py` holds it to the Python pick
   server's parser the way `tests/test_urcap5_pick.py` holds the Java. PolyScope X's script

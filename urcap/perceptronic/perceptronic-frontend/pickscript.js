@@ -683,7 +683,130 @@
     return { before: [`if ${v} == ${Math.round(point)}:`], childDepth: 1, after: ["end"] };
   }
 
+  // -- the drawings (the PolyScope 5 node's Diagrams.java, as SVG strings) --------------------------
+
+  const C = { accent: "#1f5fbf", accentSoft: "#e6efff", ink: "#1f2a37", muted: "#5b6b7d", faint: "#c0c8d2", line: "#d5dce5",
+    ok: "#1d9a5a", err: "#d64545", jaw: "#f0a500", card: "#ffffff", bg: "#f4f6f9", grey: "#3b4756" };
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const escXml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const svgOpen = (w, h, extra) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"${extra || ""}>`;
+  const text = (x, y, t, size, color, weight, anchor) =>
+    `<text x="${r1(x)}" y="${r1(y)}" font-size="${size}" font-family="system-ui, sans-serif" font-weight="${weight || "normal"}" fill="${color}" text-anchor="${anchor || "middle"}" dominant-baseline="middle">${escXml(t)}</text>`;
+  const orderKey = (dir, cell) => (dir === "LR" ? cell[0] : dir === "RL" ? -cell[0] : dir === "FB" ? -cell[1] : cell[1]);
+
+  /** The pick number of each cell of a cols × rows grid (row 0 = the top of the picture) for
+   * `first` within a row and `rowsDir` from row to row — perceptronics.volume.order_parts's rule. */
+  function orderGrid(first, rowsDir, cols, rows) {
+    const cells = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) cells.push([c, r]);
+    cells.sort((a, b) => orderKey(rowsDir, a) - orderKey(rowsDir, b) || orderKey(first, a) - orderKey(first, b));
+    const out = Array.from({ length: rows }, () => new Array(cols).fill(0));
+    cells.forEach((cell, i) => { out[cell[1]][cell[0]] = i + 1; });
+    return out;
+  }
+
+  /** One pick-order choice: a 3 × 2 grid of parts with the numbers they'd get, and a path through them. */
+  function svgOrderTile(first, rows, selected, w, h) {
+    w = w || 62; h = h || 50;
+    const grid = orderGrid(first, rows, 3, 2);
+    const at = [];
+    for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) at[grid[r][c]] = [12 + (c * (w - 24)) / 2, 15 + r * (h - 30)];
+    let out = svgOpen(w, h, ` role="img" aria-label="${escXml(orderText(first, rows))}"`);
+    out += `<rect x="1" y="1" width="${w - 3}" height="${h - 3}" rx="12" fill="${selected ? C.accentSoft : C.card}" stroke="${selected ? C.accent : C.line}" stroke-width="${selected ? 2.2 : 1}"/>`;
+    out += `<polyline fill="none" stroke="${selected ? C.accent : C.faint}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" points="${[1, 2, 3, 4, 5, 6].map((i) => `${r1(at[i][0])},${r1(at[i][1])}`).join(" ")}"/>`;
+    for (let i = 1; i <= 6; i++) {
+      const fill = i === 1 ? (selected ? C.accent : C.ink) : selected ? "#7ea6ec" : "#a8b3c0";
+      out += `<circle cx="${r1(at[i][0])}" cy="${r1(at[i][1])}" r="8" fill="${fill}"/>` + text(at[i][0], at[i][1] + 0.5, String(i), 10, "#fff", "bold");
+    }
+    return out + "</svg>";
+  }
+
+  /** The part, drawn in proportion (isometric), with its length, width and height, and the jaws across the width. */
+  function svgPart(lengthMm, widthMm, heightMm, w, h) {
+    w = w || 140; h = h || 140;
+    const l = Math.max(lengthMm, widthMm), wd = Math.min(lengthMm, widthMm), ht = heightMm;
+    const cos30 = Math.cos(Math.PI / 6), sin30 = 0.5;
+    const span = (l + wd) * cos30, tall = ht + (l + wd) * sin30;
+    const k = Math.min((w - 30) / span, (h - 34) / tall);
+    const ox = 15 + wd * cos30 * k, oy = h - 18;
+    const base = [[0, 0], [l, 0], [l, wd], [0, wd]];
+    const bot = base.map(([x, y]) => [ox + (x - y) * cos30 * k, oy - (x + y) * sin30 * k]);
+    const top = bot.map(([x, y]) => [x, y - ht * k]);
+    const poly = (pts, fill) => `<polygon points="${pts.map(([x, y]) => `${r1(x)},${r1(y)}`).join(" ")}" fill="${fill}" stroke="${C.accent}" stroke-width="1.6" stroke-linejoin="round"/>`;
+    let out = svgOpen(w, h, ` role="img" aria-label="the part: ${num(l)} × ${num(wd)} × ${num(ht)} mm"`);
+    out += poly([bot[0], bot[1], top[1], top[0]], "#cfe0fb") + poly([bot[3], bot[0], top[0], top[3]], "#b4cdf5") + poly([top[0], top[1], top[2], top[3]], "#e8f0fd");
+    out += text((bot[0][0] + bot[1][0]) / 2 + 8, (bot[0][1] + bot[1][1]) / 2 + 12, num(l), 11.5, C.ink, "bold");
+    out += text((bot[3][0] + bot[0][0]) / 2 - 10, (bot[3][1] + bot[0][1]) / 2 + 12, num(wd), 11.5, C.ink, "bold");
+    out += text(bot[0][0] + 16, (bot[0][1] + top[0][1]) / 2 + 2, num(ht), 11.5, C.ink, "bold");
+    // the jaws: against the two long faces (the fingers close across the width)
+    const ex = cos30, ey = -sin30, len = l * k * 0.22;
+    const fx = (bot[0][0] + bot[1][0] + top[0][0] + top[1][0]) / 4 + cos30 * 9, fy = (bot[0][1] + bot[1][1] + top[0][1] + top[1][1]) / 4 + sin30 * 9;
+    const bx = (top[2][0] + top[3][0]) / 2 - cos30 * 9, by = (top[2][1] + top[3][1]) / 2 - sin30 * 9 - 4;
+    const jaw = (x, y) => `<line x1="${r1(x - ex * len)}" y1="${r1(y - ey * len)}" x2="${r1(x + ex * len)}" y2="${r1(y + ey * len)}" stroke="${C.jaw}" stroke-width="4.5" stroke-linecap="round"/>`;
+    return out + jaw(fx, fy) + jaw(bx, by) + "</svg>";
+  }
+
+  /** The approach from the side: the table, the part, the open fingers over it, the grip and the lift. */
+  function svgApproach(approachMm, gripMm, liftMm, heightMm, widthMm, strokeMm, w, h) {
+    w = w || 150; h = h || 170;
+    const total = heightMm + Math.max(approachMm, liftMm) + 40;
+    const k = Math.min((h - 26) / total, (w - 80) / Math.max(strokeMm + 20, widthMm + 20));
+    const table = h - 14, cx = w / 2 - 6;
+    const pw = widthMm * k, ph = heightMm * k, topY = table - ph;
+    const tipY = topY - approachMm * k, half = (strokeMm * k) / 2, gripY = topY + gripMm * k, liftY = topY - liftMm * k;
+    let out = svgOpen(w, h, ` role="img" aria-label="approach ${num(approachMm)} mm over the top, grip ${num(gripMm)} mm below it, lift ${num(liftMm)} mm"`);
+    out += `<rect x="0" y="${r1(table)}" width="${w}" height="14" fill="#e6eaf0"/><line x1="0" y1="${r1(table)}" x2="${w}" y2="${r1(table)}" stroke="${C.faint}"/>`;
+    out += `<rect x="${r1(cx - pw / 2)}" y="${r1(topY)}" width="${r1(pw)}" height="${r1(ph)}" fill="#cfe0fb" stroke="${C.accent}"/>`;
+    // fingers, fully open, tips `approach` over the top
+    out += `<rect x="${r1(cx - half - 7)}" y="${r1(tipY - 38)}" width="7" height="38" rx="3" fill="${C.grey}"/>`;
+    out += `<rect x="${r1(cx + half)}" y="${r1(tipY - 38)}" width="7" height="38" rx="3" fill="${C.grey}"/>`;
+    out += `<rect x="${r1(cx - half - 10)}" y="${r1(tipY - 50)}" width="${r1(2 * half + 20)}" height="12" rx="6" fill="${C.grey}"/>`;
+    out += `<line x1="${r1(cx - half - 16)}" y1="${r1(gripY)}" x2="${r1(cx + half + 16)}" y2="${r1(gripY)}" stroke="${C.jaw}" stroke-width="1.6" stroke-dasharray="4 4"/>`;
+    const dx = cx + half + 14;
+    const dim = (y0, y1, t, color) =>
+      `<g stroke="${color}" stroke-width="1.2"><line x1="${r1(dx)}" y1="${r1(y0)}" x2="${r1(dx)}" y2="${r1(y1)}"/><line x1="${r1(dx - 4)}" y1="${r1(y0)}" x2="${r1(dx + 4)}" y2="${r1(y0)}"/><line x1="${r1(dx - 4)}" y1="${r1(y1)}" x2="${r1(dx + 4)}" y2="${r1(y1)}"/></g>` +
+      text(dx + 6, (y0 + y1) / 2, t, 11, color, "bold", "start");
+    out += dim(tipY, topY, num(approachMm), C.accent) + dim(topY, gripY, num(gripMm), "#9a6a00");
+    const ax = cx - half - 18;
+    out += `<line x1="${r1(ax)}" y1="${r1(gripY)}" x2="${r1(ax)}" y2="${r1(liftY)}" stroke="${C.ok}" stroke-width="1.2"/><polygon points="${r1(ax - 5)},${r1(liftY + 8)} ${r1(ax + 5)},${r1(liftY + 8)} ${r1(ax)},${r1(liftY)}" fill="${C.ok}"/>`;
+    out += text(Math.max(2, ax - 12), Math.max(12, liftY - 6), `lift ${num(liftMm)}`, 11, C.ok, "bold", "start");
+    return out + "</svg>";
+  }
+
+  /** The four corners (x, y; m) of a taught area [pose(6), sizeX, sizeY] on the base XY plane. */
+  function areaCorners(pl) {
+    const M = poseToMat(pl.slice(0, 6));
+    const sx = pl[6], sy = pl[7];
+    return [[0, 0], [sx, 0], [sx, sy], [0, sy]].map(([u, v]) => [M[0][3] + u * M[0][0] + v * M[0][1], M[1][3] + u * M[1][0] + v * M[1][1]]);
+  }
+
+  /** The cell from above: the base, the ring the parts may be in (the reach limits), and every
+   * taught pick area — so an area out of reach shows at once. `areas`: [{name, corners: [[x, y] × 4]}]. */
+  function svgReachMap(baseR, minR, maxR, areas, highlight, w, h) {
+    w = w || 240; h = h || 240;
+    let extent = Math.max(maxR > 0 ? maxR : minR * 2, minR, 0.05) * 1.15;
+    (areas || []).forEach((a) => a.corners.forEach(([x, y]) => { extent = Math.max(extent, Math.max(Math.abs(x), Math.abs(y)) * 1.1); }));
+    const k = (Math.min(w, h) / 2 - 8) / extent, cx = w / 2, cy = h / 2;
+    let out = svgOpen(w, h, ' role="img" aria-label="the cell from above: the reach ring and the pick areas"');
+    out += `<rect x="0" y="0" width="${w}" height="${h}" rx="14" fill="${C.bg}"/>`;
+    if (maxR > 0) out += `<circle cx="${cx}" cy="${cy}" r="${r1(maxR * k)}" fill="#e2f5eb" stroke="${C.ok}"/>`;
+    out += `<circle cx="${cx}" cy="${cy}" r="${r1(minR * k)}" fill="#fde3e3" stroke="${C.err}" stroke-width="1.2" stroke-dasharray="5 4"/>`;
+    const b = baseR * k;
+    out += `<circle cx="${cx}" cy="${cy}" r="${r1(b)}" fill="${C.grey}"/>`;
+    out += `<line x1="${cx}" y1="${cy}" x2="${r1(cx + b + 14)}" y2="${cy}" stroke="${C.err}" stroke-width="1.5"/><line x1="${cx}" y1="${cy}" x2="${cx}" y2="${r1(cy - b - 14)}" stroke="${C.ok}" stroke-width="1.5"/>`;
+    out += text(cx + b + 20, cy, "X", 10, C.muted, "bold") + text(cx, cy - b - 20, "Y", 10, C.muted, "bold");
+    (areas || []).forEach((a, i) => {
+      const pts = a.corners.map(([x, y]) => [cx + x * k, cy - y * k]);
+      const mx = pts.reduce((s, p) => s + p[0], 0) / 4, my = pts.reduce((s, p) => s + p[1], 0) / 4;
+      out += `<polygon points="${pts.map(([x, y]) => `${r1(x)},${r1(y)}`).join(" ")}" fill="rgba(28,100,216,${i === highlight ? 0.35 : 0.18})" stroke="${C.accent}" stroke-width="${i === highlight ? 2.4 : 1.4}"/>`;
+      out += text(mx, my, a.name || String(i + 1), 11, C.ink, "bold");
+    });
+    out += text(8, h - 8, `pick ${Math.round(minR * 1000)}–${maxR > 0 ? Math.round(maxR * 1000) : "∞"} mm from the base axis`, 10, C.muted, "normal", "start");
+    return out + "</svg>";
+  }
+
   root.PerceptronicPick = {
+    orderGrid, svgOrderTile, svgPart, svgApproach, areaCorners, svgReachMap,
     APP_TYPE, PICK_TYPE, AFTER_TYPE, VERSION, DEFAULT_PICK_PORT, DEFAULT_COCKPIT_PORT, DEFAULT_TIP_MM,
     SOCKET, RQ_SOCKET, MAX_POINTS, MAX_AREAS, ORDERS, ORDER_TILES, GRIPPERS, GRIPPER_FIELDS, REASONS,
     NUMBERS, BY_KEY, FOUND_VARIABLE, LOC_VARIABLE,

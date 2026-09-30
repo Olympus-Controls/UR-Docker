@@ -210,11 +210,15 @@ radius + the inner margin to its rated reach − the outer margin.
 2. In it: the live picture with the parts the program would find outlined and numbered
    in the pick order; **+ Add picture point here** (PolyScope's joint positions; **Go**
    opens PolyScope's move screen to it; tap a point's area to choose the pick area it
-   looks at); the **pick order** tiles; **Check approach** (PolyScope's IK + move screen
+   looks at); the **pick order** tiles (each one a numbered 3 × 2 grid, the same rule the
+   detector numbers parts by); **Check approach** (PolyScope's IK + move screen
    over part #1, fingertips *Approach* mm over its top); **Options** — the part's length ×
    width × height ± tolerance, the approach, the gripper (Robotiq Hand-E through its
    URCap's socket on the controller, a digital output, or your own gripper nodes inside
-   the node), speed.
+   the node), speed — with the part drawn in proportion and the approach from the side
+   (fingers open over the top, the grip depth, the lift) redrawn as the numbers change.
+   The application node's Reach card draws the cell from above: the base, the ring the
+   parts may be in, every taught area — an area outside the ring shows at once.
 3. Put what happens to the part **inside** the node; an **After picture N** node
    (toolbox) runs its part only for a pick from that picture point. `rs_pick_found` and
    `rs_pick_loc` are program variables for your own logic.
