@@ -82,7 +82,10 @@ def test_the_e2es_check_lines_are_read_back():
 
 def test_list_prints_the_releases_as_json(capsys):
     assert psx_matrix.main(["list"]) == 0
-    assert json.loads(capsys.readouterr().out) == psx_matrix.RELEASES
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["release"] for r in rows] == psx_matrix.RELEASES
+    assert {r["release"] for r in rows if r["experimental"]} == set(psx_matrix.RUNNER_FLAKY)
+    assert psx_matrix.RUNNER_FLAKY <= set(psx_matrix.RELEASES)
 
 
 def test_run_refuses_a_release_that_is_not_listed(capsys):

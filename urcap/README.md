@@ -296,8 +296,12 @@ link behind the cockpit.
 row → dialog → a picture point → the verdict) against the **ten newest PolyScope X
 releases** UR publishes a simulator image for; `.github/workflows/urcapx-matrix.yml` runs
 it on every change to the URCap and weekly (`make urcapx-matrix`). 2026-09-30, all ten
-pass: **10.14.0, 10.13.0, 10.12.1, 10.12.0, 10.11.0, 10.10.0, 10.9.0, 10.8.0, 10.7.0,
-10.6.0**. What the older ones needed:
+pass on this Mac (Apple silicon, the arm64 images): **10.14.0, 10.13.0, 10.12.1, 10.12.0,
+10.11.0, 10.10.0, 10.9.0, 10.8.0, 10.7.0, 10.6.0**. On GitHub's amd64 runners 10.6 and
+10.7 fail before the URCap is opened — their simulator's web app raises "An error occurred
+while starting the application … no elements in sequence" and keeps raising it on retry —
+so CI runs those two as experimental (`psx_matrix.py RUNNER_FLAKY`). What the older ones
+needed:
 
 - **10.6–10.9** have no `convertJointPositionsToTcpPose`: Move (PolyScope) and Check
   approach can't learn PolyScope's active TCP, so they hand PolyScope the flange target

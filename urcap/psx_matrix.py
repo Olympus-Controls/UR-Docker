@@ -53,6 +53,12 @@ RELEASES: list[str] = [
     "10.6.0",
 ]
 
+# Releases whose simulator's own web app fails to start on GitHub's amd64 runners ("An
+# error occurred while starting the application … no elements in sequence", before the
+# URCap is opened; 2026-09-30, three runs) while they pass on Apple silicon: CI runs them
+# but does not go red on them (`list` marks them experimental).
+RUNNER_FLAKY: frozenset[str] = frozenset({"10.6.0", "10.7.0"})
+
 _RELEASE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
@@ -155,11 +161,11 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--artifacts", default="target/psx-matrix", help="per-release logs, reports, screenshots")
     rn.add_argument("--rmi", action="store_true", help="remove each image after its run")
     rn.add_argument("--docker", default=os.environ.get("DOCKER", "docker"), help=argparse.SUPPRESS)
-    sub.add_parser("list", help="the releases as JSON (CI's matrix)")
+    sub.add_parser("list", help="the releases as JSON for CI's matrix ([{release, experimental}])")
     sub.add_parser("check-tags", help="RELEASES vs Docker Hub; exit 1 on drift")
     args = ap.parse_args(argv)
     if args.cmd == "list":
-        print(json.dumps(RELEASES))
+        print(json.dumps([{"release": r, "experimental": r in RUNNER_FLAKY} for r in RELEASES]))
         return 0
     if args.cmd == "check-tags":
         drift = tag_drift(fetch_tags(), RELEASES)

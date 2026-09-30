@@ -5,7 +5,9 @@
 # click → segment, PolyScope's kinematics services) and the Pick program node (toolbox →
 # tree row → its dialog → a picture point from PolyScope's joints → the row's verdict).
 # urcap-e2e.yml runs the same against the one pinned target on every change; this one
-# says which releases the URCap works on. Not a required check.
+# says which releases the URCap works on. Not a required check. Releases in
+# psx_matrix.py RUNNER_FLAKY (10.6, 10.7: their simulator's web app fails to start on these
+# runners, before the URCap is opened; they pass on Apple silicon) run as experimental.
 #
 # Weekly, `psx_matrix.py check-tags` fails when UR has published a release newer than the
 # list's newest ("PolyScope X 10.15.0 exists on Docker Hub: add it").
@@ -59,10 +61,13 @@ jobs:
     needs: releases
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # experimental (psx_matrix.py RUNNER_FLAKY): the release's own simulator does not start
+    # its web app on these runners; it still runs, its result shows, it never goes red
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        release: ${{ fromJSON(needs.releases.outputs.list) }}
+        include: ${{ fromJSON(needs.releases.outputs.list) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
