@@ -1,13 +1,12 @@
-# The PolyScope X URCap on the ten newest PolyScope X releases (urcap/psx_matrix.py
-# RELEASES — the job list comes from `psx_matrix.py list`, never from this file): per
+# The PolyScope X URCap on the newest PolyScope X releases from the floor the URCap is built
+# for (urcap/psx_matrix.py RELEASES / FLOOR — the job list comes from `psx_matrix.py list`,
+# never from this file): per
 # release, `urcap/e2e.py` boots that simulator image, installs a fresh build over the
 # urservice endpoint and, in headless Chromium, loads the application node (feed, hover,
 # click → segment, PolyScope's kinematics services) and the Pick program node (toolbox →
 # tree row → its dialog → a picture point from PolyScope's joints → the row's verdict).
 # urcap-e2e.yml runs the same against the one pinned target on every change; this one
-# says which releases the URCap works on. Not a required check. Releases in
-# psx_matrix.py RUNNER_FLAKY (10.6, 10.7: their simulator's web app fails to start on these
-# runners, before the URCap is opened; they pass on Apple silicon) run as experimental.
+# says which releases the URCap works on. Not a required check.
 #
 # Weekly, `psx_matrix.py check-tags` fails when UR has published a release newer than the
 # list's newest ("PolyScope X 10.15.0 exists on Docker Hub: add it").
@@ -42,7 +41,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: the list has the ten newest PolyScope X releases on Docker Hub
+      - name: the list has the newest PolyScope X releases on Docker Hub
         run: python3 urcap/psx_matrix.py check-tags
 
   releases:
@@ -61,13 +60,10 @@ jobs:
     needs: releases
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # experimental (psx_matrix.py RUNNER_FLAKY): the release's own simulator does not start
-    # its web app on these runners; it still runs, its result shows, it never goes red
-    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.releases.outputs.list) }}
+        release: ${{ fromJSON(needs.releases.outputs.list) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
