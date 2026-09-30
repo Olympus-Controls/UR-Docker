@@ -457,7 +457,15 @@ def clear_boot_dialogs(page) -> list[str]:
             at = body.find("An error occurred")
             raise E2EError(f"PolyScope error dialog: {body[at : at + 200]!r}")
         seen.append(known)
-        page.get_by_role("button", name="OK", exact=True).first.click(timeout=10_000)
+        # its button is "OK" on 10.13; the start-up error on 10.6 / 10.7 offers a retry — take
+        # whatever is there, else reload the page (the dialog is gone on the next load)
+        for name in ("OK", "Retry", "Try again", "Close"):
+            button = page.get_by_role("button", name=name, exact=True).first
+            if button.is_visible():
+                button.click(timeout=10_000)
+                break
+        else:
+            page.reload(wait_until="networkidle", timeout=180_000)
         page.wait_for_timeout(1000)
     raise E2EError(f"PolyScope keeps raising {seen[-1]!r}")
 
