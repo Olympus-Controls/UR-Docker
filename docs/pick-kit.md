@@ -32,6 +32,9 @@ in a window, fed by a simulated camera computer (or `--cockpit http://<ip>:7621`
    It ends with `perceptronics doctor`'s verdict: camera, robot ports, hand-eye, tool length.
 3. **Install the URCap** from a USB stick: Settings → System → URCaps → **+** →
    `realsense-pilot-ps5-0.5.0.urcap` → Restart.
+   Or leave it to the stick: `scripts/urcap5-usb.sh` writes a magic file that installs it by
+   itself when **Settings → Security → General → Run magic files** is on
+   (`urcap/realsense-pilot-ps5/README.md`, *Or let the stick install it*).
 4. **Installation → URCaps → RealSense Pilot**: type the camera computer's address
    (`http://192.168.3.10:7621`); the live picture appears.
 5. **Calibrate the camera to the flange** once (`perceptronics calibrate` on the camera

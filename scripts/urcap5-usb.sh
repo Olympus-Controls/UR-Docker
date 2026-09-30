@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Put the current PolyScope 5 URCap on a USB stick for the pendant, safely:
-# no macOS "._" AppleDouble files (PolyScope's URCap picker would list
-# "._realsense-pilot-….urcap" and fail on it), checksum-verified, then ejected.
+# Put the current URCaps on a USB stick for the pendant, safely: no macOS "._"
+# AppleDouble files (PolyScope's URCap picker would list "._realsense-pilot-….urcap" and
+# fail on it), checksum-verified, then ejected. On the stick afterwards:
+#
+#   realsense-pilot-ps5-<ver>.urcap   the PolyScope 5 URCap
+#   urmagic_realsense_pilot.sh        installs it by itself when the stick goes into a
+#                                     PolyScope 5 robot with "Run magic files" enabled
+#                                     (scripts/urmagic_realsense_pilot.sh, filled in)
+#   realsense-pilot-<ver>.urcapx      the PolyScope X URCap, for System Manager (PolyScope X
+#                                     runs nothing from a stick)
 #
 #   scripts/urcap5-usb.sh                 # the stick named "URE MODELS"
 #   scripts/urcap5-usb.sh "MY STICK"      # another FAT32 stick
+#   URCAP5_USB_MAGIC=0 scripts/urcap5-usb.sh   # no magic file: install by hand
 #
-# Then on the pendant: ☰ → Settings → System → URCaps → + → the file → Open → Restart.
+# By hand on the pendant: ☰ → Settings → System → URCaps → + → the file → Open → Restart.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -15,9 +23,17 @@ urcap="$(find urcap/dist -maxdepth 1 -name 'realsense-pilot-ps5-*.urcap' | sort 
 [[ -d "$volume" ]] || { echo "no stick at $volume — plug it in (or pass its name)"; exit 1; }
 [[ -f "$urcap" ]] || { echo "no $urcap — make urcap5-package"; exit 1; }
 
-# replace any earlier build of this URCap on the stick
-find "$volume" -maxdepth 1 \( -name 'realsense-pilot-ps5-*.urcap' -o -name '._realsense-pilot-ps5-*' \) -delete
+urcapx="$(find urcap/dist -maxdepth 1 -name 'realsense-pilot-*.urcapx' | sort | tail -1)"
+magic_src="scripts/urmagic_realsense_pilot.sh"
+symbolic="$(sed -n 's/^Bundle-SymbolicName=//p' urcap/realsense-pilot-ps5/bundle.properties)"
+[[ -n "$symbolic" ]] || { echo "no Bundle-SymbolicName in urcap/realsense-pilot-ps5/bundle.properties"; exit 1; }
+
+# replace any earlier build of the URCaps (and the magic file + its log) on the stick
+find "$volume" -maxdepth 1 \( -name 'realsense-pilot-ps5-*.urcap' -o -name '._realsense-pilot-ps5-*' \
+  -o -name 'realsense-pilot-*.urcapx' -o -name '._realsense-pilot-*.urcapx' \
+  -o -name 'urmagic_realsense_pilot.*' -o -name '._urmagic_realsense_pilot.*' \) -delete
 cp -X "$urcap" "$volume/"
+[[ -f "$urcapx" ]] && cp -X "$urcapx" "$volume/"
 dot_clean -m "$volume" 2>/dev/null || true
 sync
 
@@ -28,4 +44,15 @@ if find "$volume" -maxdepth 1 -name '._*' | grep -q .; then
   echo "warning: ._ files remain on the stick"
 fi
 echo "copied $(basename "$urcap") (sha256 ${want:0:12}…) to $volume"
+[[ -f "$urcapx" ]] && echo "copied $(basename "$urcapx") (PolyScope X: install it through System Manager)"
+
+if [[ "${URCAP5_USB_MAGIC:-1}" == 1 ]]; then
+  # the magic file, with this build's name, sha256 and bundle id filled in
+  sed -e "s|@URCAP_FILE@|$(basename "$urcap")|" -e "s|@URCAP_SHA256@|$want|" \
+    -e "s|@SYMBOLIC_NAME@|$symbolic|" "$magic_src" > "$volume/urmagic_realsense_pilot.sh"
+  dot_clean -m "$volume" 2>/dev/null || true
+  sync
+  echo "wrote urmagic_realsense_pilot.sh: a PolyScope 5 robot with Settings → Security → General →"
+  echo "  'Run magic files' on installs the URCap by itself when the stick goes in (log on the stick)"
+fi
 diskutil eject "$volume" >/dev/null && echo "ejected — take it to the pendant"
