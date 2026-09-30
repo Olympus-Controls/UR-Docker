@@ -140,7 +140,9 @@ def simulator(image: str, port: int, *, keep: bool, docker: str = "docker"):
         "name": name,
         "logs": "",
         "alive": lambda: running(docker, name),
-        "ready": lambda: bootstrapped(docker_logs(name, docker, tail=100_000)),
+        # the log line, or the bootstrapper's own status (on a GitHub runner, 2026-09-30, the
+        # status said finished while the line never reached `docker logs`)
+        "ready": lambda: bootstrapped(docker_logs(name, docker, tail=100_000)) or bootstrap_finished(port),
     }
     try:
         yield sim
@@ -178,6 +180,18 @@ BOOTSTRAP_STATUS = "/universal-robots/bootstrapper/status"
 def bootstrapped(log_text: str) -> bool:
     """Has the simulator's web-bootstrapper finished (its log says so)?"""
     return BOOTSTRAP_DONE in log_text
+
+
+def bootstrap_finished(port: int) -> bool:
+    """… or its status endpoint says so (``{"inProgress": false, "isFinished": true, …}``)."""
+    try:
+        status, body = http(f"http://127.0.0.1:{port}{BOOTSTRAP_STATUS}", timeout=5)
+        if status != 200:
+            return False
+        d = json.loads(body)
+        return bool(d.get("isFinished")) and not d.get("inProgress") and not d.get("errorExitMessage")
+    except (OSError, ValueError):
+        return False
 
 
 def docker_logs(name: str, docker: str = "docker", tail: int = 150) -> str:
@@ -423,7 +437,12 @@ def program_node_checks(checks: Checks, page, shot) -> None:
 # "No kinematics info available" over the Operator screen, before the node was
 # opened). These are acknowledged and the page reloaded; any other error dialog
 # fails the run with its text.
-BOOT_RACE_DIALOGS = ("No kinematics info available",)
+BOOT_RACE_DIALOGS = (
+    "No kinematics info available",
+    # 10.6 / 10.7 on a GitHub runner, 2026-09-30: "An error occurred while starting the
+    # application … RETRY Internal software communication error" over the first page, gone on reload
+    "Internal software communication error",
+)
 
 
 def clear_boot_dialogs(page) -> list[str]:
@@ -571,6 +590,11 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
                 )
 
             open_node()
+            # the field fills when PolyScope hands the node its saved state, a moment after it renders
+            with contextlib.suppress(Exception):
+                page.wait_for_function(
+                    f"() => !!document.querySelector('{TAG} [data-rsp=url]').value", timeout=30_000
+                )
             saved = page.locator(TAG).locator('[data-rsp="url"]').input_value(timeout=30_000)
             checks.expect(saved == cockpit, "cockpit URL persists", saved)
             shot("node-reloaded")
