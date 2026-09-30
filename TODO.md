@@ -32,6 +32,8 @@
 - 2026-09-28 — Pick PC (`deploy/pi/`, never run on a board yet): bookworm's systemd 252 ignores the unit's restart back-off (trixie only) — OK, or target trixie? Leave the hand-eye line out of the PC's `cell.env` by default (else a fresh on-PC calibration loses to it)?
 - 2026-09-28 — The librealsense build fetches nlohmann/json, fastcdr, yaml-cpp and sqlite at configure time (first install needs internet). Turn off rosbag support to cut that, or ship a prebuilt `.deb` per board?
 - 2026-09-28 — Bracket tool bolts: the BOM lists M6 × 16 low-head (plate 6 mm + Hand-E's M6 × 10 → the README's "+8 mm" gives only 2 mm more engagement vs the flange's 8 mm limit). Measure before ordering.
+- 2026-09-29 — **USB auto-install, first time on a pendant** (PR #16): `scripts/urcap5-usb.sh` now writes `urmagic_realsense_pilot.sh` on the stick; enable Settings → Security → General → *Run magic files* (+ *USB ports*), plug in with the arm powered off, expect `! USB !`, a restart, and RealSense Pilot 0.5.0 under Installation → URCaps. If it doesn't load: is the jar at `/root/.urcaps/com.olympuscontrols.realsensepilot.jar`, and does PolyScope need the symlink its own installer makes (`urcapSymLinkFolder`)? Read `urmagic_realsense_pilot.log` on the stick.
+- 2026-09-29 — Click-through of the PolyScope X URCap in the sim from an SSH session is blocked on **Docker Desktop, which an SSH login can't launch** (`open -a Docker` → launchd "Domain does not support specified action"). Start it from the console / Screen Sharing (:5900), then `HOST_ARCH=arm64 make simx-up && make urcap-install && make urcap-cockpit` and forward 8000 + 7621. Or: is a headless Docker (colima) acceptable on the Studio so agents can start it?
 
 ## After the demo (2026-09-28)
 
