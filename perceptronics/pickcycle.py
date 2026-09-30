@@ -34,7 +34,6 @@ import json
 import math
 import os
 import struct
-import subprocess
 import sys
 import threading
 import time
@@ -593,17 +592,13 @@ class PickCycle:
         r = self.cockpit.post("/api/robot/gripper", {"action": action})
         if r.get("ok") or "no route" not in (r.get("error") or ""):
             return r
-        host = (self.cockpit.get("/api/robot").get("robot") or {}).get("host", "")
-        out = subprocess.run(
-            ["uv", "run", "urctl", "gripper", action, "--force", str(self.force)],
-            capture_output=True,
-            text=True,
-            env={**os.environ, "UR_HOST": host},
-        )
+        # A cockpit that predates the gripper route: drive the robot it is linked to
+        # in-process (the same Robot.gripper `urctl gripper` calls) — no uv, no PATH.
+        host = (self.cockpit.get("/api/robot").get("robot") or {}).get("host") or None
         try:
-            return json.loads(out.stdout)
-        except Exception:
-            return {"ok": False, "error": out.stderr[-200:]}
+            return Robot(RobotConfig.from_env(host=host)).gripper(action, force=self.force)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[-200:]}
 
     def _bring_up(self) -> None:
         if self.robot is not None:
