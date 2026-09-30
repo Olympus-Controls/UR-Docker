@@ -153,6 +153,8 @@
       this._built = false;
       this._stopped = false;
       this._variablesEnsured = false;
+      this._variablesPromise = null;
+      this._declared = null;
       this._dialogOpen = false;
     }
 
@@ -203,7 +205,7 @@
         this._built = true;
         this.startApp();
       }
-      this.ensureVariables();
+      setTimeout(() => this.ensureVariables(), 1500); // after PolyScope's insertion has settled
       this.sync();
     }
 
@@ -231,25 +233,50 @@
       while (!this._stopped && this.isConnected) {
         const app = await fetchAppNode(this._api);
         if (JSON.stringify(app) !== JSON.stringify(this._app)) { this._app = app; this.sync(); }
+        if (!this._variablesEnsured) this.ensureVariables();
         await sleep(APP_EVERY_MS);
       }
     }
 
-    // The result variables, declared once through PolyScope so the operator's own nodes can read them.
-    async ensureVariables() {
+    // The result variables, declared once through PolyScope so the operator's own nodes can read
+    // them. One declaration in flight at a time, awaited before the dialog opens, and verified
+    // after the save: while an insertion settles PolyScope re-sets contributedNode from its own
+    // copy and a declaration saved in between is lost (10.10, whose older service answers
+    // slower) — the next call re-attaches the variables already generated instead of new ones.
+    ensureVariables() {
+      if (this._variablesEnsured) return Promise.resolve();
+      if (!this._variablesPromise) {
+        this._variablesPromise = this.declareVariables().finally(() => { this._variablesPromise = null; });
+      }
+      return this._variablesPromise;
+    }
+
+    async declareVariables() {
       if (this._variablesEnsured || !this._api) return;
       const p = this.params();
       if (p.foundVariable && p.locVariable) { this._variablesEnsured = true; return; }
-      const vs = this._api.variableService;
-      if (!vs || typeof vs.createVariable !== "function") return;
-      this._variablesEnsured = true;
+      // variableService.createVariable from 10.12; before that symbolService.generateVariable (a
+      // URVariable, same `name`) — 10.10 / 10.11 have only the latter (the release matrix, 2026-09-30)
+      const vs = this._api.variableService, ss = this._api.symbolService;
+      const declare = vs && typeof vs.createVariable === "function"
+        ? (name, type) => vs.createVariable(name, type)
+        : ss && typeof ss.generateVariable === "function" ? (name, type) => ss.generateVariable(name, type) : null;
+      if (!declare) return;
       try {
-        if (!p.foundVariable) p.foundVariable = await vs.createVariable(this._P.FOUND_VARIABLE, "boolean");
-        if (!p.locVariable) p.locVariable = await vs.createVariable(this._P.LOC_VARIABLE, "integer");
+        const d = this._declared || (this._declared = {});
+        if (!d.found) d.found = p.foundVariable || (await declare(this._P.FOUND_VARIABLE, "boolean"));
+        if (!d.loc) d.loc = p.locVariable || (await declare(this._P.LOC_VARIABLE, "integer"));
+        const now = this.params(); // the node the row holds *now*, not the one it held before the await
+        now.foundVariable = d.found;
+        now.locVariable = d.loc;
         await this.save();
-        this.sync();
+        await sleep(400);
+        const check = this.params();
+        if (check.foundVariable && check.locVariable) {
+          this._variablesEnsured = true;
+          this.sync();
+        }
       } catch (err) {
-        this._variablesEnsured = false;
         this.setVerdict(`could not declare the result variables: ${err && err.message ? err.message : err}`, "warn");
       }
     }
@@ -263,8 +290,9 @@
       if (this._dialogOpen) return;
       this._dialogOpen = true;
       try {
+        await this.ensureVariables();
         // the dialog edits this very node and saves through this API as it goes
-        await api.dialogService.openCustomDialog(DIALOG_TAG, { node: this._node, api, app: this._app }, {
+        await api.dialogService.openCustomDialog(DIALOG_TAG, { node: this._node, api, app: this._app, row: this }, {
           title: "Perceptronic Pick",
           dialogSize: "XL",
           confirmText: "Done",
@@ -314,6 +342,7 @@
       this._node = this._input.node || null;
       this._api = this._input.api || null;
       this._app = this._input.app || null;
+      this._row = this._input.row || null; // the tree row that opened this dialog
       this.render();
     }
     get presenterApi() { return this._dialogApi; }
@@ -361,6 +390,13 @@
     async save() {
       const pns = this.service("programNodeService");
       if (!pns) return;
+      // the row may have declared the result variables on its own copy of the node since this
+      // dialog was handed one: never save without them
+      const mine = this.params(), rows = this._row && this._row._node && this._row._node.parameters;
+      if (rows) {
+        if (!mine.foundVariable && rows.foundVariable) mine.foundVariable = rows.foundVariable;
+        if (!mine.locVariable && rows.locVariable) mine.locVariable = rows.locVariable;
+      }
       try {
         await pns.updateNode(this._node);
         this.dispatchEvent(new CustomEvent("outputDataChange", { detail: this._node, bubbles: true }));
@@ -772,16 +808,24 @@
         if (!Array.isArray(part.grasp_pose) || part.grasp_pose.length !== 6) throw new Error("the camera computer has no robot pose (is its robot link up?)");
         const hover = P.poseTrans(part.grasp_pose, [0, 0, -approach / 1000, 0, 0, 0]);
         const qNear = await firstValue(rps.getJointPositions());
-        const dh = await rps.getKinematicInfo();
-        const t0 = await rps.convertJointPositionsToTcpPose(arrayToJoints([0, 0, 0, 0, 0, 0]));
-        const pose = PerceptronicPickDialog.polyScopeTarget(P, hover, dh, [...t0.position, ...t0.orientation]);
+        // PolyScope's IK solves for its active TCP: re-express the flange target in it — where
+        // PolyScope can say what its TCP is (convertJointPositionsToTcpPose, 10.10+); before
+        // that the flange stands for the TCP
+        let pose = hover, tcpNote = "";
+        if (typeof rps.convertJointPositionsToTcpPose === "function" && typeof rps.getKinematicInfo === "function") {
+          const dh = await rps.getKinematicInfo();
+          const t0 = await rps.convertJointPositionsToTcpPose(arrayToJoints([0, 0, 0, 0, 0, 0]));
+          pose = PerceptronicPickDialog.polyScopeTarget(P, hover, dh, [...t0.position, ...t0.orientation]);
+        } else {
+          tcpNote = " (this PolyScope can't report its TCP: the target assumes the TCP is at the flange)";
+        }
         const joints = await withTimeout(
           rps.getInverseKinematics({ position: [pose[0], pose[1], pose[2]], orientation: [pose[3], pose[4], pose[5]] }, qNear),
           8000,
           `PolyScope found no joint solution for the approach [${fmtVec(hover)}] in 8 s`,
         );
         await rms.autoMove(joints);
-        this.setStatus(`PolyScope's move screen is open — hold Move To Position: fingertips ${P.num(approach)} mm over part #1's top, fingers open`, "ok");
+        this.setStatus(`PolyScope's move screen is open — hold Move To Position: fingertips ${P.num(approach)} mm over part #1's top, fingers open${tcpNote}`, "ok");
       } catch (err) {
         this.setStatus(`Check approach: ${err && err.message ? err.message : err}`, "err");
       }

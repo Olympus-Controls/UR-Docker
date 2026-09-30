@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent
 URCAP = ROOT / "urcap" / "perceptronic"
 DIST = ROOT / "urcap" / "dist"
 FRONTEND = URCAP / "perceptronic-frontend"
+PACKAGE_VERSION = urcapx.read_manifest((URCAP / "manifest.yaml").read_text(encoding="utf-8"))["version"]
 NODE = shutil.which("node")
 
 
@@ -332,6 +333,49 @@ def test_cli_list_and_package(tmp_path, urservice, capsys):
     )
     assert urcapx.main(["delete", "nickarmenta", "perceptronic", "--host", host, "--port", str(port)]) == 0
     assert UrserviceStub.installed == [UrserviceStub.installed[0]] and len(UrserviceStub.installed) == 1
+
+
+# -- release: the urcapx-v<version> tag against the committed package ----------------------------
+
+
+def test_release_check_accepts_the_committed_package():
+    out = urcapx.release_check(f"urcapx-v{PACKAGE_VERSION}", URCAP, DIST)
+    assert out["version"] == PACKAGE_VERSION and out["path"].endswith(
+        f"perceptronic-{PACKAGE_VERSION}.urcapx"
+    )
+    assert re.fullmatch(r"[0-9a-f]{64}", out["sha256"])
+
+
+@pytest.mark.parametrize(
+    ("tag", "problem"),
+    [
+        ("v0.3.0", "is not urcapx-v"),
+        ("urcapx-v9.9.9", "says version"),
+        ("urcapx-v0.3", "is not urcapx-v"),
+    ],
+)
+def test_release_check_refuses_a_wrong_tag(tag, problem):
+    with pytest.raises(urcapx.UrcapError, match=problem):
+        urcapx.release_check(tag, URCAP, DIST)
+
+
+def test_release_check_refuses_a_stale_or_missing_package(tmp_path):
+    src = tmp_path / "src"
+    shutil.copytree(URCAP, src)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    with pytest.raises(urcapx.UrcapError, match="not committed"):
+        urcapx.release_check(f"urcapx-v{PACKAGE_VERSION}", src, dist)
+    urcapx.package(src, dist)
+    assert urcapx.release_check(f"urcapx-v{PACKAGE_VERSION}", src, dist)["version"] == PACKAGE_VERSION
+    main = src / "perceptronic-frontend" / "main.js"
+    main.write_text(main.read_text(encoding="utf-8") + "\n// edit\n", encoding="utf-8")
+    with pytest.raises(urcapx.UrcapError, match="not what the sources package to"):
+        urcapx.release_check(f"urcapx-v{PACKAGE_VERSION}", src, dist)
+    assert (
+        urcapx.main(["release-check", f"urcapx-v{PACKAGE_VERSION}", "--src", str(URCAP), "--dist", str(DIST)])
+        == 0
+    )
 
 
 # -- the worker under node ----------------------------------------------------------------------

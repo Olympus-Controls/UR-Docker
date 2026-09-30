@@ -121,6 +121,13 @@ out of PolyScope 10.13's own bundles (`web-app/main.js`, `web-program-nodes/*`),
   in isometric with the jaws, the approach from the side, the reach map) as SVG strings
   from `pickscript.js` — pure functions, so the tests hold `orderGrid` to the Python
   detector's numbering and every drawing to well-formed, escaped SVG.
+- **Older PolyScope X (the release matrix, 2026-09-30):** `robotPositionService.convertJointPositionsToTcpPose`
+  is 10.10+ (without it Move (PolyScope) / Check approach take the flange target as the
+  TCP and say so); `variableService` is 10.12+ (before it, `symbolService.generateVariable`
+  declares the program variables — a URVariable with the same `name`). The row declares
+  them *before* opening the dialog: the dialog edits the node object it is handed, and a
+  declaration landing on the row's copy afterwards was saved over (seen on 10.10, where
+  the older service answers slower).
 - **The URScript the node writes is the PolyScope 5 node's** (`PickScript.java`) —
   `pickscript.js` is its port, `tests/test_urcapx_pick.py` holds it to the Python pick
   server's parser the way `tests/test_urcap5_pick.py` holds the Java. PolyScope X's script
@@ -185,6 +192,7 @@ with the versions its JavaScript template uses (`contribution-api`, `urcap-utils
 | `python3 urcap/track.py check` (`make urcap-track`) | exit 1 with the reasons when UR has moved on (new minor or patch, a moved simulator tag, an SDK component bump) |
 | `python3 urcap/track.py update` | re-resolve and rewrite `target.json` + the `urcap-target` lines in README.md and this page |
 | `python3 urcap/track.py compat` (`make urcap-compat`) | every PolyScope member the node calls or implements (`track.API_SURFACE`, held to `main.js` + the worker by a test) is still in the pinned `contribution-api` typings (UR's npm feed); `manifest.yaml` validates against the SDK's manifest spec; the template still uses the `threads` the worker's hand-written protocol was verified against; the SDK's simulator is the notes' robot image by digest |
+| `python3 urcap/psx_matrix.py run --version all --rmi` (`make urcapx-matrix`) | the same e2e against the ten newest PolyScope X releases on Docker Hub (`RELEASES`; `check-tags` flags a newer one), one summary; `.github/workflows/urcapx-matrix.yml` runs it per release on changes to the URCap and weekly (not a required check) |
 | `uv run --with playwright==1.63.0 python urcap/e2e.py` (`make urcap-e2e`) | boots the pinned simulator, installs a fresh build over urservice, checks nginx serves the packaged bytes, then headlessly: node renders, goes live on a `--fake` cockpit, hover depth, click → `/api/segment`, PolyScope's `getKinematicInfo` / `getJointPositions` / FK → IK round trip, the saved cockpit URL survives a reload. About 2 min on the Mac (arm64 image); `--keep` leaves the sim up |
 
 Nothing needs a login: the notes, the SDK (`UniversalRobots/PolyScopeX_URCap_SDK`),

@@ -25,7 +25,7 @@ export UR_HOST
 
 .PHONY: help sim-up sim-down sim-logs sim-shell sim-poweron \
         simx-up simx-down simx-logs simx-shell urcap-package urcap-install urcap-cockpit \
-        urcap-track urcap-compat urcap-e2e \
+        urcap-track urcap-compat urcap-e2e urcapx-matrix \
         urcap5-sdk urcap5-package urcap5-install \
         rs-info rs-gui rs-gui-fake rs-test perceptronics-build perceptronics-up perceptronics-down \
         doctor cockpit cockpit-dry mcp \
@@ -101,6 +101,9 @@ urcap-compat:  ## The URCap against the pinned SDK: contribution-api members, ma
 urcap-e2e:  ## Boot target.json's simulator, install a fresh build, load + click the node headlessly.
 	$(UV) run --with playwright==1.63.0 python urcap/e2e.py
 
+urcapx-matrix:  ## The e2e on the ten newest PolyScope X releases (PSX_VERSION=10.14.0 / all; images removed after each run).
+	$(UV) run --with playwright==1.63.0 python urcap/psx_matrix.py run --version $(PSX_VERSION) --rmi --artifacts target/psx-matrix
+
 # ---- PolyScope 5 (e-Series) URCap (urcap/perceptronic-ps5, urcap/urcap5.py) --------
 URCAP5_CONTAINER ?= ur-utils-ursim-e-ur3e
 urcap5-sdk:  ## The URCap API jars of the oldest supported PolyScope (+ compat.since) into target/ (registry; never committed).
@@ -113,6 +116,7 @@ urcap5-install: urcap5-package  ## Install it in the e-Series sim container $(UR
 	$(PYTHON) urcap/urcap5.py install urcap/dist/perceptronic-ps5-*.urcap --container $(URCAP5_CONTAINER)
 
 # The URCap on every PolyScope 5 minor from 5.4 (urcap/ps5_matrix.py MATRIX; amd64 host).
+PSX_VERSION ?= all
 PS5_VERSION ?= all
 .PHONY: urcap5-matrix urcap5-matrix-down urcap5-matrix-compose
 urcap5-matrix:  ## Per PS5 URSim: API check, boot, URCap starts, pick e2e, down -v (PS5_VERSION=5.4 / 5.26 / all).

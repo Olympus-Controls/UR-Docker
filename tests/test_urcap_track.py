@@ -76,6 +76,7 @@ declare class CommonBehaviorAPI {
     robotPositionService: RobotPositionService;
     robotInfoService: RobotInfoService;
     variableService: VariableService;
+    symbolService: SymbolService;
 }
 declare class CommonPresenterAPI extends CommonBehaviorAPI {
     applicationNodeService: ApplicationNodeService;
@@ -100,6 +101,9 @@ declare class VariableService {
 }
 declare class RobotInfoService {
     getRobotType(): Promise<string>;
+}
+declare class SymbolService {
+    generateVariable(name: string, valueType: VariableValueType): Promise<URVariable>;
 }
 declare class DialogService {
     openCustomDialog<P = any, R = P>(componentTag: string, initialData: P, options?: object): Promise<R>;
