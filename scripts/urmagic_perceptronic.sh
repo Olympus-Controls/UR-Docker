@@ -1,5 +1,5 @@
 #!/bin/bash
-# urmagic_realsense_pilot.sh — installs the RealSense Pilot URCap on a PolyScope 5 robot by
+# urmagic_perceptronic.sh — installs the Perceptronic URCap on a PolyScope 5 robot by
 # itself when the USB stick goes in.
 #
 # PolyScope 5 runs every `urmagic_*.sh` at the top level of a USB stick, as root, when the
@@ -19,7 +19,7 @@
 #      so PolyScope loads it — with URMAGIC_RESTART=auto (the default) only while the arm
 #      is powered off and no program is running; =never leaves the restart to the
 #      operator; =always restarts regardless.
-# Every run is logged next to this script (urmagic_realsense_pilot.log) — read it back on
+# Every run is logged next to this script (urmagic_perceptronic.log) — read it back on
 # the laptop when something looks wrong.
 #
 # scripts/urcap5-usb.sh writes this to the stick with the three @…@ values filled in.
@@ -36,7 +36,7 @@ URMAGIC_RESTART="${URMAGIC_RESTART:-auto}"        # auto | never | always
 URMAGIC_REBOOT_CMD="${URMAGIC_REBOOT_CMD:-reboot}"
 
 here="$(cd "$(dirname "$0")" && pwd)"
-log="$here/urmagic_realsense_pilot.log"
+log="$here/urmagic_perceptronic.log"
 src="$here/$URCAP_FILE"
 dest="$URCAPS_DIR/$SYMBOLIC_NAME.jar"
 
@@ -65,13 +65,13 @@ sha_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
 say "== $SYMBOLIC_NAME ($URCAP_FILE) from $here"
 if [[ ! -f "$src" ]]; then
   say "ERROR: $URCAP_FILE is not next to this script"
-  dash "popup RealSense Pilot: $URCAP_FILE is missing from the USB stick" >/dev/null
+  dash "popup Perceptronic: $URCAP_FILE is missing from the USB stick" >/dev/null
   exit 1
 fi
 got="$(sha_of "$src")"
 if [[ "$got" != "$URCAP_SHA256" ]]; then
   say "ERROR: $URCAP_FILE on the stick has sha256 $got, expected $URCAP_SHA256"
-  dash "popup RealSense Pilot: $URCAP_FILE on the USB stick is damaged - copy it again" >/dev/null
+  dash "popup Perceptronic: $URCAP_FILE on the USB stick is damaged - copy it again" >/dev/null
   exit 1
 fi
 
@@ -87,12 +87,12 @@ fi
 if ! cp "$src" "$dest.tmp" || ! mv -f "$dest.tmp" "$dest"; then
   rm -f "$dest.tmp"
   say "ERROR: cannot write $dest"
-  dash "popup RealSense Pilot: could not write $dest" >/dev/null
+  dash "popup Perceptronic: could not write $dest" >/dev/null
   exit 1
 fi
 chmod 644 "$dest"
 say "installed $dest"
-dash "addToLog RealSense Pilot URCap $URCAP_FILE installed from USB" >/dev/null
+dash "addToLog Perceptronic URCap $URCAP_FILE installed from USB" >/dev/null
 
 mode="$(dash robotmode)"
 prog="$(dash programState)"
@@ -110,6 +110,6 @@ if [[ "$restart" == yes ]]; then
   $URMAGIC_REBOOT_CMD
 else
   say "not restarting (${mode:-no Dashboard}; program ${prog:-unknown}): restart the robot to load it"
-  dash "popup RealSense Pilot URCap installed from USB. Restart the robot to load it." >/dev/null
+  dash "popup Perceptronic URCap installed from USB. Restart the robot to load it." >/dev/null
 fi
 exit 0

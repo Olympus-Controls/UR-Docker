@@ -36,21 +36,21 @@ saved data and any program's **RealSense Pick** nodes belong to the old bundle.
 ### Or let the stick install it
 
 `scripts/urcap5-usb.sh` (on a Mac; see its header for what lands on the stick) also writes
-`urmagic_realsense_pilot.sh` next to the file. PolyScope 5 runs every `urmagic_*.sh` at the
+`urmagic_perceptronic.sh` next to the file. PolyScope 5 runs every `urmagic_*.sh` at the
 top level of a USB stick as root when the stick goes in, if **Settings → Security → General
 → Run magic files** (and **USB ports**) is enabled — the pendant shows **! USB !** while it
 runs. The script checks the file's sha256, copies it to `/root/.urcaps/<bundle id>.jar`
 (where PolyScope's own URCaps screen installs to, and what it re-installs from at every
-start), logs to the robot's log and to `urmagic_realsense_pilot.log` on the stick, and
+start), logs to the robot's log and to `urmagic_perceptronic.log` on the stick, and
 **restarts the controller only while the arm is powered off and no program runs** —
 otherwise it pops up "restart the robot to load it". Plugged in again (or left in) it does
-nothing once the same build is installed. Source: `scripts/urmagic_realsense_pilot.sh`
+nothing once the same build is installed. Source: `scripts/urmagic_perceptronic.sh`
 (`URMAGIC_RESTART=never|always` in its header changes the restart rule). **Not yet run on
 a pendant** — the `/root/.urcaps` path is read out of PolyScope's own installer
 (`URCapsServiceImpl`) and UR's remotetcp URCap, which installs itself the same way; step 2
 remains the fallback.
 
-PolyScope X runs nothing from a stick. The same stick carries `realsense-pilot-<ver>.urcapx`
+PolyScope X runs nothing from a stick. The same stick carries `perceptronic-<ver>.urcapx`
 for System Manager, and `scripts/urcapx-autoinstall.sh <robot-ip>` installs it over the
 network as soon as the robot answers (from the pick PC at boot, say).
 

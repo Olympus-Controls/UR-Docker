@@ -390,7 +390,7 @@ public class Harness {
                     while (System.currentTimeMillis() < until) {
                         int frames = 0;
                         for (Object e : events) if (e.toString().startsWith("frame")) frames++;
-                        if (frames >= want) break;
+                        if (want > 0 && frames >= want) break;   // want 0: the first event of any kind
                         if (want == 0 && !events.isEmpty()) break;
                         lock.wait(200);
                     }
