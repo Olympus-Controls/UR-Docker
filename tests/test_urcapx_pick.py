@@ -120,6 +120,7 @@ def _ask(request: str) -> dict:
         [NODE, str(harness), str(FRONTEND / "pickscript.js"), request],
         capture_output=True,
         text=True,
+        encoding="utf-8",  # node prints UTF-8 (×, ·); never the Windows codepage
         timeout=30,
         check=True,
     )
@@ -619,6 +620,7 @@ def run_worker(name: str, messages: list[dict]) -> dict[str, list[dict]]:
         [NODE, str(harness), str(FRONTEND / name), json.dumps(messages)],
         capture_output=True,
         text=True,
+        encoding="utf-8",  # node prints UTF-8 (×, ·); never the Windows codepage
         timeout=30,
         check=True,
     )
