@@ -290,4 +290,28 @@ link behind the cockpit.
 | Pick areas taught from PolyScope's joint positions + DH; robot model read from PolyScope for the reach ring | 10.13.0 simulator, 2026-09-29 |
 | A real pick with the Pick node on a PolyScope X arm (and the Robotiq Hand-E URCap for PolyScope X exposing `:63352` the way the e-Series one does) | **not yet** |
 
+## Tested PolyScope X releases
+
+`urcap/psx_matrix.py` runs the whole e2e (install, the application node, the Pick node's
+row → dialog → a picture point → the verdict) against the **ten newest PolyScope X
+releases** UR publishes a simulator image for; `.github/workflows/urcapx-matrix.yml` runs
+it on every change to the URCap and weekly (`make urcapx-matrix`). 2026-09-30, all ten
+pass: **10.14.0, 10.13.0, 10.12.1, 10.12.0, 10.11.0, 10.10.0, 10.9.0, 10.8.0, 10.7.0,
+10.6.0**. What the older ones needed:
+
+- **10.6–10.9** have no `convertJointPositionsToTcpPose`: Move (PolyScope) and Check
+  approach can't learn PolyScope's active TCP, so they hand PolyScope the flange target
+  as the TCP and say so — set PolyScope's TCP to the flange, or use Move (cockpit).
+- **10.6–10.11** have no `variableService`: the two program variables are declared
+  through the older `symbolService.generateVariable` instead (same names).
+
+## Releases
+
+Pushing a `urcapx-v<version>` tag (`git tag urcapx-v0.3.0 && git push fork urcapx-v0.3.0`)
+publishes the committed `dist/perceptronic-<version>.urcapx` and its sha256 as a GitHub
+Release (`.github/workflows/release-urcapx.yml`) after `urcapx.py release-check` proves it
+is the tag's version and exactly what the tagged sources package to, and the URCap's tests
+pass. So: bump `version` in `perceptronic/manifest.yaml`, `make urcap-package`, commit
+`dist/`, then tag. The PolyScope 5 URCap's `urcap5-v*` tags are a separate line.
+
 Building or changing the URCap: [DEVELOPING.md](DEVELOPING.md).

@@ -655,12 +655,17 @@
       try {
         this.setStatus("asking PolyScope for the joint solution…");
         const qNear = await firstValue(rps.getJointPositions());
-        let pose = loc.approach_pose;
-        if (Array.isArray(loc.flange_target_pose) && typeof rps.getKinematicInfo === "function") {
+        let pose = loc.approach_pose, tcpNote = "";
+        if (Array.isArray(loc.flange_target_pose) && typeof rps.getKinematicInfo === "function"
+            && typeof rps.convertJointPositionsToTcpPose === "function") {
           const dh = await rps.getKinematicInfo();
           const zero = { base: 0, shoulder: 0, elbow: 0, wrist1: 0, wrist2: 0, wrist3: 0 };
           const t0 = await rps.convertJointPositionsToTcpPose(zero);
           pose = Perceptronic.polyScopeTarget(loc.flange_target_pose, dh, [...t0.position, ...t0.orientation]);
+        } else if (Array.isArray(loc.flange_target_pose)) {
+          // convertJointPositionsToTcpPose is 10.10+; before that the flange target stands for the TCP
+          pose = loc.flange_target_pose;
+          tcpNote = " (this PolyScope can't report its TCP: the target assumes the TCP is at the flange)";
         }
         // PolyScope's IK does not reject an unsolvable pose, it never answers (10.13 sim).
         const joints = await withTimeout(
@@ -673,7 +678,7 @@
         );
         // autoMove resolves as soon as PolyScope's screen opens (10.13 sim), not when the arm arrives
         await api.robotMoveService.autoMove(joints);
-        this.setStatus("PolyScope's move screen is open — hold Move To Position to go there", "ok");
+        this.setStatus(`PolyScope's move screen is open — hold Move To Position to go there${tcpNote}`, "ok");
       } catch (err) {
         this.setStatus(`PolyScope move: ${err && err.message ? err.message : err}`, "err");
       }

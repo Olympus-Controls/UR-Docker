@@ -201,7 +201,12 @@ the screen is a PolyScope custom dialog (`dialogService.openCustomDialog`); a co
 generator answers `{type: "$$ScriptBuilder", script, currentIndent}` (children indent by
 `currentIndent`; the after-children builder carries the negative). Verified in the 10.13
 sim: toolbox → row → dialog → picture point from PolyScope's joints → the script
-compiled and run by Play (NEXT → movej → FIND over the network to a cockpit). Plain JavaScript, no npm: `urcap/urcapx.py package|install|list|delete`
+compiled and run by Play (NEXT → movej → FIND over the network to a cockpit).
+**`urcap/psx_matrix.py`** runs the e2e on the ten newest PolyScope X releases
+(`urcapx-matrix.yml`, weekly + on URCap changes, not required; all ten 10.6–10.14 pass
+2026-09-30 with fallbacks for what 10.6–10.11 lack, `urcap/README.md` §Tested). A
+`urcapx-v<version>` tag publishes `dist/perceptronic-<version>.urcapx` as a GitHub
+Release (`release-urcapx.yml`, `urcapx.py release-check`). Plain JavaScript, no npm: `urcap/urcapx.py package|install|list|delete`
 (gzipped tar, manifest first; multipart to the Robot-API's `urcaps/v1/urcaps/`);
 `make urcap-package|urcap-install|urcap-cockpit`. **`urcap/dist/*.urcapx` is the
 committed download** and a test holds it byte-equal to a fresh (reproducible)

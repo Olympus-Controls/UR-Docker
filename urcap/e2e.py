@@ -320,10 +320,12 @@ RUNTIME_PROBE = """async (tag) => {
     out.dhKeys = Array.isArray(dh) && dh[0] ? Object.keys(dh[0]).sort() : [];
     const q = await withTimeout(first(rps.getJointPositions()), 10000, "getJointPositions timed out");
     out.q = q;
-    const pose = await withTimeout(rps.convertJointPositionsToTcpPose(q), 10000, "FK timed out");
-    out.pose = pose;
-    const back = await withTimeout(rps.getInverseKinematics(pose, q), 10000, "IK timed out");
-    out.ik = back;
+    if (typeof rps.convertJointPositionsToTcpPose === "function") {
+      const pose = await withTimeout(rps.convertJointPositionsToTcpPose(q), 10000, "FK timed out");
+      out.pose = pose;
+      const back = await withTimeout(rps.getInverseKinematics(pose, q), 10000, "IK timed out");
+      out.ik = back;
+    }
   } catch (e) {
     out.error = String(e && e.message || e);
   }
@@ -331,6 +333,7 @@ RUNTIME_PROBE = """async (tag) => {
 }"""
 
 JOINTS = ("base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3")
+OPTIONAL_SERVICES = ("convertJointPositionsToTcpPose",)
 PICK_TAG = f"{TAG}-pick"
 DIALOG_TAG = f"{TAG}-pick-dialog"
 
@@ -502,8 +505,21 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
             shot("node-live")
 
             probe = page.evaluate(RUNTIME_PROBE, TAG)
-            missing = [k for k, v in probe.get("services", {}).items() if v != "function"]
-            checks.expect(not missing, "presenter services present", ", ".join(missing) or "all functions")
+            services = probe.get("services", {})
+            # convertJointPositionsToTcpPose is 10.10+: without it the node's Move (PolyScope)
+            # takes the flange target as the TCP and says so (10.6–10.9 in the release matrix)
+            missing = [k for k, v in services.items() if v != "function" and k not in OPTIONAL_SERVICES]
+            optional_missing = [k for k in OPTIONAL_SERVICES if services.get(k) != "function"]
+            checks.expect(
+                not missing,
+                "presenter services present",
+                ", ".join(missing)
+                or (
+                    "all functions"
+                    if not optional_missing
+                    else f"all but {', '.join(optional_missing)} (optional)"
+                ),
+            )
             checks.expect(
                 probe.get("dh") == 6 and {"DHa", "DHd", "DHAlpha"} <= set(probe.get("dhKeys", [])),
                 "getKinematicInfo",
@@ -511,14 +527,24 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
             )
             q, back, pose = probe.get("q") or {}, probe.get("ik") or {}, probe.get("pose") or {}
             checks.expect(
-                all(isinstance(q.get(j), (int, float)) for j in JOINTS)
-                and len(pose.get("position", [])) == 3
-                and len(pose.get("orientation", [])) == 3,
-                "joints + FK",
-                probe.get("error") or f"pose {pose}",
+                all(isinstance(q.get(j), (int, float)) for j in JOINTS),
+                "joint positions",
+                probe.get("error") or f"{q}",
             )
-            err = max((abs(back.get(j, 99) - q[j]) for j in JOINTS), default=99) if back else 99
-            checks.expect(err < 1e-3, "IK round trip", probe.get("error") or f"max joint error {err:.2e} rad")
+            if "convertJointPositionsToTcpPose" in optional_missing:
+                checks.ok(
+                    "FK + IK round trip", "skipped: no convertJointPositionsToTcpPose on this PolyScope"
+                )
+            else:
+                checks.expect(
+                    len(pose.get("position", [])) == 3 and len(pose.get("orientation", [])) == 3,
+                    "FK",
+                    probe.get("error") or f"pose {pose}",
+                )
+                err = max((abs(back.get(j, 99) - q[j]) for j in JOINTS), default=99) if back else 99
+                checks.expect(
+                    err < 1e-3, "IK round trip", probe.get("error") or f"max joint error {err:.2e} rad"
+                )
 
             open_node()
             saved = page.locator(TAG).locator('[data-rsp="url"]').input_value(timeout=30_000)
