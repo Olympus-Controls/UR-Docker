@@ -11,6 +11,10 @@ here lives in the network protocols and file formats UR ships — not in the
 code itself — so this file captures the things that took me real time to
 discover.
 
+**Hardware, addresses, what is connected today: `SETUP.md`.** The cells, the
+computers, the simulators that run on this Mac, the USB stick — dated, with the
+field-log entries that matter. Update it when the cell changes.
+
 ## What this repo is
 
 A Docker-Compose'd PolyScope simulator (URSim 5.26.0 LTS, e-Series) plus a
