@@ -35,6 +35,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -448,7 +449,7 @@ BOOT_RACE_DIALOGS = (
 def clear_boot_dialogs(page) -> list[str]:
     """Acknowledge known boot-race dialogs; raise on any other error dialog."""
     seen = []
-    for _ in range(5):
+    for _ in range(10):
         if not page.get_by_text("An error occurred").first.is_visible():
             return seen
         known = next((t for t in BOOT_RACE_DIALOGS if page.get_by_text(t).first.is_visible()), None)
@@ -459,14 +460,14 @@ def clear_boot_dialogs(page) -> list[str]:
         seen.append(known)
         # its button is "OK" on 10.13; the start-up error on 10.6 / 10.7 offers a retry — take
         # whatever is there, else reload the page (the dialog is gone on the next load)
-        for name in ("OK", "Retry", "Try again", "Close"):
-            button = page.get_by_role("button", name=name, exact=True).first
-            if button.is_visible():
-                button.click(timeout=10_000)
-                break
+        button = page.get_by_role("button", name=re.compile(r"^(ok|retry|try again|close)$", re.I)).first
+        if button.is_visible():
+            button.click(timeout=10_000)
         else:
             page.reload(wait_until="networkidle", timeout=180_000)
-        page.wait_for_timeout(1000)
+        # a slow runner's 10.6 / 10.7 raise it ("no elements in sequence") until their services
+        # settle — well over a minute after the bootstrapper said done (2026-09-30)
+        page.wait_for_timeout(8000)
     raise E2EError(f"PolyScope keeps raising {seen[-1]!r}")
 
 
