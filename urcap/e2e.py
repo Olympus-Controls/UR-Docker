@@ -338,6 +338,23 @@ PICK_TAG = f"{TAG}-pick"
 DIALOG_TAG = f"{TAG}-pick-dialog"
 
 
+def open_toolbox(page) -> None:
+    """The + under Main Program opens the toolbox: the tree's small call-to-action icon
+    button on 10.13 / 10.14; older releases style it differently, so fall back to the first
+    button drawn where that + sits (the tree column, just under the program's first row)."""
+    cta = page.locator("button.ur-icon-button-small.ur-icon-button-cta")
+    if cta.count():
+        cta.first.click(timeout=30_000)
+        return
+    buttons = page.locator("button")
+    for i in range(buttons.count()):
+        box = buttons.nth(i).bounding_box()
+        if box and 100 < box["x"] < 300 and 90 < box["y"] < 200 and box["width"] < 60:
+            buttons.nth(i).click(timeout=30_000)
+            return
+    raise E2EError("no toolbox + button found under Main Program")
+
+
 def program_node_checks(checks: Checks, page, shot) -> None:
     """The Perceptronic Pick program node: from the toolbox into the tree, its row, the
     dialog it opens (the feed live, a picture point taught from PolyScope's joint
@@ -345,8 +362,7 @@ def program_node_checks(checks: Checks, page, shot) -> None:
     application node's cockpit URL was set by the checks before this."""
     page.get_by_text("Program", exact=True).first.click(timeout=30_000)
     page.wait_for_timeout(2000)
-    # the + under Main Program opens the toolbox (the tree's small call-to-action icon button)
-    page.locator("button.ur-icon-button-small.ur-icon-button-cta").first.click(timeout=30_000)
+    open_toolbox(page)
     page.get_by_text("Perceptronic Pick", exact=True).first.click(timeout=30_000)
     page.wait_for_selector(PICK_TAG, state="attached", timeout=60_000)
     row = page.locator(PICK_TAG)
@@ -378,6 +394,14 @@ def program_node_checks(checks: Checks, page, shot) -> None:
     checks.expect("taught at joints" in status, "picture point from PolyScope's joints", status[:160])
     page.get_by_role("button", name="Done").first.click(timeout=10_000)
     page.wait_for_selector(DIALOG_TAG, state="detached", timeout=30_000)
+    # the variables are declared asynchronously (and re-attached if PolyScope's insertion
+    # overwrote them — 10.10 and older): give the row a moment
+    with contextlib.suppress(Exception):
+        page.wait_for_function(
+            f"() => {{ const p = document.querySelector('{PICK_TAG}').contributedNode.parameters;"
+            " return !!(p.foundVariable && p.locVariable); }",
+            timeout=15_000,
+        )
     params = page.evaluate(f"() => document.querySelector('{PICK_TAG}').contributedNode.parameters")
     points = params.get("points") or []
     checks.expect(

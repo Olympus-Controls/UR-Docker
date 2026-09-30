@@ -292,7 +292,7 @@
       try {
         await this.ensureVariables();
         // the dialog edits this very node and saves through this API as it goes
-        await api.dialogService.openCustomDialog(DIALOG_TAG, { node: this._node, api, app: this._app }, {
+        await api.dialogService.openCustomDialog(DIALOG_TAG, { node: this._node, api, app: this._app, row: this }, {
           title: "Perceptronic Pick",
           dialogSize: "XL",
           confirmText: "Done",
@@ -342,6 +342,7 @@
       this._node = this._input.node || null;
       this._api = this._input.api || null;
       this._app = this._input.app || null;
+      this._row = this._input.row || null; // the tree row that opened this dialog
       this.render();
     }
     get presenterApi() { return this._dialogApi; }
@@ -389,6 +390,13 @@
     async save() {
       const pns = this.service("programNodeService");
       if (!pns) return;
+      // the row may have declared the result variables on its own copy of the node since this
+      // dialog was handed one: never save without them
+      const mine = this.params(), rows = this._row && this._row._node && this._row._node.parameters;
+      if (rows) {
+        if (!mine.foundVariable && rows.foundVariable) mine.foundVariable = rows.foundVariable;
+        if (!mine.locVariable && rows.locVariable) mine.locVariable = rows.locVariable;
+      }
       try {
         await pns.updateNode(this._node);
         this.dispatchEvent(new CustomEvent("outputDataChange", { detail: this._node, bubbles: true }));
