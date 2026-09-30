@@ -271,13 +271,18 @@ def install_checks(
             for m in tar.getmembers()
             if m.isfile() and m.name.startswith(f"{ARCHIVE}/")
         }
-    node = json.loads(packed["contribution.json"])["applicationNodes"][0]
+    contribution = json.loads(packed["contribution.json"])
+    node = contribution["applicationNodes"][0]
     files = [
         "contribution.json",
         node["presenterURI"],
         node["behaviorURI"],
         f"{node['translationPath']}en.json",
+        "pickscript.js",
     ]
+    for prog in contribution["programNodes"]:
+        files += [prog["presenterURI"], prog["behaviorURI"], prog["iconURI"]]
+    files = list(dict.fromkeys(files))
     url = f"{base}/{VENDOR}/{URCAP_ID}/{ARCHIVE}/"
     wait_for("the web archive to be served", lambda: http(url + files[0])[0] == 200, 120, 2)
     for rel in files:
@@ -326,6 +331,65 @@ RUNTIME_PROBE = """async (tag) => {
 }"""
 
 JOINTS = ("base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3")
+PICK_TAG = f"{TAG}-pick"
+DIALOG_TAG = f"{TAG}-pick-dialog"
+
+
+def program_node_checks(checks: Checks, page, shot) -> None:
+    """The Perceptronic Pick program node: from the toolbox into the tree, its row, the
+    dialog it opens (the feed live, a picture point taught from PolyScope's joint
+    positions), and the row's verdict once the node can generate a program. The
+    application node's cockpit URL was set by the checks before this."""
+    page.get_by_text("Program", exact=True).first.click(timeout=30_000)
+    page.wait_for_timeout(2000)
+    # the + under Main Program opens the toolbox (the tree's small call-to-action icon button)
+    page.locator("button.ur-icon-button-small.ur-icon-button-cta").first.click(timeout=30_000)
+    page.get_by_text("Perceptronic Pick", exact=True).first.click(timeout=30_000)
+    page.wait_for_selector(PICK_TAG, state="attached", timeout=60_000)
+    row = page.locator(PICK_TAG)
+    page.wait_for_function(
+        f"() => /picture/.test((document.querySelector('{PICK_TAG} [data-pk=txt]') || {{}}).textContent"
+        " || '')",
+        timeout=30_000,
+    )
+    checks.ok("pick node in the tree", row.locator('[data-pk="txt"]').inner_text()[:120])
+    verdict = row.locator('[data-pk="verdict"]').inner_text()
+    checks.expect("picture point" in verdict, "pick node invalid without a picture point", verdict[:160])
+    row.locator('[data-pk="open"]').click(force=True)
+    page.wait_for_selector(DIALOG_TAG, state="attached", timeout=30_000)
+    dlg = page.locator(DIALOG_TAG)
+    try:
+        page.wait_for_function(f"() => !!document.querySelector('{DIALOG_TAG} .dot.live')", timeout=45_000)
+        checks.ok("pick dialog feed live", dlg.locator('[data-pk="cap-bottom"]').inner_text()[:120])
+    except Exception:
+        checks.fail("pick dialog feed live", dlg.locator('[data-pk="cap-top"]').inner_text()[:200])
+    shot("pick-dialog")
+    dlg.locator('[data-pk="add"]').click()
+    page.wait_for_function(
+        # the verdict before the click says "add a picture point: …" — wait for the teach, or its error
+        f"() => /taught at joints|^picture point:/.test("
+        f"document.querySelector('{DIALOG_TAG} [data-pk=status]').textContent)",
+        timeout=30_000,
+    )
+    status = dlg.locator('[data-pk="status"]').inner_text()
+    checks.expect("taught at joints" in status, "picture point from PolyScope's joints", status[:160])
+    page.get_by_role("button", name="Done").first.click(timeout=10_000)
+    page.wait_for_selector(DIALOG_TAG, state="detached", timeout=30_000)
+    params = page.evaluate(f"() => document.querySelector('{PICK_TAG}').contributedNode.parameters")
+    points = params.get("points") or []
+    checks.expect(
+        len(points) == 1 and bool(params.get("foundVariable")) and bool(params.get("locVariable")),
+        "node saved: the picture point and the result variables",
+        f"{len(points)} point(s), variables {bool(params.get('foundVariable'))}/"
+        f"{bool(params.get('locVariable'))}",
+    )
+    page.wait_for_function(
+        f"() => /^ready/.test(document.querySelector('{PICK_TAG} [data-pk=verdict]').textContent)",
+        timeout=30_000,
+    )
+    checks.ok("pick node ready", row.locator('[data-pk="verdict"]').inner_text()[:160])
+    shot("pick-row")
+
 
 # PolyScope dialogs the simulator raises when its web UI comes up before the
 # controller does — a boot race, not the URCap (seen on a CI runner 2026-09-27:
@@ -460,6 +524,7 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
             saved = page.locator(TAG).locator('[data-rsp="url"]').input_value(timeout=30_000)
             checks.expect(saved == cockpit, "cockpit URL persists", saved)
             shot("node-reloaded")
+            program_node_checks(checks, page, shot)
             if boot_dialogs:
                 checks.ok("simulator boot race", f"acknowledged {len(boot_dialogs)} × {boot_dialogs[0]!r}")
             ours_errors = [e for e in errors if ours in e]

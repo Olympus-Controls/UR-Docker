@@ -192,7 +192,16 @@ buttons call the existing bring-up / nearest / approach-cycle / stop actions.
 Application Node that embeds the cockpit's colour feed in PolyScope X and turns a
 click into a base-frame point + approach pose (`/api/segment` → `/api/robot/locate`)
 with two Move buttons — PolyScope's IK + auto-move screen, or the cockpit over
-Primary. Plain JavaScript, no npm: `urcap/urcapx.py package|install|list|delete`
+Primary — plus, since 0.3.0 (2026-09-29), the **pick areas + reach** on that node and
+the **Perceptronic Pick** / **After picture N** program nodes: the PolyScope 5 kit's
+node for PolyScope X (`pickscript.js` = `PickScript.java`'s port, same pick-server
+protocol 2, held to the Python parser by `tests/test_urcapx_pick.py`). PolyScope X draws
+a program node's presenter inside its 48 px tree row, so the Pick row is one line and
+the screen is a PolyScope custom dialog (`dialogService.openCustomDialog`); a code
+generator answers `{type: "$$ScriptBuilder", script, currentIndent}` (children indent by
+`currentIndent`; the after-children builder carries the negative). Verified in the 10.13
+sim: toolbox → row → dialog → picture point from PolyScope's joints → the script
+compiled and run by Play (NEXT → movej → FIND over the network to a cockpit). Plain JavaScript, no npm: `urcap/urcapx.py package|install|list|delete`
 (gzipped tar, manifest first; multipart to the Robot-API's `urcaps/v1/urcaps/`);
 `make urcap-package|urcap-install|urcap-cockpit`. **`urcap/dist/*.urcapx` is the
 committed download** and a test holds it byte-equal to a fresh (reproducible)

@@ -3,7 +3,15 @@
     "nodes": {
       "nickarmenta-perceptronic": {
         "title": "Perceptronic",
-        "supportiveText": "Wrist camera feed — click a point to send the arm there"
+        "supportiveText": "Wrist camera feed — click a point to send the arm there; the pick areas and reach for the Pick node"
+      }
+    }
+  },
+  "program": {
+    "tree": {
+      "nodes": {
+        "nickarmenta-perceptronic-pick": "Perceptronic Pick",
+        "nickarmenta-perceptronic-after": "After picture"
       }
     }
   }

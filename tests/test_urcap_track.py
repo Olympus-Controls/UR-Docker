@@ -70,14 +70,56 @@ def sdk_zip_bytes(version: str, contribution_api: str, threads: str, spec_versio
 
 DTS = """
 /** a comment that mentions interface RobotMoveService { teleport(): void } */
-declare class CommonPresenterAPI {
+declare class CommonBehaviorAPI {
+    applicationService: ApplicationService;
+    dialogService: DialogService;
     robotPositionService: RobotPositionService;
+    robotInfoService: RobotInfoService;
+    variableService: VariableService;
+}
+declare class CommonPresenterAPI extends CommonBehaviorAPI {
     applicationNodeService: ApplicationNodeService;
 }
 declare class ApplicationPresenterAPI extends CommonPresenterAPI {
     robotMoveService: RobotMoveService;
     constructor(target: UREventTarget | CommunicationChannel);
 }
+declare class ProgramPresenterAPI extends CommonPresenterAPI {
+    programNodeService: ProgramNodeService;
+    robotMoveService: RobotMoveService;
+    constructor(target: EventTargetOrCommChannel, selectedNodeId: string);
+}
+declare class ProgramNodeService {
+    updateNode(node: ProgramNode): Promise<void>;
+}
+declare class ApplicationService {
+    getApplicationNode(name: string): Promise<ApplicationNode>;
+}
+declare class VariableService {
+    createVariable(name: string, variableType: string): Promise<VariableDeclaration>;
+}
+declare class RobotInfoService {
+    getRobotType(): Promise<string>;
+}
+declare class DialogService {
+    openCustomDialog<P = any, R = P>(componentTag: string, initialData: P, options?: object): Promise<R>;
+}
+interface ProgramPresenter {
+    robotSettings?: RobotSettings;
+    contributedNode?: ProgramNode;
+    programTree?: TreeContext;
+    applicationContext?: ApplicationContext;
+    presenterAPI?: ProgramPresenterAPI;
+}
+type ProgramBehaviors<ProgramNodeSubtype extends ProgramNode> = BaseBehavior<ProgramNodeSubtype> & {
+    programNodeLabel: ProgramNodeLabel<ProgramNodeSubtype>;
+    generateCodeBeforeChildren?: CodeGenerator<ProgramNodeSubtype>;
+    generateCodeAfterChildren?: CodeGenerator<ProgramNodeSubtype>;
+    validator?: Validator<ProgramNodeSubtype>;
+    allowsChild?: ChildInsertionRule;
+    upgradeNode?: ProgramVersionController<ProgramNodeSubtype>;
+    onLifeCycleHook?: LifeCycleEvent<ProgramNodeLifeCycleEventType, SubtreeNode>;
+};
 declare class ApplicationNodeService {
     updateNode(node: ApplicationNode): Promise<void>;
 }
@@ -581,6 +623,23 @@ def test_api_surface_covers_every_call_the_urcap_makes():
         assert name in surface["ApplicationBehaviors"], name
     for prop in ("applicationNode", "applicationAPI", "robotSettings"):
         assert f"set {prop}(" in main_js and prop in surface["ApplicationPresenter"]
+    # the program nodes: pick.js against ProgramPresenterAPI, the two workers against ProgramBehaviors
+    pick_js = (FRONTEND / "pick.js").read_text(encoding="utf-8")
+    for m in re.finditer(r"\brps\.(\w+)", pick_js):
+        assert m.group(1) in surface["RobotPositionService"], m.group(0)
+    for m in re.finditer(r"\b(?:api|this\._api)\.(\w+Service)\b(?:\.(\w+))?", pick_js):
+        service, member = m.groups()
+        assert service in surface["ProgramPresenterAPI"], m.group(0)
+        cls = service[0].upper() + service[1:]
+        if member and cls in surface:
+            assert member in surface[cls], m.group(0)
+    for prop in surface["ProgramPresenter"]:
+        assert f"set {prop}(" in pick_js, prop
+    for name in ("pick-node.worker.js", "after-node.worker.js"):
+        w = (FRONTEND / name).read_text(encoding="utf-8")
+        behaviors = re.search(r"const behaviors = \{(.*?)\n\};", w, re.S).group(1)
+        for member in re.findall(r"^\s{2}(\w+):", behaviors, re.M):
+            assert member in surface["ProgramBehaviors"], f"{name}: {member}"
 
 
 # -- compat: manifest -----------------------------------------------------------------------------
@@ -589,7 +648,7 @@ def test_api_surface_covers_every_call_the_urcap_makes():
 def test_read_yaml_reads_the_real_manifest():
     manifest = track.read_yaml((ROOT / "urcap/perceptronic/manifest.yaml").read_text(encoding="utf-8"))
     assert manifest["metadata"]["vendorID"] == "nickarmenta"
-    assert manifest["metadata"]["version"] == "0.2.0"
+    assert manifest["metadata"]["version"] == "0.3.0"
     assert manifest["artifacts"]["webArchives"] == [
         {"id": "perceptronic-frontend", "folder": "perceptronic-frontend"}
     ]

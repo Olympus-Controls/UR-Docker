@@ -37,7 +37,37 @@
     .rsp .status.warn { background: #fff4d6; } .rsp .status.err { background: #fde2e2; } .rsp .status.ok { background: #e3f5ea; }
     .rsp .target { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
     .rsp small { color: #5b6b7d; }
+    .rsp .card { border: 1px solid #d5dce5; border-radius: 8px; padding: 10px 12px; margin: 10px 0 0; }
+    .rsp .card h3 { margin: 0 0 6px; font-size: 14px; }
+    .rsp .card h3 small { font-weight: normal; }
+    .rsp .area { display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid #eef2f7; }
+    .rsp .area input { padding: 5px 8px; border: 1px solid #b9c3cf; border-radius: 6px; font: inherit; min-width: 0; }
+    .rsp .area .touch { padding: 5px 9px; font-size: 12.5px; }
+    .rsp .area .touch.done { background: #e3f5ea; border-color: #1d9a5a; }
+    .rsp .area .plane { grid-column: 1 / -1; font-size: 12px; color: #5b6b7d; }
+    .rsp .area .plane.warn { color: #9a6b00; }
+    .rsp .reach-card input { padding: 5px 8px; border: 1px solid #b9c3cf; border-radius: 6px; font: inherit; width: 64px; text-align: right; }
+    .rsp .reach-map { margin: 4px 0 8px; } .rsp .reach-map svg { display: block; max-width: 100%; height: auto; }
   `;
+
+  const ARCHIVE_PATH = "/nickarmenta/perceptronic/perceptronic-frontend/";
+  const selfUrl = typeof document !== "undefined" && document.currentScript && document.currentScript.src;
+  // pickscript.js (the Pick node's settings + pose math) also serves this node's pick areas and reach:
+  // loaded once, by <script>, the first time a node needs it (never at load — tests run this file under node).
+  let libPromise = null;
+  const loadLib = () => libPromise || (libPromise = new Promise((resolve, reject) => {
+    if (window.PerceptronicPick) { resolve(window.PerceptronicPick); return; }
+    const libUrl = new URL("pickscript.js", selfUrl || `${location.origin}${ARCHIVE_PATH}`).href;
+    const existing = document.querySelector("script[data-perceptronic-lib]");
+    const tag = existing || document.createElement("script");
+    if (!existing) {
+      tag.src = libUrl;
+      tag.dataset.perceptronicLib = "1";
+      document.head.appendChild(tag);
+    }
+    tag.addEventListener("load", () => (window.PerceptronicPick ? resolve(window.PerceptronicPick) : reject(new Error("pickscript.js loaded but defined nothing"))));
+    tag.addEventListener("error", () => reject(new Error(`could not load ${libUrl}`)));
+  }));
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const fmt = (v, d = 3) => (typeof v === "number" ? v.toFixed(d) : "?");
@@ -138,6 +168,8 @@
       this._located = null;
       this._hoverTimer = null;
       this._hoverPending = null;
+      this._lib = null;
+      this._modelAsked = false;
     }
 
     // -- properties PolyScope X sets -----------------------------------------------
@@ -261,10 +293,26 @@
               <button data-rsp="clear">Clear</button>
             </div>
             <small>Click = segment at the pixel → point in the base frame through the hand-eye → approach pose above it. Reach is checked before a move is offered.</small>
+            <div class="card" data-rsp="areas-card">
+              <h3>Pick areas <small>for the Perceptronic Pick node — touch the table with the fingertips at a corner, along one edge, and on the far side</small></h3>
+              <div data-rsp="areas"></div>
+              <div class="row"><button data-rsp="area-add">New area</button> <small data-rsp="areas-note"></small></div>
+            </div>
+            <div class="card reach-card" data-rsp="reach-card">
+              <h3>Reach <small data-rsp="reach-model"></small></h3>
+              <div class="reach-map" data-rsp="reach-map"></div>
+              <div class="row">
+                <label>Tool length <input type="text" inputmode="numeric" data-rsp="tipMm" /> mm</label>
+                <label>Inner margin <input type="text" inputmode="numeric" data-rsp="reachInnerMm" /> mm</label>
+                <label>Outer margin <input type="text" inputmode="numeric" data-rsp="reachOuterMm" /> mm</label>
+              </div>
+              <small data-rsp="reach-text"></small>
+            </div>
           </div>`;
         this.wire();
         this._built = true;
         this.startPolling();
+        this.startAreas();
       }
       this.$("url").value = this._node.cockpitUrl || "";
       this.$("open").href = this.cockpitUrl() + "/";
@@ -289,6 +337,149 @@
       if (!el) return;
       el.textContent = text;
       el.className = "status" + (kind ? ` ${kind}` : "");
+    }
+
+    async persist() {
+      try {
+        if (this._api && this._api.applicationNodeService) await this._api.applicationNodeService.updateNode(this._node);
+      } catch (err) {
+        this.setStatus(`could not save the node: ${err && err.message ? err.message : err}`, "err");
+      }
+    }
+
+    // -- pick areas + reach (what the Perceptronic Pick program node reads from this node) -----------
+    async startAreas() {
+      try {
+        this._lib = await loadLib();
+      } catch (err) {
+        this.$("areas-note").textContent = err.message;
+        return;
+      }
+      this.$("area-add").addEventListener("click", () => this.areaAdd());
+      ["tipMm", "reachInnerMm", "reachOuterMm"].forEach((key) => {
+        this.$(key).addEventListener("change", (ev) => {
+          const v = Math.round(parseFloat(String(ev.target.value).replace(",", ".")));
+          const max = key === "tipMm" ? 500 : 1000;
+          this._node[key] = Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : this._node[key];
+          this.persist();
+          this.syncAreas();
+        });
+      });
+      this.syncAreas();
+      await this.askRobotModel();
+    }
+
+    async askRobotModel() {
+      if (this._modelAsked || !this._api || !this._api.robotInfoService) return;
+      this._modelAsked = true;
+      try {
+        const model = String((await this._api.robotInfoService.getRobotType()) || "").trim();
+        if (model && model !== this._node.robotModel) {
+          this._node.robotModel = model;
+          await this.persist();
+        }
+      } catch (e) {
+        this._modelAsked = false;
+      }
+      this.syncAreas();
+    }
+
+    syncAreas() {
+      const P = this._lib;
+      if (!P || !this._built) return;
+      const node = this._node;
+      const areas = Array.isArray(node.areas) ? node.areas : (node.areas = []);
+      const tip = Number.isFinite(node.tipMm) ? node.tipMm : P.DEFAULT_TIP_MM;
+      const box = this.$("areas");
+      box.innerHTML = "";
+      areas.forEach((a, i) => {
+        const row = document.createElement("div");
+        row.className = "area";
+        const pl = P.plane(a.p0, a.p1, a.p2);
+        const missing = ["p0", "p1", "p2"].filter((k) => !a[k]).length;
+        row.innerHTML = `
+          <input type="text" value="${(a.name || `Area ${i + 1}`).replace(/"/g, "&quot;")}" maxlength="24" title="name" />
+          <button class="touch ${a.p0 ? "done" : ""}" data-k="p0" title="touch the table at a corner of the area">Corner</button>
+          <button class="touch ${a.p1 ? "done" : ""}" data-k="p1" title="touch along one edge from that corner">Edge</button>
+          <button class="touch ${a.p2 ? "done" : ""}" data-k="p2" title="touch the far side">Far side</button>
+          <button class="touch" data-k="del" title="remove this area">✕</button>
+          <div class="plane"></div>`;
+        const plane = row.querySelector(".plane");
+        if (pl) {
+          const tilt = P.tiltDeg(pl);
+          plane.textContent = `${Math.round(Math.abs(pl[6]) * 1000)} × ${Math.round(Math.abs(pl[7]) * 1000)} mm, origin [${pl.slice(0, 3).map((v) => v.toFixed(3)).join(", ")}] m` +
+            (tilt > 2 ? ` — tilted ${tilt.toFixed(1)}° from the base plane: re-touch (the table is flat)` : ` · level (${tilt.toFixed(1)}°)`);
+          plane.className = tilt > 2 ? "plane warn" : "plane";
+        } else if (!missing) {
+          plane.textContent = "the three touches are in a line or too close — touch a corner, along one edge, and the far side";
+          plane.className = "plane warn";
+        } else {
+          plane.textContent = `touch ${missing} more point${missing === 1 ? "" : "s"} with the fingertips (${tip} mm past the flange)`;
+        }
+        row.querySelector("input").addEventListener("change", (ev) => {
+          const name = String(ev.target.value).replace(/[^A-Za-z0-9 ._-]/g, "").trim().slice(0, 24);
+          if (name) { a.name = name; this.persist(); }
+          this.syncAreas();
+        });
+        row.querySelectorAll(".touch").forEach((b) => b.addEventListener("click", () => (b.dataset.k === "del" ? this.areaRemove(i) : this.touch(i, b.dataset.k))));
+        box.appendChild(row);
+      });
+      this.$("area-add").disabled = areas.length >= P.MAX_AREAS;
+      this.$("areas-note").textContent = areas.length ? "" : "no pick area yet: the Pick node finds the table live";
+      ["tipMm", "reachInnerMm", "reachOuterMm"].forEach((key) => {
+        const def = key === "tipMm" ? P.DEFAULT_TIP_MM : 150;
+        this.$(key).value = String(Number.isFinite(node[key]) ? node[key] : def);
+      });
+      const model = node.robotModel || "";
+      const reach = P.reachLimits(model, node.reachInnerMm, node.reachOuterMm);
+      const mr = P.modelReach(model);
+      // the cell from above: the base, the reach ring, every taught area (the PolyScope 5 node's map)
+      const drawn = areas.map((a, i) => ({ a, pl: P.plane(a.p0, a.p1, a.p2), i })).filter((x) => x.pl)
+        .map((x) => ({ name: x.a.name || `Area ${x.i + 1}`, corners: P.areaCorners(x.pl) }));
+      this.$("reach-map").innerHTML = P.svgReachMap(mr ? mr[0] : 0.064, reach ? reach.min : (mr ? mr[0] : 0.064) + 0.15, reach ? reach.max : 0, drawn, -1, 240, 240);
+      this.$("reach-model").textContent = model ? `robot ${model}` : "robot model unknown";
+      this.$("reach-text").textContent = reach
+        ? `parts are picked between ${(reach.min * 1000).toFixed(0)} mm and ${reach.max ? `${(reach.max * 1000).toFixed(0)} mm` : "any distance"} from the base axis`
+        : "no reach ring for this robot model: the Pick node sends no reach limit";
+    }
+
+    areaAdd() {
+      const P = this._lib;
+      const areas = this._node.areas || (this._node.areas = []);
+      if (areas.length >= P.MAX_AREAS) return;
+      areas.push({ name: `Area ${areas.length + 1}`, p0: null, p1: null, p2: null });
+      this.persist();
+      this.syncAreas();
+    }
+
+    areaRemove(i) {
+      this._node.areas.splice(i, 1);
+      this.persist();
+      this.syncAreas();
+      this.setStatus("area removed — check the picture points of any Pick node that used it", "warn");
+    }
+
+    // A touch: PolyScope's joint positions → its DH table → the flange → the fingertips (tipMm along +Z).
+    async touch(i, key) {
+      const P = this._lib;
+      const rps = this._api && this._api.robotPositionService;
+      if (!rps || typeof rps.getJointPositions !== "function" || typeof rps.getKinematicInfo !== "function") {
+        this.setStatus("PolyScope's position services are not on this API", "warn");
+        return;
+      }
+      try {
+        const q = await withTimeout(firstValue(rps.getJointPositions()), 5000, "no joint positions from PolyScope in 5 s");
+        const dh = await withTimeout(rps.getKinematicInfo(), 5000, "no kinematic info from PolyScope in 5 s");
+        const qa = Array.isArray(q) ? q.map(Number) : ["base", "shoulder", "elbow", "wrist1", "wrist2", "wrist3"].map((k) => Number(q[k]));
+        const flange = matToPose(flangeMat(dh, qa));
+        const tip = P.fingertip(flange, Number.isFinite(this._node.tipMm) ? this._node.tipMm : P.DEFAULT_TIP_MM);
+        this._node.areas[i][key] = tip.map((v) => Math.round(v * 1e5) / 1e5);
+        await this.persist();
+        this.syncAreas();
+        this.setStatus(`${this._node.areas[i].name}: ${key === "p0" ? "corner" : key === "p1" ? "edge" : "far side"} at [${fmtVec(tip)}] m (fingertips)`, "ok");
+      } catch (err) {
+        this.setStatus(`touch: ${err && err.message ? err.message : err}`, "err");
+      }
     }
 
     setLive(live, fps) {
