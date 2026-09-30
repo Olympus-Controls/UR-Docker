@@ -57,7 +57,12 @@ FIRST_MINOR = "10.7"
 # checked against the pinned contribution-api typings. tests/test_urcap_track.py
 # holds this list to the source so a new call can't skip the check.
 API_SURFACE: dict[str, tuple[str, ...]] = {
-    "ApplicationPresenterAPI": ("applicationNodeService", "robotPositionService", "robotMoveService"),
+    "ApplicationPresenterAPI": (
+        "applicationNodeService",
+        "robotPositionService",
+        "robotMoveService",
+        "robotInfoService",
+    ),
     "ApplicationNodeService": ("updateNode",),
     "RobotPositionService": (
         "getKinematicInfo",
@@ -66,8 +71,39 @@ API_SURFACE: dict[str, tuple[str, ...]] = {
         "getJointPositions",
     ),
     "RobotMoveService": ("autoMove",),
+    "RobotInfoService": ("getRobotType",),
     "ApplicationPresenter": ("applicationNode", "applicationAPI", "robotSettings"),
     "ApplicationBehaviors": ("factory", "upgradeNode", "downgradeNode"),
+    # the Perceptronic Pick program node (pick.js + pick-node.worker.js / after-node.worker.js)
+    "ProgramPresenterAPI": (
+        "programNodeService",
+        "applicationService",
+        "variableService",
+        "robotPositionService",
+        "robotMoveService",
+        "dialogService",
+    ),
+    "ProgramNodeService": ("updateNode",),
+    "DialogService": ("openCustomDialog",),
+    "ApplicationService": ("getApplicationNode",),
+    "VariableService": ("createVariable",),
+    "ProgramPresenter": (
+        "contributedNode",
+        "presenterAPI",
+        "robotSettings",
+        "programTree",
+        "applicationContext",
+    ),
+    "ProgramBehaviors": (
+        "factory",
+        "programNodeLabel",
+        "validator",
+        "generateCodeBeforeChildren",
+        "generateCodeAfterChildren",
+        "allowsChild",
+        "upgradeNode",
+        "onLifeCycleHook",
+    ),
 }
 
 

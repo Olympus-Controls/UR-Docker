@@ -89,3 +89,4 @@
 - 2026-09-12 — SAM backend stays "wired, unverified" until a GPU box exists; the demo uses the stub segmenter.
 - 2026-09-12 — Dependabot ignores `universalrobots/ursim_polyscopex` bumps (pinned 10.13.0; re-test new tags by hand).
 - 2026-09-27 — **Approach by the fingertips, always** ("the tool offset is critical"): the default approach reference is `fingertip` (`PERCEPTRONICS_TIP_M`, 0.163 m on the UR3e's Hand-E), moves run with that TCP, the controller's active TCP is never used for it.
+- 2026-09-29 — PolyScope X Pick node (URCap 0.3.0): the Robotiq gripper option assumes the Hand-E URCap *for PolyScope X* also serves `127.0.0.1:63352` on the controller like the e-Series one — unverified; if it doesn't, the node needs a PolyScope X gripper path (tool I/O / the URCap's own nodes). Which gripper is on the UR20?

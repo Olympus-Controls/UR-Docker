@@ -21,11 +21,16 @@ urcap/
   perceptronic/
     manifest.yaml                          vendorID nickarmenta, urcapID perceptronic
     perceptronic-frontend/
-      contribution.json                    one applicationNode: tag nickarmenta-perceptronic
-      main.js                              the presenter (a custom element)
-      perceptronic-node.worker.js       the behavior worker (node factory / upgrade)
-      assets/i18n/en.json                  node title + supportive text
+      contribution.json                    the applicationNode (tag nickarmenta-perceptronic) + two programNodes
+      main.js                              the application node's presenter (a custom element): feed, click → locate, pick areas, reach
+      perceptronic-node.worker.js       its behavior worker (node factory / upgrade)
+      pickscript.js                        the Pick node's settings + URScript + pose math (worker, page and tests share it)
+      pick.js                              the program nodes' presenters: the Pick row + its dialog, the After picture row
+      pick-node.worker.js                  the Pick node's behaviors (label, validator, code before/after children)
+      after-node.worker.js                 the After picture N node's behaviors
+      assets/i18n/en.json                  node titles + supportive text (program.tree.nodes.<tag> for program nodes)
       assets/icons/perceptronic.svg      the P mark — a copy of ../perceptronic.svg (a test holds them equal)
+      assets/icons/perceptronic-*.svg    the program nodes' toolbox icons
 ```
 
 **`dist/` is committed and must match the source.** `urcapx.py package` is
@@ -79,6 +84,44 @@ targets 10.14):
   `robotPositionService.getInverseKinematics(pose, qNear)` and
   `robotMoveService.autoMove(joints)` (UR's hold-to-move screen), and there is
   no script endpoint in the Robot-API either. Hence the two Move buttons.
+
+Facts the **program nodes** (`pick.js`, the two `*-node.worker.js`) are built on — read
+out of PolyScope 10.13's own bundles (`web-app/main.js`, `web-program-nodes/*`),
+2026-09-29:
+
+- **A program node's presenter renders inside its tree row** (`ur-inline-presenter` in a
+  48 px `virtual-tree-item`): the Pick row is one line; the real screen is a
+  **custom dialog** — `presenterAPI.dialogService.openCustomDialog(tag, inputData,
+  {title, dialogSize: "XL", confirmText, raiseForKeyboard})`. PolyScope creates the tag's
+  element, sets `inputData`, `presenterApi` (a `WebComponentDialogAPI`) and `afterOpen` on
+  it, listens for `outputDataChange` / `canSave` / `closeDialog` DOM events, and closes it
+  from its own footer. `inputData` is passed by reference (UR's own nodes hand their
+  `presenterAPI` through it), so the dialog saves through the row's
+  `programNodeService.updateNode` as it goes.
+- **Behaviors:** `registerProgramBehavior` is `expose` like the application one; the
+  worker answers `factory`, `programNodeLabel` (`[{type: "primary"|"secondary", value}]`
+  — PolyScope prefixes the row with the i18n title itself), `validator` (`{isValid,
+  errorMessageKey}`), `generateCodeBeforeChildren` / `generateCodeAfterChildren`,
+  `allowsChild`, `upgradeNode`, `onLifeCycleHook`.
+- **A ScriptBuilder crosses the worker boundary as `{type: "$$ScriptBuilder", script,
+  currentIndent}`** (PolyScope rebuilds `new ScriptBuilder(script, currentIndent)` and
+  `append`s it: the lines at the parent's indent, then the children `currentIndent`
+  levels deeper — so the before-children builder ends with the open block and
+  `currentIndent = depth`, the after-children one carries `-depth`). Lines keep their own
+  leading spaces; empty lines are dropped.
+- **The application context arrives serialized:** `{type: "$$ApplicationContext",
+  contributions: {contributionList: [...]}, frames: {framesList}}` — our application node
+  is the entry whose `type` / `parentType` is `nickarmenta-perceptronic` (cockpit URL,
+  areas, tip, reach margins, robot model).
+- **Program variables** are declared from the presenter with
+  `variableService.createVariable(name, "boolean" | "integer")`; the declaration
+  (`{id, name, valueType, _IDENTIFIER}`) is stored in the node, the script writes
+  `global <name> = …` (what UR's Assignment node emits for a declaration).
+- **The URScript the node writes is the PolyScope 5 node's** (`PickScript.java`) —
+  `pickscript.js` is its port, `tests/test_urcapx_pick.py` holds it to the Python pick
+  server's parser the way `tests/test_urcap5_pick.py` holds the Java. PolyScope X's script
+  editor lists every function it uses (`get_inverse_kin_has_solution`,
+  `socket_read_ascii_float`, …); verified by playing it in the 10.13 sim.
 
 ## Running the mock-up (sim on this Mac)
 
