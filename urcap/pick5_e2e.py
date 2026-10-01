@@ -42,7 +42,7 @@ sys.path.insert(0, str(REPO))
 
 from perceptronics.picknode import PickPlanner, PickServer, parse_request  # noqa: E402
 from perceptronics.synthscene import Box, render_depth  # noqa: E402
-from tests.test_urcap5 import HARNESS, JAVA, PURE_JAVA  # noqa: E402
+from tests.test_urcap5 import HARNESS, JAVA, PURE_JAVA, SCREEN_JAVA  # noqa: E402
 from urctl import Robot, RobotConfig  # noqa: E402
 from urctl.pose import Transform  # noqa: E402
 
@@ -92,7 +92,7 @@ def generate(spec: dict) -> str:
     pkg = root / "src" / "io" / "advin" / "perceptronic"
     pkg.mkdir(parents=True)
     (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
-    for name in PURE_JAVA:
+    for name in (*PURE_JAVA, *SCREEN_JAVA):  # the harness lays the screens out too
         shutil.copy(JAVA / name, pkg / name)
     subprocess.run(
         [
@@ -125,6 +125,25 @@ def generate(spec: dict) -> str:
     if res["problem"]:
         raise SystemExit(f"PickScript refused: {res['problem']}")
     return res["script"]
+
+
+def verdict(captured: list[str], log: list[str]) -> dict[str, bool]:
+    """What the three runs must have left behind — in the controller's messages (``captured``)
+    and in the pick server's log: each run ended holding a part, the second took its part
+    from the queue, and the third (the closer look off) never asked for a look pose."""
+    flat = [c.replace(" ", "") for c in captured]
+    return {
+        "first run holds a part": any("rs_e2e/first=True" in c for c in flat),
+        "it came from picture point 1": any("rs_e2e/loc=1" in c for c in flat),
+        "second run holds a part": any("rs_e2e/found=True" in c for c in flat),
+        "second run took it from the queue": any("nextpartalreadyseen" in c for c in flat)
+        and any(t.startswith("pick NEXT [e2e001]: found") for t in log),
+        "third run (no closer look) holds a part": any("rs_e2e/nolook=True" in c for c in flat),
+        "two surveys found the part": sum(1 for t in log if t.startswith("pick FIND [e2e001]: found")) >= 2,
+        "every run re-measured it": sum(1 for t in log if t.startswith("pick REFINE [e2e001]: found")) >= 3,
+        # the first two runs take the closer look; the third never asks for one
+        "two closer looks, not three": sum(1 for t in log if t.startswith("pick LOOK: found")) == 2,
+    }
 
 
 ERRORS = re.compile(r"(?i)error|exception|not defined|unknown|illegal|syntax|invalid")
@@ -263,23 +282,9 @@ def main() -> int:
     for c in captured:
         if ERRORS.search(c) and "rs_e2e" not in c:
             print("  controller:", c)
-    flat = [c.replace(" ", "") for c in captured]
-    first = any("rs_e2e/first=True" in c for c in flat)
-    found = any("rs_e2e/found=True" in c for c in flat)
-    no_look_found = any("rs_e2e/nolook=True" in c for c in flat)
-    loc = any("rs_e2e/loc=1" in c for c in flat)
-    queued = any("nextpartalreadyseen" in c for c in flat)
-    ok = (
-        first
-        and found
-        and no_look_found
-        and loc
-        and queued
-        and sum(1 for t in log if t.startswith("pick FIND [e2e001]: found")) >= 2
-        and sum(1 for t in log if t.startswith("pick REFINE [e2e001]: found")) >= 3
-        and sum(1 for t in log if t.startswith("pick LOOK: found")) == 1  # the third run never asks
-        and any(t.startswith("pick NEXT [e2e001]: found") for t in log)
-    )
+    ok = all(verdict(captured, log).values())
+    for what, good in verdict(captured, log).items():
+        print(f"  {'ok  ' if good else 'FAIL'}  {what}")
     print("controller compiles the full script (Robotiq + popup):", compiled)
     if control:
         print("  (inconclusive: this controller also ran a dead branch naming an undefined function)")
