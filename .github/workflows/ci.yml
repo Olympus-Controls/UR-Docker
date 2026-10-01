@@ -67,8 +67,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\cockpit.ps1 -Doctor || exit /b 1
-          echo N| call Windows-Setup.cmd || exit /b 1
+          rem No robot on a runner, so the doctor's verdict is NOT READY (exit 1): reaching a verdict is the pass.
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\cockpit.ps1 -Doctor > doctor.log 2>&1
+          type doctor.log
+          findstr /c:"verdict:" doctor.log || exit /b 1
+          echo N| call Windows-Setup.cmd > setup.log 2>&1
+          type setup.log
+          findstr /c:"verdict:" setup.log || exit /b 1
+          findstr /c:"SETUP FINISHED" setup.log || exit /b 1
 
   package:
     # The wheel must carry the cockpit's static assets (perceptronics/webui/) and the
