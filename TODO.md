@@ -26,8 +26,6 @@
 
 ## Open questions for Nick
 
-- 2026-09-30 — `LICENSE` reads "Copyright (c) 2024 Olympus Controls" and is packaged inside the Perceptronic URCap jar, which now carries `Bundle-Copyright: Copyright (c) 2026 Nick Armenta`. Change the licence's copyright line (or give the URCap its own licence file), or leave it?
-- 2026-09-30 — `docs/index.html` keeps its links on Olympus-Controls/UR-utils (decided 09-27), but that repo's `main` still has the `perception` package and no Windows scripts, so the page's developer quick start (`git clone …UR-utils`) does not work as written; only the Windows ZIP button points at JimothyJohn/perceptronics. Point the quick start at the fork too, or wait until Olympus is updated?
 - 2026-09-30 — The `urcap5-v*` release attaches only the jar. Attach `urmagic_perceptronic.sh` as well so a stick can be made from the release page? It is a deploy-chain edit (`release-urcap5.yml`), so it goes in a draft PR if yes.
 - 2026-09-30 — **3D Pick, the gripper**: with no gripper options and no children, the node clamps a **Robotiq through its URCap socket only** (force 40 %, speed 100 %, 50 mm stroke — `PickScript` constants). A digital-output or vacuum gripper can no longer be chosen on the pendant (the code path is kept for the simulator). Robotiq-only for now, or one gripper choice in the Installation node?
 - 2026-09-30 — **3D Pick ends at the clamp, at grip depth** (your spec: "ends with the gripper clamping the part") — the node no longer lifts. The next node must go up before it goes sideways. Keep it there, or back up to the approach height while holding?
