@@ -20,6 +20,7 @@ rectangle on the demo table, typed values come from a dialog instead of PolyScop
     uv run python urcap/preview5.py --shuffle 6       # ... that re-scatters the parts every 6 s
     uv run python urcap/preview5.py --cockpit http://192.168.3.10:7621
     uv run python urcap/preview5.py --snapshot out.png   # render once and exit (no display)
+    uv run python urcap/preview5.py --screens urcap/perceptronic-ps5/screens   # the README's three pictures
 
 Needs a JDK (``javac``).
 """
@@ -131,7 +132,7 @@ def build() -> Path:
     if not javac:
         raise SystemExit("the preview needs a JDK (javac): brew install openjdk, or apt install default-jdk")
     root = Path(tempfile.mkdtemp(prefix="urcap5-preview-"))
-    pkg = root / "src" / "com" / "nickarmenta" / "perceptronic"
+    pkg = root / "src" / "io" / "advin" / "perceptronic"
     pkg.mkdir(parents=True)
     for name in (*PURE_JAVA, *SCREENS):
         shutil.copy(JAVA / name, pkg / name)
@@ -154,6 +155,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--snapshot", help="render the window once to this PNG and exit (works without a display)"
     )
+    ap.add_argument(
+        "--screens", help="write the README's three screen pictures (1000 x 560) into this directory and exit"
+    )
     args = ap.parse_args(argv)
 
     stop = None
@@ -164,11 +168,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"simulated camera computer on {base} (no camera connected: its picture says so)", flush=True)
     classes = build()
     cmd = ["java", "-cp", str(classes)]
-    if args.snapshot:
+    if args.snapshot or args.screens:
         cmd.append("-Djava.awt.headless=true")
-    cmd += ["com.nickarmenta.perceptronic.Preview", base]
+    cmd += ["io.advin.perceptronic.Preview", base]
     if args.snapshot:
         cmd += ["--snapshot", str(Path(args.snapshot).resolve())]
+    elif args.screens:
+        Path(args.screens).mkdir(parents=True, exist_ok=True)
+        cmd += ["--screens", str(Path(args.screens).resolve())]
     try:
         return subprocess.run(cmd).returncode
     finally:

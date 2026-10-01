@@ -10,7 +10,7 @@
 // to PolyScope (inverse kinematics + UR's own auto-move screen, operator in the
 // loop) or ask the cockpit to move over Primary (urctl's safety envelope).
 (() => {
-  const TAG = "nickarmenta-perceptronic";
+  const TAG = "advin-perceptronic";
   const DEFAULT_COCKPIT_PORT = 7621;
   const POLL_TIMEOUT_MS = 1500;
   const HOVER_MS = 150;
@@ -50,7 +50,7 @@
     .rsp .reach-map { margin: 4px 0 8px; } .rsp .reach-map svg { display: block; max-width: 100%; height: auto; }
   `;
 
-  const ARCHIVE_PATH = "/nickarmenta/perceptronic/perceptronic-frontend/";
+  const ARCHIVE_PATH = "/advin/perceptronic/perceptronic-frontend/";
   const selfUrl = typeof document !== "undefined" && document.currentScript && document.currentScript.src;
   // pickscript.js (the Pick node's settings + pose math) also serves this node's pick areas and reach:
   // loaded once, by <script>, the first time a node needs it (never at load — tests run this file under node).

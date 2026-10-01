@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
@@ -30,7 +30,7 @@ import javax.swing.SwingUtilities;
  * <p>Not part of the URCap (it is outside {@code perceptronic-ps5/src}). Run it with
  * {@code uv run python urcap/preview5.py}.
  *
- * <pre>java … Preview http://127.0.0.1:7650 [--snapshot out.png]</pre>
+ * <pre>java … Preview http://127.0.0.1:7650 [--snapshot out.png | --screens dir]</pre>
  */
 public final class Preview {
     private static final double[] PLACEHOLDER_Q = {0, -1.0, 1.2, -1.8, -1.5708, 0};
@@ -54,19 +54,21 @@ public final class Preview {
     double tipMm = 163;
     PickScreen pick;
     LocationsScreen areas;
+    JPanel areasHost;
     volatile long seq;
 
     Preview(String base) {
         cockpit = new Cockpit(base);
         s.host = PickScript.hostOf(cockpit.base);
-        s.nodeId = "preview";
+        s.nodeId = "a11ce5"; // hex, like a real node's: PickScript.problem() rejects anything else
     }
 
     public static void main(String[] a) throws Exception {
         final Preview p = new Preview(a.length > 0 ? a[0] : "http://127.0.0.1:7650");
         final String snapshot = a.length > 2 && "--snapshot".equals(a[1]) ? a[2] : null;
+        final String screens = a.length > 2 && "--screens".equals(a[1]) ? a[2] : null;
         final JPanel[] frame = new JPanel[1];
-        SwingUtilities.invokeAndWait(() -> frame[0] = p.window(snapshot == null));
+        SwingUtilities.invokeAndWait(() -> frame[0] = p.window(snapshot == null && screens == null));
         Thread poll = new Thread(p::poll, "preview-feed");
         poll.setDaemon(true);
         poll.start();
@@ -84,6 +86,33 @@ public final class Preview {
             ImageIO.write(out[0], "png", new File(snapshot));
             System.exit(0);
         }
+        if (screens != null) {
+            // the README's pictures (urcap/perceptronic-ps5/screens/): each screen by itself, 1000 x 560
+            Thread.sleep(4000);
+            final File dir = new File(screens);
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    p.pick.setStatus("ready \u2014 live from " + p.cockpit.base, Ui.Kind.OK);
+                    shot(p.pick, new File(dir, "pick-main.png"));
+                    p.pick.showOptions();
+                    shot(p.pick, new File(dir, "pick-options.png"));
+                    shot(p.areasHost, new File(dir, "installation-areas.png"));
+                } catch (java.io.IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            System.exit(0);
+        }
+    }
+
+    private static void shot(javax.swing.JComponent c, File to) throws java.io.IOException {
+        c.setSize(1000, 560);
+        layout(c);
+        BufferedImage img = new BufferedImage(1000, 560, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = img.createGraphics();
+        c.paint(g);
+        g.dispose();
+        ImageIO.write(img, "png", to);
     }
 
     /** The screens in one panel; in a 1280 × 800 window when {@code show} (headless otherwise). */
@@ -91,7 +120,7 @@ public final class Preview {
         pick = new PickScreen(new PickActions());
         areas = new LocationsScreen(new AreaActions());
         final JPanel deck = new JPanel(new java.awt.CardLayout());
-        JPanel areasHost = new JPanel(new BorderLayout());
+        areasHost = new JPanel(new BorderLayout());
         areasHost.setBackground(Ui.BG);
         areasHost.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
         areasHost.add(areas);

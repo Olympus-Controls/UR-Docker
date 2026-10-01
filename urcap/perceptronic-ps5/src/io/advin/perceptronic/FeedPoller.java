@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;

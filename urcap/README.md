@@ -1,7 +1,11 @@
 # <img src="perceptronic.svg" width="28" align="top"> Perceptronic — the wrist camera inside PolyScope X
 
-*Renamed from RealSense Pilot on 2026-09-29 (vendor `nickarmenta`, URCap `perceptronic`):
-delete the old one before installing this (`urcapx.py delete olympus-controls realsense-pilot …`).*
+*URCap `advin/perceptronic` since 0.4.0 (2026-09-30; vendor ID from advin.io, owner Nick Armenta).
+PolyScope X treats an earlier identity as a different URCap — delete it before installing this:
+`urcapx.py delete nickarmenta perceptronic …` (0.3.0) or `urcapx.py delete olympus-controls
+realsense-pilot …` (RealSense Pilot).*
+
+Copyright © 2026 Nick Armenta.
 
 > **e-Series robot on PolyScope 5?** Use the Installation-node build instead:
 > [`perceptronic-ps5/`](perceptronic-ps5/README.md) (`dist/perceptronic-ps5-0.6.0.urcap`).
@@ -36,7 +40,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
 
 ## Quick start
 
-1. **Download** [`dist/perceptronic-0.3.0.urcapx`](dist/perceptronic-0.3.0.urcapx)
+1. **Download** [`dist/perceptronic-0.4.0.urcapx`](dist/perceptronic-0.4.0.urcapx)
    (on GitHub: open the file, then the download button). The single file is the
    whole URCap.
 2. **Install it** on the robot (see [Install the URCap](#1-install-the-urcap)).
@@ -72,11 +76,11 @@ Pick one of the two ways. You only do this once per robot (and again to update).
 
 ### A. On the pendant, from a USB stick
 
-1. Copy `perceptronic-0.3.0.urcapx` onto a USB stick and plug it into the
+1. Copy `perceptronic-0.4.0.urcapx` onto a USB stick and plug it into the
    teach pendant.
 2. Open the **☰ menu** (top-left) → **System Manager** → **URCaps**, and
    unlock it with the **admin password**.
-3. Add a URCap and pick `perceptronic-0.3.0.urcapx` from the USB stick.
+3. Add a URCap and pick `perceptronic-0.4.0.urcapx` from the USB stick.
 4. When it's listed, open **☰ → Reload**.
    **Perceptronic** now appears under **Application**.
 
@@ -86,7 +90,7 @@ Pick one of the two ways. You only do this once per robot (and again to update).
 to install. Download it next to the `.urcapx` and run:
 
 ```bash
-python3 urcapx.py install perceptronic-0.3.0.urcapx --host <robot-ip> --port 80
+python3 urcapx.py install perceptronic-0.4.0.urcapx --host <robot-ip> --port 80
 ```
 
 It posts the package to the same endpoint PolyScope's System Manager uses, which
@@ -98,8 +102,8 @@ Other commands from the same file:
 
 ```bash
 python3 urcapx.py list --host <robot-ip> --port 80                                          # what's installed
-python3 urcapx.py install perceptronic-0.3.0.urcapx --host <robot-ip> --port 80 --replace   # update
-python3 urcapx.py delete nickarmenta perceptronic --host <robot-ip> --port 80        # uninstall
+python3 urcapx.py install perceptronic-0.4.0.urcapx --host <robot-ip> --port 80 --replace   # update
+python3 urcapx.py delete advin perceptronic --host <robot-ip> --port 80        # uninstall
 ```
 
 ---

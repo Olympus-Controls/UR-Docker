@@ -17,11 +17,11 @@
 // application node. The settings, the request options and the script are pickscript.js —
 // shared with the behavior worker, so what the screen shows is what the program sends.
 (() => {
-  const PICK_TAG = "nickarmenta-perceptronic-pick";
-  const DIALOG_TAG = "nickarmenta-perceptronic-pick-dialog";
-  const AFTER_TAG = "nickarmenta-perceptronic-after";
-  const APP_TAG = "nickarmenta-perceptronic";
-  const ARCHIVE_PATH = "/nickarmenta/perceptronic/perceptronic-frontend/";
+  const PICK_TAG = "advin-perceptronic-pick";
+  const DIALOG_TAG = "advin-perceptronic-pick-dialog";
+  const AFTER_TAG = "advin-perceptronic-after";
+  const APP_TAG = "advin-perceptronic";
+  const ARCHIVE_PATH = "/advin/perceptronic/perceptronic-frontend/";
   const POLL_TIMEOUT_MS = 1500;
   const SCENE_EVERY_MS = 700;
   const APP_EVERY_MS = 4000;

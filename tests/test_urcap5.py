@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT / "urcap"))
 import urcap5  # noqa: E402
 
 SRC = ROOT / "urcap" / "perceptronic-ps5"
-JAVA = SRC / "src" / "com" / "nickarmenta" / "perceptronic"
+JAVA = SRC / "src" / "io" / "advin" / "perceptronic"
 DIST = ROOT / "urcap" / "dist" / "perceptronic-ps5-0.6.0.urcap"
 JAVAC = shutil.which("javac")
 # the pure-Java classes the harness compiles (no UR API)
@@ -105,7 +105,7 @@ def test_embedded_pom_names_the_api_version_the_way_polyscope_reads_it():
     # artifactId api -> <version>. Parse it the same way.
     props = urcap5.read_properties((SRC / "bundle.properties").read_text(encoding="utf-8"))
     path, body = urcap5.pom_xml(props)
-    assert path == "META-INF/maven/com.nickarmenta/perceptronic/pom.xml"
+    assert path == "META-INF/maven/io.advin/perceptronic/pom.xml"
     ns = {"m": "http://maven.apache.org/POM/4.0.0"}
     deps = ET.fromstring(body).findall("m:dependencies/m:dependency", ns)
     versions = [
@@ -138,7 +138,7 @@ def test_the_downloadable_urcap_is_built_from_the_current_sources():
     assert any(p.startswith("com.ur.urcap.api.contribution.toolbar.swing;") for p in imports)
     assert not any("toolbar" in p and "optional" in p for p in imports)
     for cls in ("ToolbarService", "ToolbarContribution", "Logo", "FeedPoller"):
-        assert f"com/nickarmenta/perceptronic/{cls}.class" in bundle["names"], cls
+        assert f"io/advin/perceptronic/{cls}.class" in bundle["names"], cls
     assert bundle["names"][:2] == ["META-INF/", "META-INF/MANIFEST.MF"]
     activator = props["Bundle-Activator"].replace(".", "/") + ".class"
     assert activator in bundle["names"]
@@ -176,7 +176,7 @@ def test_package_reports_a_missing_sdk_clearly(tmp_path):
 # -- the Java client, under a JDK -----------------------------------------------------------
 
 HARNESS = r"""
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import java.util.*;
 
@@ -437,7 +437,7 @@ def java_client(tmp_path_factory):
     if not JAVAC:
         pytest.skip("javac is not installed")
     root = tmp_path_factory.mktemp("java")
-    pkg = root / "src" / "com" / "nickarmenta" / "perceptronic"
+    pkg = root / "src" / "io" / "advin" / "perceptronic"
     pkg.mkdir(parents=True)
     (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
     for name in PURE_JAVA:
@@ -462,7 +462,7 @@ def java_client(tmp_path_factory):
 
     def run(*args: str):
         proc = subprocess.run(
-            ["java", "-cp", str(classes), "com.nickarmenta.perceptronic.Harness", *args],
+            ["java", "-cp", str(classes), "io.advin.perceptronic.Harness", *args],
             capture_output=True,
             timeout=60,
         )

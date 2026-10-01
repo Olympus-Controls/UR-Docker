@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import com.ur.urcap.api.domain.userinteraction.RobotPositionCallback2;
 import com.ur.urcap.api.domain.userinteraction.UserInteraction;

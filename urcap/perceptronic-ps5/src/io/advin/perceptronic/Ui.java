@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;

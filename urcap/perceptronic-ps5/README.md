@@ -21,22 +21,66 @@ Download: [`../dist/perceptronic-ps5-0.6.0.urcap`](../dist/perceptronic-ps5-0.6.
 
 ## Install on the robot
 
-1. Copy `perceptronic-ps5-0.6.0.urcap` to a USB stick and plug it into the pendant.
-2. Settings (☰ top right) → System → URCaps → **+** → pick the file → Open, then
-   **Restart** when PolyScope asks.
-3. Installation tab → URCaps → **Perceptronic**.
+You need a USB stick and nothing else: no tools, no command line. Two files matter, both in
+[`../dist/`](../dist/):
+
+| File | What it is |
+| --- | --- |
+| [`perceptronic-ps5-0.6.0.urcap`](../dist/perceptronic-ps5-0.6.0.urcap) | The URCap. Always needed. |
+| [`urmagic_perceptronic.sh`](../dist/urmagic_perceptronic.sh) | Optional. Lets the robot install the URCap by itself when the stick goes in (B below). |
+
+### 1. Put the files on a stick
+
+1. Use a stick formatted **FAT32** (most sticks up to 32 GB already are; exFAT and NTFS are
+   not read by the pendant).
+2. **Download** each file: open the link above, then press the **Download raw file** button
+   (the arrow at the top right of the file view). Do not copy-and-paste the text of the
+   `.sh` file into an editor — Windows editors change its line endings and it stops working.
+3. Copy the file(s) to the **top level** of the stick — not inside a folder — and do not
+   rename them. The `.sh` file names the `.urcap` file and its checksum, so the two must
+   come from the same download; take both again whenever you update.
+4. Eject the stick properly (Windows: right-click the drive → **Eject**; Mac: drag it to the
+   Trash) before pulling it out. A stick pulled early can hold a half-written file.
+
+On a Mac, Finder also writes hidden `._…` companions next to each file. They are harmless
+except that PolyScope's file picker lists `._perceptronic-ps5-0.6.0.urcap` too — pick the
+one **without** `._`. `scripts/urcap5-usb.sh` does the whole of this step without them.
+
+### 2A. Install by hand on the pendant (always works)
+
+1. Plug the stick into the pendant.
+2. Tap ☰ (top right) → **Settings** → **System** → **URCaps**.
+3. Tap **+**, tap `perceptronic-ps5-0.6.0.urcap`, tap **Open**.
+4. Tap **Restart** when PolyScope asks.
+5. After the restart: **Installation** tab → **URCaps** → **Perceptronic**.
+
+### 2B. Or let the stick install it
+
+1. Once per robot: ☰ → **Settings** → **Security** → **General** → enable **Run magic
+   files** (and **USB ports**).
+2. Power the arm **off** (the robot stays on; the arm's status is "Power off") and make sure
+   no program is running.
+3. Plug the stick in. The pendant shows **! USB !** while it works, then the robot restarts
+   by itself.
+4. After the restart: **Installation** tab → **URCaps** → **Perceptronic**.
+
+If the arm was powered on or a program was running, nothing restarts: a popup says
+"restart the robot to load it" — do that when it suits. If nothing happens at all, use 2A,
+then plug the stick into a computer and read `urmagic_perceptronic.log` on it.
 
 **Upgrading from RealSense Pilot (≤ 0.5.0)?** The URCap was renamed on 2026-09-29 and is a
-different bundle (`com.nickarmenta.perceptronic`, vendor Nick Armenta — was
-`com.olympuscontrols.realsensepilot`): PolyScope treats it as a second URCap, so remove
+different bundle (`io.advin.perceptronic`, vendor Nick Armenta — was
+`com.olympuscontrols.realsensepilot`; builds from 2026-09-29/30 were
+`com.nickarmenta.perceptronic`, also a different bundle): PolyScope treats it as a second URCap, so remove
 **RealSense Pilot** (Settings → System → URCaps → select it → −) before or after adding
 this one, and type the cockpit address and teach the pick areas again — the old node's
 saved data and any program's **RealSense Pick** nodes belong to the old bundle.
 
-### Or let the stick install it
+### How the stick installs it
 
-`scripts/urcap5-usb.sh` (on a Mac; see its header for what lands on the stick) also writes
-`urmagic_perceptronic.sh` next to the file. PolyScope 5 runs every `urmagic_*.sh` at the
+`urmagic_perceptronic.sh` is `scripts/urmagic_perceptronic.sh` with the jar's file name,
+sha256 and bundle id filled in (`make urcap5-package` writes the copy in `dist/`; a test
+holds it equal; `scripts/urcap5-usb.sh` writes the same file on the stick). PolyScope 5 runs every `urmagic_*.sh` at the
 top level of a USB stick as root when the stick goes in, if **Settings → Security → General
 → Run magic files** (and **USB ports**) is enabled — the pendant shows **! USB !** while it
 runs. The script checks the file's sha256, copies it to `/root/.urcaps/<bundle id>.jar`
@@ -47,7 +91,7 @@ otherwise it pops up "restart the robot to load it". Plugged in again (or left i
 nothing once the same build is installed. Source: `scripts/urmagic_perceptronic.sh`
 (`URMAGIC_RESTART=never|always` in its header changes the restart rule). **Not yet run on
 a pendant** — the `/root/.urcaps` path is read out of PolyScope's own installer
-(`URCapsServiceImpl`) and UR's remotetcp URCap, which installs itself the same way; step 2
+(`URCapsServiceImpl`) and UR's remotetcp URCap, which installs itself the same way; 2A
 remains the fallback.
 
 PolyScope X runs nothing from a stick. The same stick carries `perceptronic-<ver>.urcapx`

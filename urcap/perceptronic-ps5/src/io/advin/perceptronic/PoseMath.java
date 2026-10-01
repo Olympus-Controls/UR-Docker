@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 /**
  * UR pose math with no UR API — rotation vectors, {@code pose_trans}, {@code pose_inv} — and
