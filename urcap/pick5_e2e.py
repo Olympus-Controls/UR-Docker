@@ -12,8 +12,8 @@ takes the other part from the queue (``NEXT`` → straight to the closer look, f
 first run left the arm: at the grip), the third with the closer look switched off (always
 the picture point, ``REFINE`` from there). Passing means the controller parsed and ran
 every line — the survey, ``FIND``, the closer look, the ``REFINE`` lean ladder with its own
-IK checks, the approach, the clamp (a digital-output gripper: the sim has no Robotiq) —
-each time, and set the result and location variables.
+IK checks, the approach, the descent to the grip — each time, and set the result and
+location variables. The node drives no gripper (0.8.0): there is none to simulate.
 
     python3 urcap/pick5_e2e.py                 # the x86 VM sim: scripts/ursim-e-vm.sh up
     python3 urcap/pick5_e2e.py --host 10.0.0.5 --reach-back 192.168.3.10   # other sims
@@ -133,12 +133,12 @@ def verdict(captured: list[str], log: list[str]) -> dict[str, bool]:
     from the queue, and the third (the closer look off) never asked for a look pose."""
     flat = [c.replace(" ", "") for c in captured]
     return {
-        "first run holds a part": any("rs_e2e/first=True" in c for c in flat),
+        "first run ends at the grip": any("rs_e2e/first=True" in c for c in flat),
         "it came from picture point 1": any("rs_e2e/loc=1" in c for c in flat),
-        "second run holds a part": any("rs_e2e/found=True" in c for c in flat),
+        "second run ends at the grip": any("rs_e2e/found=True" in c for c in flat),
         "second run took it from the queue": any("nextpartalreadyseen" in c for c in flat)
         and any(t.startswith("pick NEXT [e2e001]: found") for t in log),
-        "third run (no closer look) holds a part": any("rs_e2e/nolook=True" in c for c in flat),
+        "third run (no closer look) ends at the grip": any("rs_e2e/nolook=True" in c for c in flat),
         "two surveys found the part": sum(1 for t in log if t.startswith("pick FIND [e2e001]: found")) >= 2,
         "every run re-measured it": sum(1 for t in log if t.startswith("pick REFINE [e2e001]: found")) >= 3,
         # the first two runs take the closer look; the third never asks for one
@@ -150,9 +150,8 @@ ERRORS = re.compile(r"(?i)error|exception|not defined|unknown|illegal|syntax|inv
 
 
 def compile_probe(robot: Robot, spec: dict) -> tuple[bool, bool]:
-    """Does the controller *compile* the parts of the script the run above can't reach — the
-    Robotiq gripper (``socket_read_string(..., timeout=)``, ``str_find``) and the failure
-    popup (``popup(..., blocking=True)``)? The script goes inside ``if False:`` so nothing
+    """Does the controller *compile* the part of the script the run above can't reach — the
+    failure popup (``popup(..., blocking=True)``)? The script goes inside ``if False:`` so nothing
     runs; URControl compiles the whole program first, so a function or keyword argument this
     controller lacks means the marker after it never prints. The control: a dead branch that
     calls a function no controller has must *not* print its marker, or the probe proves
@@ -165,7 +164,7 @@ def compile_probe(robot: Robot, spec: dict) -> tuple[bool, bool]:
         stop_marker="rs_e2e/control=",
     )
     control_ran = any("rs_e2e/control=" in c for c in control)
-    full = generate({**spec, "gripper": "robotiq", "popup": True})
+    full = generate({**spec, "popup": True})
     body = "if False:\n" + full + "end\n" + 'textmsg("rs_e2e/compiled=", True)\n'
     captured = robot.primary.run_and_capture(
         body, fn_name="rs_e2e_probe", marker="", collect_for=30.0, stop_marker="rs_e2e/compiled="
@@ -256,7 +255,6 @@ def main() -> int:
             "port": args.port,
             "node": "e2e001",
             "points": [{"q": READY}],
-            "gripper": "digital",
             "popup": False,  # a blocking popup would hold the run until someone taps it
             **({"polyscope": version} if version else {}),
         }
@@ -285,7 +283,7 @@ def main() -> int:
     ok = all(verdict(captured, log).values())
     for what, good in verdict(captured, log).items():
         print(f"  {'ok  ' if good else 'FAIL'}  {what}")
-    print("controller compiles the full script (Robotiq + popup):", compiled)
+    print("controller compiles the full script (with the popup):", compiled)
     if control:
         print("  (inconclusive: this controller also ran a dead branch naming an undefined function)")
     print("a timed-out read into a 16-number list leaves the program running:", timed_out)

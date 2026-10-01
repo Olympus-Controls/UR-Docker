@@ -8,7 +8,7 @@ realsense-pilot …` (RealSense Pilot).*
 Copyright © 2026 Nick Armenta.
 
 > **e-Series robot on PolyScope 5?** Use the Installation-node build instead:
-> [`perceptronic-ps5/`](perceptronic-ps5/README.md) (`dist/perceptronic-ps5-0.7.0.urcap`).
+> [`perceptronic-ps5/`](perceptronic-ps5/README.md) (`dist/perceptronic-ps5-0.8.0.urcap`).
 
 A URCap for **PolyScope X** (PolyScope 10) robots. It adds a **Perceptronic**
 node under **Application** that shows the live colour feed from an Intel
@@ -40,7 +40,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
 
 ## Quick start
 
-1. **Download** [`dist/perceptronic-0.5.0.urcapx`](dist/perceptronic-0.5.0.urcapx)
+1. **Download** [`dist/perceptronic-0.6.0.urcapx`](dist/perceptronic-0.6.0.urcapx)
    (on GitHub: open the file, then the download button). The single file is the
    whole URCap.
 2. **Install it** on the robot (see [Install the URCap](#1-install-the-urcap)).
@@ -76,11 +76,11 @@ Pick one of the two ways. You only do this once per robot (and again to update).
 
 ### A. On the pendant, from a USB stick
 
-1. Copy `perceptronic-0.5.0.urcapx` onto a USB stick and plug it into the
+1. Copy `perceptronic-0.6.0.urcapx` onto a USB stick and plug it into the
    teach pendant.
 2. Open the **☰ menu** (top-left) → **System Manager** → **URCaps**, and
    unlock it with the **admin password**.
-3. Add a URCap and pick `perceptronic-0.5.0.urcapx` from the USB stick.
+3. Add a URCap and pick `perceptronic-0.6.0.urcapx` from the USB stick.
 4. When it's listed, open **☰ → Reload**.
    **Perceptronic** now appears under **Application**.
 
@@ -90,7 +90,7 @@ Pick one of the two ways. You only do this once per robot (and again to update).
 to install. Download it next to the `.urcapx` and run:
 
 ```bash
-python3 urcapx.py install perceptronic-0.5.0.urcapx --host <robot-ip> --port 80
+python3 urcapx.py install perceptronic-0.6.0.urcapx --host <robot-ip> --port 80
 ```
 
 It posts the package to the same endpoint PolyScope's System Manager uses, which
@@ -102,7 +102,7 @@ Other commands from the same file:
 
 ```bash
 python3 urcapx.py list --host <robot-ip> --port 80                                          # what's installed
-python3 urcapx.py install perceptronic-0.5.0.urcapx --host <robot-ip> --port 80 --replace   # update
+python3 urcapx.py install perceptronic-0.6.0.urcapx --host <robot-ip> --port 80 --replace   # update
 python3 urcapx.py delete advin perceptronic --host <robot-ip> --port 80        # uninstall
 ```
 
@@ -200,10 +200,11 @@ hand-eye**. See [docs/realsense.md §Hand-eye](../docs/realsense.md).
 
 ## 5. Pick with the **3D Pick** node
 
-The same node as the PolyScope 5 kit's, for PolyScope X, at functional parity (0.5.0 here
-= 0.7.0 there; a test holds the two nodes' URScript line for line): **one move sequence
-with no children** that starts with the survey and ends with the gripper clamped on the
-next part in the order you choose ([`../docs/pick-kit.md`](../docs/pick-kit.md) for the
+The same node as the PolyScope 5 kit's, for PolyScope X, at functional parity (0.6.0 here
+= 0.8.0 there; a test holds the two nodes' URScript line for line): **one move sequence
+with no children** that starts with the survey and ends with the tool at the grip on the
+next part in the order you choose. **It does not control the gripper** — your program
+opens it before the node and closes it after ([`../docs/pick-kit.md`](../docs/pick-kit.md) for the
 whole kit, [`perceptronic-ps5/README.md`](perceptronic-ps5/README.md) for every screen in
 detail). The camera computer's address and the **pick areas** live in **Application →
 Perceptronic** (above), on its **Pick areas** tab: touch the table with the fingertips at a
@@ -214,17 +215,21 @@ it. There are no reach margins: which parts can be picked is the arm's kinematic
 1. **Program → + → URCaps → 3D Pick.** The tree row shows the part, the picture points
    and the order; **Teach & options…** opens the node's screen as a PolyScope dialog.
    Nothing in it scrolls.
-2. In it: the live picture, carrying only the candidates that are **nearly the part and
-   are not going to be picked** — outlined, each with why (`too long`, `out of reach (no
-   joint solution)`, …); the **Picture / Depth** toggle in its top right corner (the depth
+2. In it: the live picture, with the parts that will be picked in **green, numbered** in
+   the pick order, and the candidates that are nearly the part and will not be in
+   **yellow, each with why** (`too long`, `out of reach (no joint solution)`, `no room for
+   a finger beside it`, …); the **Picture / Depth** toggle in its top right corner (the depth
    as a heatmap); the picture points as a grid of numbered buttons — **+** adds one from
    PolyScope's joint positions, **Go** opens PolyScope's move screen to the selected one,
    its second line chooses the pick area it looks at; the **pick order** tiles; **Check
    approach** (PolyScope's IK + move screen over the first part, fingertips *Approach* mm
-   over its top); and **Options**, two tabs: **Part** (Box or Cylinder, its size, the
-   tolerance, the **Grip check**) and **Approach** (the approach, the grip depth, the
-   **Closer look**). Speeds and the gripper have no settings.
-3. Put what happens to the part **after** the node: `If rs_pick_found` → lift, place.
+   over its top); and **Options**, two tabs: **Part** (Box or Cylinder — standing on its end —
+   its size, the tolerance) and **Approach** (the approach, the grip depth, the **Grip
+   check** with its **Finger room** — 20 mm clear on each side the fingers come down on —
+   **Grip across the long side** for a box, the **Closer look**). Speeds have no settings,
+   and there is nothing about the gripper.
+3. Open the gripper **before** the node; **after** it, close the gripper, then
+   `If rs_pick_found` → lift, place.
    `rs_pick_found` and `rs_pick_loc` (which picture point it came from) are program
    variables. A node saved by 0.4.0 keeps its picture points and part; whatever was inside
    it moves after it, and its **After picture N** children are gone with the node type.

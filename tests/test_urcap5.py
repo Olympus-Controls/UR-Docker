@@ -33,7 +33,7 @@ import urcap5  # noqa: E402
 
 SRC = ROOT / "urcap" / "perceptronic-ps5"
 JAVA = SRC / "src" / "io" / "advin" / "perceptronic"
-DIST = ROOT / "urcap" / "dist" / "perceptronic-ps5-0.7.0.urcap"
+DIST = ROOT / "urcap" / "dist" / "perceptronic-ps5-0.8.0.urcap"
 JAVAC = shutil.which("javac")
 # the screens (pure Swing): the harness lays them out off-screen
 SCREEN_JAVA = ("PickScreen.java", "LiveView.java", "LocationsScreen.java")
@@ -226,9 +226,9 @@ public class Harness {
                     s.orderFirst = (String) ((List<?>) o.get("order")).get(0);
                     s.orderRows = (String) ((List<?>) o.get("order")).get(1);
                 }
-                if (o.containsKey("gripper")) s.gripper = (String) o.get("gripper");
                 if (o.containsKey("shape")) s.shape = (String) o.get("shape");
                 if (o.containsKey("gripCheck")) s.gripCheck = (Boolean) o.get("gripCheck");
+                if (o.containsKey("gripLong")) s.gripLongSide = (Boolean) o.get("gripLong");
                 if (o.containsKey("closeLook")) s.closeLook = (Boolean) o.get("closeLook");
                 if (o.containsKey("arm")) s.arm = (String) o.get("arm");
                 if (o.containsKey("popup")) s.popupOnFail = (Boolean) o.get("popup");
@@ -389,6 +389,17 @@ public class Harness {
                 Map<String, Object> m = new LinkedHashMap<String, Object>();
                 m.put("heard", heard[0]); m.put("depth", heard[1]); m.put("view", v.depthView());
                 m.put("changed", changed);
+                int green = 0, yellow = 0;
+                for (int y = 60; y < 400; y++) {
+                    for (int x = 0; x < 640; x++) {
+                        int px = drawn.getRGB(x, y);
+                        if (px == plain.getRGB(x, y)) continue;
+                        int cr = (px >> 16) & 255, cg = (px >> 8) & 255, cb = px & 255;
+                        if (cg > 180 && cr < 120 && cb < 180) green++;       // Ui.PART 0x3ddc84
+                        if (cr > 230 && cg > 170 && cg < 215 && cb < 110) yellow++; // Ui.JAW 0xffc53d
+                    }
+                }
+                m.put("green", green); m.put("yellow", yellow);
                 out = m;
                 break;
             }

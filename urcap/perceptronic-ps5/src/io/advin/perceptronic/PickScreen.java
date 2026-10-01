@@ -34,8 +34,10 @@ import javax.swing.SwingUtilities;
  * in turn — with the selected one's actions under it) and the pick order (eight tiles).
  *
  * <p><b>Options</b>: two tabs and nothing else — <i>Part</i> (box or cylinder, its size, the
- * tolerance, the grip check) and <i>Approach</i> (how far over the top, how deep the grip,
- * the closer look). Speeds and the gripper are not this node's business.
+ * tolerance) and <i>Approach</i> (how far over the top, how deep the grip, the grip check and
+ * its finger room, which side of a box the fingers close across, the closer look). Speeds are
+ * not this node's business, and neither is the gripper: the program opens it before the node
+ * and closes it after.
  */
 // Swing components are never serialized here; javac's serial lint does not apply to them
 @SuppressWarnings("serial")
@@ -83,6 +85,7 @@ final class PickScreen extends JPanel {
     }
 
     static final String FLAG_GRIP_CHECK = "gripCheck";
+    static final String FLAG_GRIP_LONG = "gripLongSide";
     static final String FLAG_CLOSE_LOOK = "closeLook";
     private static final int SIDE = 300;
     private static final int CHIP_COLS = 6;
@@ -108,6 +111,7 @@ final class PickScreen extends JPanel {
     private Ui.Segmented tabs;
     private Ui.Segmented shape;
     private Ui.Check gripCheck;
+    private Ui.Check gripLong;
     private Ui.Check closeLook;
     private final Ui.Note optionsNote = new Ui.Note();
 
@@ -337,9 +341,6 @@ final class PickScreen extends JPanel {
         fields.add(shapeRow);
         fields.add(Box.createVerticalStrut(8));
         addSteppers(fields, "part");
-        fields.add(Box.createVerticalStrut(6));
-        gripCheck = new Ui.Check("Grip check", "skip parts that measure too wide or too crowded to grip", false, on -> actions.setFlag(FLAG_GRIP_CHECK, on));
-        fields.add(gripCheck);
         return tab("The part, as it lies on the table", fields, partDrawing);
     }
 
@@ -347,6 +348,12 @@ final class PickScreen extends JPanel {
         JPanel fields = Ui.column();
         addSteppers(fields, "approach");
         fields.add(Box.createVerticalStrut(6));
+        gripCheck = new Ui.Check("Grip check", "skip a part with less than the finger room on either side",
+                true, on -> actions.setFlag(FLAG_GRIP_CHECK, on));
+        fields.add(gripCheck);
+        gripLong = new Ui.Check("Grip across the long side", "off: the fingers close across the short side",
+                false, on -> actions.setFlag(FLAG_GRIP_LONG, on));
+        fields.add(gripLong);
         closeLook = new Ui.Check("Closer look", "a second, nearer measurement before the approach",
                 true, on -> actions.setFlag(FLAG_CLOSE_LOOK, on));
         fields.add(closeLook);
@@ -415,8 +422,13 @@ final class PickScreen extends JPanel {
                     round ? "across the top, standing on its end" : "long side, as it lies");
             steppers.get("partWidthMm").setVisible(!round);
             partDrawing.set(s.longSide(), s.shortSide(), s.n("partHeightMm"), round);
-            approachDrawing.set(s.n("approachMm"), s.n("gripBelowTopMm"), s.n("partHeightMm"), s.shortSide());
+            boolean longWay = s.gripLongSide && !round;
+            approachDrawing.set(s.n("approachMm"), s.n("gripBelowTopMm"), s.n("partHeightMm"),
+                    longWay ? s.longSide() : s.shortSide(), s.gripCheck ? s.n("fingerRoomMm") : 0);
             gripCheck.setOn(s.gripCheck);
+            gripLong.setOn(s.gripLongSide);
+            gripLong.setVisible(!round); // a cylinder has no side to choose
+            steppers.get("fingerRoomMm").setVisible(s.gripCheck);
             closeLook.setOn(s.closeLook);
             String problem = s.problem();
             optionsNote.set(problem == null ? "Every change is used by the picture at once: go back to see what is"

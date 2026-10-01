@@ -68,18 +68,18 @@ def count(img: tuple[int, int, bytes], test, box=None) -> int:
     )
 
 
-GREEN = lambda r, g, b: g > 180 and r < 200 and b < 200 and g - r > 30  # noqa: E731 — 0.6.0's part fill
+GREEN = lambda r, g, b: g > 180 and r < 200 and b < 200 and g - r > 30  # noqa: E731 — a pickable part's outline (Ui.PART)
 AMBER = lambda r, g, b: r > 240 and 180 < g < 215 and b < 90  # noqa: E731 — a near miss's outline (Ui.JAW)
 
 
-def test_the_preview_outlines_only_the_near_misses_and_says_it_is_simulated(tmp_path):
+def test_the_preview_shows_parts_green_and_near_misses_yellow_and_says_it_is_simulated(tmp_path):
     out = tmp_path / "preview.png"
     assert preview5.main(["--snapshot", str(out)]) == 0
     img = pixels(out)
     assert img[:2] == (1280, 772)
     picture = (8, 60, 960, 760)
-    # the seven parts it will pick carry no graphic (0.7.0); the three it won't are outlined in amber
-    assert count(img, GREEN, picture) == 0
+    # the seven parts it will pick are green (0.8.0); the three it won't are outlined in yellow
+    assert count(img, GREEN, picture) > 300
     assert count(img, AMBER, picture) > 150
     # the simulated picture's NO CAMERA CONNECTED banner (red, 0xb4 0x23 0x23)
     assert count(img, lambda r, g, b: r == 0xB4 and g == 0x23 and b == 0x23, picture) > 2000

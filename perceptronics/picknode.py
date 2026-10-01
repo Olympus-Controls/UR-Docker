@@ -168,6 +168,8 @@ _NODE_RX = re.compile(r"\bnode=([0-9A-Za-z]{1,12})\b")
 _INT_RX = {k: re.compile(rf"\b{k}=(\d{{1,3}})\b") for k in ("loc", "locs", "proto")}
 _MM_RX["approach"] = re.compile(rf"\bapproach=({_NUM})(?![\w.])")
 _GRIPCHECK_RX = re.compile(r"\bgripcheck=([01])(?=\s|$)")
+_MM_RX["room"] = re.compile(rf"\broom=({_NUM})(?![\w.])")
+_ACROSS_RX = re.compile(r"\bacross=(short|long)(?=\s|$)")
 _ARM_RX = re.compile(r"\barm=([A-Za-z0-9]{1,8})(?=\s|$)")
 MAX_LOCS = 32
 QUEUE_TTL_S = 120.0  # a part seen at a picture point stays queued this long
@@ -189,7 +191,12 @@ class PickOptions:
     leaned, the program's ladder — keeping only the base's keep-out radius. ``gripcheck=0``
     drops the two checks of the gripper against the *measured* part (wider than the open
     fingers, no room beside it): the part's size is known, and a width the camera reads a
-    few mm wide must not veto a part the fingers fit."""
+    few mm wide must not veto a part the fingers fit.
+
+    The 0.8.0 node (2026-10-01) does not drive a gripper at all — the program opens it before
+    the node and closes it after — so it knows no stroke. Its grip check is ``room=<mm>``:
+    that much clear space on each side of the part along the grip axis (default 20), and no
+    stroke test. ``across=long`` grips a box across its long side instead of its short one."""
 
     part: PartSpec | None = None
     surface: Surface | None = None
@@ -199,6 +206,8 @@ class PickOptions:
     stroke_m: float = DEFAULT_STROKE_M
     approach_m: float = 0.025
     grip_check: bool = True
+    room_m: float | None = None  # 0.8.0: the clear space wanted on each side of the part
+    across: str = "short"  # which side of a box the fingers close across
     arm: str = ""
     node: str = ""
     loc: int = 0
@@ -206,7 +215,10 @@ class PickOptions:
     proto: int = 1
 
     def fingers(self) -> dict:
-        return {"grasp_below_m": self.grip_below_m, "stroke_m": self.stroke_m}
+        out: dict = {"grasp_below_m": self.grip_below_m, "stroke_m": self.stroke_m, "across": self.across}
+        if self.room_m is not None:
+            out["room_m"] = self.room_m
+        return out
 
 
 def parse_options(text: str) -> PickOptions:
@@ -249,6 +261,7 @@ def parse_options(text: str) -> PickOptions:
         ("grip", "grip_below_m", 0.0, 60.0),
         ("stroke", "stroke_m", 10.0, 300.0),
         ("approach", "approach_m", 0.0, 300.0),
+        ("room", "room_m", 0.0, 100.0),
     ):
         g = _MM_RX[key].search(text)
         if g:
@@ -256,11 +269,18 @@ def parse_options(text: str) -> PickOptions:
             if not lo <= mm <= hi:
                 raise RequestError(f"{key} must be {lo:.0f}..{hi:.0f} mm")
             kw[name] = mm / 1000.0
+        elif key == "room" and re.search(r"\broom=", text):
+            raise RequestError("room must be a distance in mm, like room=20")
     g = _GRIPCHECK_RX.search(text)
     if g:
         kw["grip_check"] = g.group(1) == "1"
     elif re.search(r"\bgripcheck=", text):
         raise RequestError("gripcheck must be 0 or 1")
+    side = _ACROSS_RX.search(text)
+    if side:
+        kw["across"] = side.group(1)
+    elif re.search(r"\bacross=", text):
+        raise RequestError("across must be short or long")
     arm = _ARM_RX.search(text)
     if arm:
         kw["arm"] = arm.group(1)
@@ -638,7 +658,7 @@ class PickPlanner:
         )
         for p in list(scene.parts):
             why = None
-            if opts.grip_check and p.width_m > opts.stroke_m - 0.006:
+            if opts.grip_check and opts.room_m is None and p.width_m > opts.stroke_m - 0.006:
                 why = f"wider than the open gripper ({p.width_m * 1000:.0f} mm)"
             elif flange is not None and not self.reachable(p, flange, opts):
                 why = "out of reach (no joint solution)"
@@ -675,7 +695,10 @@ class PickPlanner:
         rot = grasp_rotation(flange, part.centre_base, lean)
         if opts is not None and opts.part is not None and opts.part.is_round:
             return tip_pose(part.centre_base, rot, self.tip_m, 0.0)  # no long side: the wrist stays
-        yaw = grasp_yaw_deg(rot, part.theta + math.pi / 2, self.finger_axis)
+        long_way = opts is not None and opts.across == "long"
+        # the fingers travel across the short side (perpendicular to the long one) — or along it
+        heading = part.theta if long_way else part.theta + math.pi / 2
+        yaw = grasp_yaw_deg(rot, heading, self.finger_axis)
         return tip_pose(part.centre_base, rot, self.tip_m, yaw)
 
     def _item(
