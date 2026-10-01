@@ -527,7 +527,8 @@ class PickCycle:
 
     def _flange(self) -> list[float]:
         if self.robot is not None:
-            r = self.robot.get_flange_pose()
+            # stand_in=False: a dry run still measures from where the arm really is
+            r = self.robot.get_flange_pose(stand_in=False)
             if not r.get("ok"):
                 raise CockpitError(r.get("error") or "no flange pose")
             return list(r["flange"])
