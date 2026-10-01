@@ -64,6 +64,40 @@ only** (a UAC prompt, once). The cockpit has no login and moves a robot: use `-L
 the cell network, not on the office Wi-Fi. The URCap's Cockpit field is
 `http://<this PC's address on the robot's subnet>:7621`; the script prints the candidates.
 
+## Without the script
+
+Where policy blocks `.ps1` files, type the same commands yourself: execution policy
+stops script files, not commands entered at the prompt. This is all the script does.
+
+```powershell
+# once, in an ADMINISTRATOR terminal
+winget install --id dorssel.usbipd-win -e     # or the .msi from github.com/dorssel/usbipd-win/releases
+usbipd list                                   # note the RealSense's BUSID, e.g. 2-3
+usbipd bind --busid 2-3
+
+# every start (and after a reboot or re-plug), in a normal terminal in the repository
+usbipd attach --wsl --busid 2-3               # Docker Desktop must be running
+$env:COCKPIT_ARGS = "--no-robot"              # camera only; leave it out once UR_CELL is set
+docker compose -f docker-compose.windows.yml up -d --build
+```
+
+Then open <http://localhost:7621>. For the robot and the pendant, set these before `up`
+instead of `COCKPIT_ARGS`:
+
+```powershell
+$env:UR_CELL = "/cells/mycell.env"            # deploy\windows\mycell.env, or a shipped name: ur3
+$env:PERCEPTRONICS_PUBLISH = "0.0.0.0"        # what -Lan does; default is 127.0.0.1
+# once, administrator - the firewall half of -Lan:
+New-NetFirewallRule -DisplayName "perceptronics cockpit" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 7621,7622 -RemoteAddress LocalSubnet
+```
+
+`$env:PERCEPTRONICS_FAKE = "1"` is `-Fake` (skip the usbipd lines). Stop with
+`docker compose -f docker-compose.windows.yml down` and `usbipd detach --busid 2-3`.
+After the first `up` the container (`perceptronics-windows`) is in Docker Desktop's
+Containers list and can be stopped, started and its log read there - but Docker Desktop
+has no button for the USB step: `usbipd attach` is typed each time. If the cockpit was
+already running when you attached, restart the container.
+
 ## Day to day
 
 | | |
