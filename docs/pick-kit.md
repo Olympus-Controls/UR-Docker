@@ -8,7 +8,7 @@ across its short side.
 
 | Piece | Where | What it is |
 | ----- | ----- | ---------- |
-| Bill of materials | [`hardware/BOM.md`](../hardware/BOM.md) | Every part with links, the price seen 2026-09-28 and its history (kit ≈ $1,420 per cell with a RevPi Connect 5; ≈ $1,112 with a CompuLab IOT-GATE-RPI5) |
+| Bill of materials | [`hardware/BOM.md`](../hardware/BOM.md) | Every part with links, the price seen 2026-09-28/29 and its history (kit ≈ $785 per cell with a Raspberry Pi 4; ≈ $1,420 with a RevPi Connect 5, ≈ $1,112 with a CompuLab IOT-GATE-RPI5 for a 24 V cabinet PC) |
 | Camera bracket | [`hardware/d435-tool-bracket/`](../hardware/d435-tool-bracket/) | Parametric CadQuery source; print-ready STL and STEP for e-Series (ISO 9409-1-50-4-M6) and UR20 flanges in `out/`; the spec, fasteners and the nominal camera pose in its README |
 | Camera computer | [`deploy/pi/`](../deploy/pi/README.md) | A Raspberry-Pi-class arm64 box on minimal Debian: one command installs librealsense, the cockpit as a hardened systemd service (:7621 HTTP, :7622 pick server) and a firewall |
 | URCap | [`urcap/perceptronic-ps5/`](../urcap/perceptronic-ps5/README.md) | `urcap/dist/perceptronic-ps5-0.6.0.urcap`: the **Perceptronic Pick** program node and the **Perceptronic** installation node |
