@@ -398,6 +398,7 @@ public final class Preview {
         @Override
         public void setFlag(String key, boolean on) {
             if (PickScreen.FLAG_GRIP_CHECK.equals(key)) s.gripCheck = on;
+            else if (PickScreen.FLAG_GRIP_LONG.equals(key)) s.gripLongSide = on;
             else s.closeLook = on;
             refresh();
         }
@@ -432,7 +433,8 @@ public final class Preview {
         public void resetDefaults() {
             for (PickScript.Num n : PickScript.NUMBERS) s.values.put(n.key, n.def);
             s.shape = "box";
-            s.gripCheck = false;
+            s.gripCheck = true;
+            s.gripLongSide = false;
             s.closeLook = true;
             refresh();
         }

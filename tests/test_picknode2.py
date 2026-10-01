@@ -550,3 +550,72 @@ def test_the_cockpit_serves_the_depth_as_a_heatmap_png_the_same_way_as_the_colou
         srv.shutdown()
         srv.server_close()
         app.stop()
+
+
+# -- 0.8.0 (2026-10-01): the node drives no gripper; finger room is the operator's number; either side --
+
+ROOM = "part=50x35x30 tol=25 order=LR,FB gripcheck=1 proto=2"
+
+
+def test_finger_room_is_the_clear_space_asked_for_on_each_side_of_the_part():
+    # two parts side by side across their short sides, 10 mm of table between them
+    crowd = [Box(0.35, -0.03, 0.05, 0.035, 0.03), Box(0.35, 0.015, 0.05, 0.035, 0.03)]
+    assert ask(planner(Frames(crowd)), "FIND", f"node=m loc=1 locs=1 {ROOM} room=20")["status"] == -11
+    got = ask(planner(Frames(crowd)), "FIND", f"node=m loc=1 locs=1 {ROOM} room=5")  # 5 mm is there
+    assert got["status"] == 1 and got["remaining"] == 1
+    # 30 mm apart: 20 mm of room on each side is there
+    apart = [Box(0.35, -0.04, 0.05, 0.035, 0.03), Box(0.35, 0.025, 0.05, 0.035, 0.03)]
+    assert ask(planner(Frames(apart)), "FIND", f"node=m loc=1 locs=1 {ROOM} room=20")["status"] == 1
+    assert ask(planner(Frames(apart)), "FIND", f"node=m loc=1 locs=1 {ROOM} room=40")["status"] == -11
+    # the check can still be switched off
+    off = ROOM.replace("gripcheck=1", "gripcheck=0")
+    assert ask(planner(Frames(crowd)), "FIND", f"node=m loc=1 locs=1 {off} room=20")["status"] == 1
+
+
+def test_a_node_that_drives_no_gripper_has_no_stroke_to_refuse_a_wide_part_with():
+    wide = [Box(0.35, -0.03, 0.09, 0.07, 0.03)]
+    opts = "part=90x70x30 tol=25 order=LR,FB gripcheck=1 proto=2"
+    assert (
+        ask(planner(Frames(wide)), "FIND", f"node=s loc=1 locs=1 {opts}")["status"] == -1
+    )  # 0.7.0: 50 mm stroke
+    assert ask(planner(Frames(wide)), "FIND", f"node=s loc=1 locs=1 {opts} room=20")["status"] == 1
+
+
+def test_a_box_is_gripped_across_its_short_side_or_its_long_one():
+    part = [Box(0.35, -0.03, 0.06, 0.03, 0.03, 0.0)]  # the long side along base X
+    opts = "part=60x30x30 tol=25 order=LR,FB gripcheck=1 room=20 proto=2"
+    short = ask(planner(Frames(part)), "FIND", f"node=x loc=1 locs=1 {opts}")
+    also_short = ask(planner(Frames(part)), "FIND", f"node=x loc=1 locs=1 {opts} across=short")
+    long_ = ask(planner(Frames(part)), "FIND", f"node=x loc=1 locs=1 {opts} across=long")
+    assert short["status"] == long_["status"] == 1 and short["pose"] == also_short["pose"]
+
+    def finger_axis(pose):  # the Hand-E's fingers travel along the flange Y
+        return Transform.from_pose(pose).rotate((0.0, 1.0, 0.0))
+
+    a, b = finger_axis(short["pose"]), finger_axis(long_["pose"])
+    assert abs(a[1]) == pytest.approx(1.0, abs=0.03)  # across the short side: along base Y
+    assert abs(b[0]) == pytest.approx(1.0, abs=0.03)  # across the long side: along base X
+    # the room is checked where the fingers will be: a neighbour off the part's END is in the
+    # way of a long-side grip only
+    end_on = part + [Box(0.405, -0.03, 0.03, 0.03, 0.03)]  # 10 mm past the end
+    spec = "part=60x30x30 tol=10 order=LR,FB gripcheck=1 room=20 proto=2"
+    assert ask(planner(Frames(end_on)), "FIND", f"node=x2 loc=1 locs=1 {spec}")["status"] == 1
+    seen = scene_report(planner(Frames(end_on)), FLANGE, parse_options(f"{spec} across=long"))
+    longest = max(seen["rejected"], key=lambda q: q["size_mm"][0])  # the part, not its neighbour
+    assert seen["parts"] == [] and longest["why"].startswith("no room for a finger beside it")
+
+
+@pytest.mark.parametrize(
+    "bad", ["room=500", "room=-3", "room=", "across=diagonal", "across=", "across=long;x"]
+)
+def test_the_0_8_options_are_refused_when_malformed(bad):
+    with pytest.raises(RequestError):
+        parse_options(f"FIND p[0,0,0,0,0,0] part=50x30x30 {bad}")
+
+
+def test_the_0_8_options_parse_and_older_nodes_are_unchanged():
+    o = parse_options("part=50x30x30 gripcheck=1 room=20 across=long proto=2")
+    assert (o.grip_check, o.room_m, o.across) == (True, 0.02, "long")
+    assert o.fingers() == {"grasp_below_m": 0.015, "stroke_m": 0.05, "across": "long", "room_m": 0.02}
+    old = parse_options(OPTS)
+    assert (old.room_m, old.across) == (None, "short")

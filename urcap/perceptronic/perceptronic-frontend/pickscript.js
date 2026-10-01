@@ -6,26 +6,25 @@
 // request options (`tokens`: what the pick server's `parse_options` reads) and the same
 // script — so the cockpit's pick server (`:7622`, protocol 2) serves both robots.
 //
-// One run of the node is one move sequence with no children (0.5.0, Nick 2026-09-30): it
-// starts with the survey and ends with the gripper clamped on one part, inside the
-// operator's program (Local mode, no Primary client). Force the TCP to the flange, open the
-// gripper fully, ask NEXT (a part already seen, or the picture point to survey from), movej
-// there + FIND, the closer look unless it is switched off (LOOK/REFINE, leaned 0/12/24°
-// while the controller's IK can't solve approach + grip), the approach with the fingertips
-// `approachMm` over the top, down to the grip, close. The result variable is True only when
-// the gripper holds; what happens to the part is the program's next nodes. Speeds and the
-// gripper have no settings.
+// One run of the node is one move sequence with no children that positions the tool on one
+// part and touches nothing else: the node does not drive the gripper (0.6.0, Nick
+// 2026-10-01) — the program opens it before the node and closes it after. Inside the
+// operator's program (Local mode, no Primary client): force the TCP to the flange, ask NEXT
+// (a part already seen, or the picture point to survey from), movej there + FIND, the closer
+// look unless it is switched off (LOOK/REFINE, leaned 0/12/24° while the controller's IK
+// can't solve approach + grip), the approach with the fingertips `approachMm` over the top,
+// and down to the grip. The result variable is True once the tool is there. Speeds have no
+// settings.
 (function (root) {
   "use strict";
 
   const APP_TYPE = "advin-perceptronic";
   const PICK_TYPE = "advin-perceptronic-pick";
-  const VERSION = "0.5.0";
+  const VERSION = "0.6.0";
   const DEFAULT_PICK_PORT = 7622;
   const DEFAULT_COCKPIT_PORT = 7621;
   const DEFAULT_TIP_MM = 163; // Hand-E 157 mm + 6 mm adapter
   const SOCKET = "rs_pick";
-  const RQ_SOCKET = "rs_rq";
   const MAX_POINTS = 12;
   const MAX_AREAS = 8;
   const ORDERS = ["LR", "RL", "FB", "BF"];
@@ -33,17 +32,11 @@
     ["LR", "FB"], ["RL", "FB"], ["LR", "BF"], ["RL", "BF"],
     ["FB", "LR"], ["FB", "RL"], ["BF", "LR"], ["BF", "RL"],
   ];
-  // "digital" has no screen: it is a simulator's stand-in (no Robotiq there)
-  const GRIPPERS = ["robotiq", "digital"];
   const SHAPES = ["box", "cyl"];
   const SPEED = 0.6; // of the node's own joint / linear limits
   const SETTLE_S = 0.2; // before each picture
   const MAX_ATTEMPTS = 3; // grasps per run
-  const STROKE_MM = 50; // the fingers' full opening (Hand-E)
-  const GRIP_FORCE_PCT = 40;
-  const GRIP_SPEED_PCT = 100;
-  const DIGITAL_OUT = 0;
-  const DIGITAL_WAIT_S = 0.5;
+  const LOOK_STROKE_MM = 50; // how wide the open fingers are taken to be when the closer look keeps the part clear of them
   const KEEP_OUT_M = 0.15; // past the base's outer radius: perceptronics.volume.REACH_MARGIN_M
   const FOUND_VARIABLE = "rs_pick_found";
   const LOC_VARIABLE = "rs_pick_loc";
@@ -71,8 +64,9 @@
     ["partWidthMm", "part", "Width", "mm", 30, 5, 500, 1, "the fingers close across it"],
     ["partHeightMm", "part", "Height", "mm", 30, 5, 500, 1, "top above the table"],
     ["partTolPct", "part", "Tolerance", "%", 25, 5, 100, 5, "how far off still counts"],
-    ["approachMm", "approach", "Approach", "mm", 25, 5, 200, 5, "fingertips over the top, fully open"],
+    ["approachMm", "approach", "Approach", "mm", 25, 5, 200, 5, "fingertips over the top"],
     ["gripBelowTopMm", "approach", "Grip depth", "mm", 15, 0, 60, 1, "fingertips below the top to grip"],
+    ["fingerRoomMm", "approach", "Finger room", "mm", 20, 0, 100, 5, "clear space on each side of the part"],
   ].map(([key, section, label, unit, def, min, max, step, help]) => ({ key, section, label, unit, def, min, max, step, help }));
   const BY_KEY = {};
   NUMBERS.forEach((n) => { BY_KEY[n.key] = n; });
@@ -284,9 +278,9 @@
       values: values(p.values),
       orderFirst: p.orderFirst || "LR",
       orderRows: p.orderRows || "FB",
-      gripper: p.gripper === "digital" ? "digital" : "robotiq", // 0.4.0's "children" is gone with the children
       shape: p.shape === "cyl" ? "cyl" : "box",
-      gripCheck: p.gripCheck === true,
+      gripCheck: p.gripCheck !== false,
+      gripLongSide: p.gripLongSide === true,
       closeLook: p.closeLook !== false,
       arm: /^[A-Za-z0-9]{1,8}$/.test(arm) ? arm : "",
       popupOnFail: p.popupOnFail !== false,
@@ -341,11 +335,7 @@
     }
     if (!SHAPES.includes(s.shape)) return `unknown part shape "${s.shape}"`;
     if (s.arm && !/^[A-Za-z0-9]{1,8}$/.test(s.arm)) return `the robot model "${s.arm}" is not a name`;
-    if (s.gripCheck && shortSide(s) > STROKE_MM - 6) {
-      return `the part's short side (${num(shortSide(s))} mm) needs fingers that open wider than ${num(STROKE_MM)} mm - or switch the grip check off`;
-    }
     if (!isOrder(s.orderFirst, s.orderRows)) return "the pick order must be one horizontal and one vertical direction";
-    if (!GRIPPERS.includes(s.gripper)) return `unknown gripper "${s.gripper}"`;
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(s.foundVariable) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(s.locVariable)) {
       return "the result variable names are not valid";
     }
@@ -366,9 +356,10 @@
     b += ` tol=${num(n(s, "partTolPct"))}`;
     if (round(s)) b += " shape=cyl";
     b += ` order=${s.orderFirst},${s.orderRows}`;
-    b += ` grip=${num(n(s, "gripBelowTopMm"))} stroke=${num(STROKE_MM)}`;
+    b += ` grip=${num(n(s, "gripBelowTopMm"))}`;
     b += ` approach=${num(n(s, "approachMm"))}`;
-    b += ` gripcheck=${s.gripCheck ? 1 : 0}`;
+    b += ` gripcheck=${s.gripCheck ? 1 : 0} room=${num(n(s, "fingerRoomMm"))}`;
+    if (s.gripLongSide && !round(s)) b += " across=long";
     if (s.arm) b += ` arm=${s.arm}`;
     const p = i >= 0 && i < s.points.length ? s.points[i] : null;
     if (p && p.plane) b += ` plane=${pose(p.plane)} area=${num(p.areaXmm)}x${num(p.areaYmm)}`;
@@ -405,84 +396,6 @@
     s.push(`${indent}  rs_ok = False`);
     s.push(`${indent}end`);
   }
-  function rq(s, indent, name, value) {
-    s.push(`${indent}socket_send_line("SET ${name} ${value}", "${RQ_SOCKET}")`);
-    s.push(`${indent}rs_ack = socket_read_string("${RQ_SOCKET}", timeout=2.0)`);
-  }
-  function gripperOpen(st, s, indent) {
-    if (st.gripper === "robotiq") { rq(s, indent, "POS", 0); rq(s, indent, "GTO", 1); }
-    else if (st.gripper === "digital") s.push(`${indent}set_standard_digital_out(${DIGITAL_OUT}, False)`);
-  }
-  function gripperStart(st, s, indent) {
-    if (st.gripper === "robotiq") {
-      s.push(`${indent}rs_ok = socket_open("127.0.0.1", 63352, "${RQ_SOCKET}")`);
-      s.push(`${indent}if rs_ok:`);
-      s.push(`${indent}  socket_send_line("GET ACT", "${RQ_SOCKET}")`);
-      s.push(`${indent}  rs_act = socket_read_string("${RQ_SOCKET}", timeout=2.0)`);
-      s.push(`${indent}  if str_find(rs_act, "1") < 0:`);
-      say(s, `${indent}    `, "activating the gripper", null);
-      rq(s, `${indent}    `, "ACT", 1);
-      s.push(`${indent}    rs_t = 0`);
-      s.push(`${indent}    while rs_t < 40:`);
-      s.push(`${indent}      socket_send_line("GET STA", "${RQ_SOCKET}")`);
-      s.push(`${indent}      if str_find(socket_read_string("${RQ_SOCKET}", timeout=2.0), "3") >= 0:`);
-      s.push(`${indent}        rs_t = 40`);
-      s.push(`${indent}      else:`);
-      s.push(`${indent}        sleep(0.25)`);
-      s.push(`${indent}        rs_t = rs_t + 1`);
-      s.push(`${indent}      end`);
-      s.push(`${indent}    end`);
-      s.push(`${indent}  end`);
-      rq(s, `${indent}  `, "SPE", Math.round(GRIP_SPEED_PCT * 2.55));
-      rq(s, `${indent}  `, "FOR", Math.round(GRIP_FORCE_PCT * 2.55));
-      gripperOpen(st, s, `${indent}  `);
-      s.push(`${indent}else:`);
-      s.push(`${indent}  rs_why = "no Robotiq gripper on this controller (is its URCap installed?)"`);
-      s.push(`${indent}end`);
-    } else if (st.gripper === "digital") {
-      gripperOpen(st, s, indent);
-    }
-  }
-  function gripperOpenWait(st, s, indent) {
-    if (st.gripper !== "robotiq") return;
-    s.push(`${indent}rs_t = 0`);
-    s.push(`${indent}while rs_t < 30:`);
-    s.push(`${indent}  socket_send_line("GET OBJ", "${RQ_SOCKET}")`);
-    s.push(`${indent}  if str_find(socket_read_string("${RQ_SOCKET}", timeout=2.0), "3") >= 0:`);
-    s.push(`${indent}    rs_t = 30`);
-    s.push(`${indent}  else:`);
-    s.push(`${indent}    sleep(0.1)`);
-    s.push(`${indent}    rs_t = rs_t + 1`);
-    s.push(`${indent}  end`);
-    s.push(`${indent}end`);
-  }
-  function gripperClose(st, s, indent) {
-    if (st.gripper === "robotiq") {
-      rq(s, indent, "POS", 255);
-      rq(s, indent, "GTO", 1);
-      s.push(`${indent}sleep(0.2)`);
-      s.push(`${indent}rs_obj = ""`);
-      s.push(`${indent}rs_t = 0`);
-      s.push(`${indent}while rs_t < 40:`);
-      s.push(`${indent}  socket_send_line("GET OBJ", "${RQ_SOCKET}")`);
-      s.push(`${indent}  rs_obj = socket_read_string("${RQ_SOCKET}", timeout=2.0)`);
-      s.push(`${indent}  if str_find(rs_obj, "0") < 0:`);
-      s.push(`${indent}    rs_t = 40`);
-      s.push(`${indent}  else:`);
-      s.push(`${indent}    sleep(0.1)`);
-      s.push(`${indent}    rs_t = rs_t + 1`);
-      s.push(`${indent}  end`);
-      s.push(`${indent}end`);
-      // OBJ 1/2: stopped on contact = holding it; 3: closed all the way = nothing between the fingers
-      s.push(`${indent}rs_held = (str_find(rs_obj, "1") >= 0) or (str_find(rs_obj, "2") >= 0)`);
-      say(s, indent, "gripper ", "rs_obj");
-    } else {
-      s.push(`${indent}set_standard_digital_out(${DIGITAL_OUT}, True)`);
-      s.push(`${indent}sleep(${f2(DIGITAL_WAIT_S)})`);
-      s.push(`${indent}rs_held = True`);
-    }
-  }
-
   /** The survey: to picture point rs_loc, settle, FIND. */
   function survey(st, s, ind, ja, jv) {
     st.points.forEach((p, i) => {
@@ -509,13 +422,12 @@
     const budget = np + MAX_ATTEMPTS + 1;
     const jv = f2(1.05 * SPEED), ja = f2(1.4 * SPEED), lv = f2(0.25 * SPEED), la = f2(0.6 * SPEED);
     const found = st.foundVariable, loc = st.locVariable;
-    s.push(`# 3D Pick ${VERSION} - camera computer ${st.host}:${st.port} - part ${partText(st)} - ${orderText(st.orderFirst, st.orderRows)} - ${np} picture point${np === 1 ? "" : "s"}${st.closeLook ? "" : " - no closer look"}${st.gripCheck ? " - grip check" : ""}`);
+    s.push(`# 3D Pick ${VERSION} - camera computer ${st.host}:${st.port} - part ${partText(st)} - ${orderText(st.orderFirst, st.orderRows)} - ${np} picture point${np === 1 ? "" : "s"}${st.closeLook ? "" : " - no closer look"}${st.gripCheck ? ` - finger room ${num(n(st, "fingerRoomMm"))} mm` : " - no grip check"}${st.gripLongSide && !round(st) ? " - across the long side" : ""}`);
     s.push(`global ${found} = False`);
     s.push(`global ${loc} = 0`);
     s.push("rs_tcp0 = get_tcp_offset()");
     s.push("set_tcp(p[0, 0, 0, 0, 0, 0])");
     s.push('rs_why = "no answer from the camera computer within 10 s"');
-    s.push("rs_held = False");
     s.push("rs_try = 0");
     s.push("rs_ok = True");
     s.push("rs_loc = 1");
@@ -523,7 +435,6 @@
     s.push(`if socket_open("${st.host}", ${st.port}, "${SOCKET}"):`);
     say(s, "  ", "start, flange ", "get_actual_tcp_pose()");
     say(s, "  ", `looking for ${partText(st)}`, null);
-    gripperStart(st, s, "  ");
     s.push(`  while (rs_ok) and (rs_try < ${budget}) and (${found} == False):`);
     s.push("    rs_try = rs_try + 1");
     s.push(`    socket_send_line(str_cat("NEXT ", str_cat(to_str(get_actual_tcp_pose()), " node=${st.nodeId} locs=${np} proto=2")), "${SOCKET}")`);
@@ -554,7 +465,7 @@
     s.push("      rs_c = p[rs_r[2], rs_r[3], rs_r[4], 0, 0, 0]");
     s.push("      rs_top = p[rs_r[5], rs_r[6], rs_r[7], rs_r[8], rs_r[9], rs_r[10]]");
     if (st.closeLook) {
-      s.push(`      socket_send_line(str_cat("LOOK ", str_cat(to_str(get_actual_tcp_pose()), str_cat(" ", str_cat(to_str(rs_c), " stroke=${num(STROKE_MM)}")))), "${SOCKET}")`);
+      s.push(`      socket_send_line(str_cat("LOOK ", str_cat(to_str(get_actual_tcp_pose()), str_cat(" ", str_cat(to_str(rs_c), " stroke=${num(LOOK_STROKE_MM)}")))), "${SOCKET}")`);
       s.push(`      rs_lk = socket_read_ascii_float(10, "${SOCKET}", 10)`);
       s.push("      rs_see = False");
       s.push("      rs_look = rs_top");
@@ -606,21 +517,11 @@
     s.push("      if rs_go:");
     say(s, "        ", "approach ", "rs_hover");
     s.push(`        movel(rs_hover, a=${la}, v=${lv})`);
-    gripperOpenWait(st, s, "        ");
     say(s, "        ", "down to the grip ", "rs_grip");
     s.push("        movel(rs_grip, a=0.3, v=0.05)");
-    s.push("        rs_held = False");
-    gripperClose(st, s, "        ");
-    s.push("        if rs_held:");
-    s.push(`          global ${found} = True`);
-    s.push(`          global ${loc} = rs_loc`);
-    say(s, "          ", "holding a part from point ", "rs_loc");
-    s.push("        else:");
-    s.push('          rs_why = "the gripper closed on nothing"');
-    say(s, "          ", "closed on nothing - trying the next part", null);
-    gripperOpen(st, s, "          ");
-    s.push(`          movel(rs_hover, a=0.5, v=${f2(Math.max(0.05, 0.15 * SPEED))})`);
-    s.push("        end");
+    s.push(`        global ${found} = True`);
+    s.push(`        global ${loc} = rs_loc`);
+    say(s, "        ", "at the grip, part from point ", "rs_loc");
     s.push("      elif rs_rs != 1:");
     s.push("        rs_st = rs_rs");
     reasons(s, "        ");
@@ -638,7 +539,6 @@
     s.push(`  rs_why = "no camera computer at ${st.host}:${st.port} - is it on, and is the address in Application > Perceptronic right?"`);
     s.push('  textmsg("3D Pick: ", rs_why)');
     s.push("end");
-    if (st.gripper === "robotiq") s.push(`socket_close("${RQ_SOCKET}")`);
     s.push("set_tcp(rs_tcp0)");
     if (st.popupOnFail) {
       s.push(`if ${found} == False:`);
@@ -733,11 +633,12 @@
   }
 
   /** The approach from the side: the table, the part, the open fingers over it and how deep they grip. */
-  function svgApproach(approachMm, gripMm, heightMm, widthMm, w, h) {
+  function svgApproach(approachMm, gripMm, heightMm, widthMm, roomMm, w, h) {
     w = w || 260; h = h || 200;
-    const open = Math.max(STROKE_MM, widthMm + 8);
+    roomMm = roomMm || 0;
+    const open = widthMm + 2 * Math.max(4, roomMm * 0.5); // the fingers, somewhere inside the room
     const total = heightMm + approachMm + 45;
-    const k = Math.min((h - 26) / total, (w - 190) / (open + 20), 3);
+    const k = Math.min((h - 26) / total, (w - 190) / (Math.max(open, widthMm + 2 * roomMm) + 20), 3);
     const table = h - 14, cx = w / 2 - 50;
     const pw = widthMm * k, ph = heightMm * k, topY = table - ph;
     const tipY = topY - approachMm * k, half = (open * k) / 2, gripY = topY + gripMm * k;
@@ -754,6 +655,13 @@
       `<g stroke="${color}" stroke-width="1.2"><line x1="${r1(dx)}" y1="${r1(y0)}" x2="${r1(dx)}" y2="${r1(y1)}"/><line x1="${r1(dx - 4)}" y1="${r1(y0)}" x2="${r1(dx + 4)}" y2="${r1(y0)}"/><line x1="${r1(dx - 4)}" y1="${r1(y1)}" x2="${r1(dx + 4)}" y2="${r1(y1)}"/></g>` +
       text(dx + 6, (y0 + y1) / 2, t, 11.5, color, "bold", "start");
     out += dim(tipY, topY, `approach ${num(approachMm)}`, C.accent) + dim(topY, gripY, `grip ${num(gripMm)}`, "#9a6a00");
+    if (roomMm > 0) {
+      // the finger room: the clear space wanted on each side of the part
+      const rw = roomMm * k;
+      out += `<rect x="${r1(cx - pw / 2 - rw)}" y="${r1(topY)}" width="${r1(rw)}" height="${r1(ph)}" fill="rgba(61,220,132,.25)"/>`;
+      out += `<rect x="${r1(cx + pw / 2)}" y="${r1(topY)}" width="${r1(rw)}" height="${r1(ph)}" fill="rgba(61,220,132,.25)"/>`;
+      out += text(cx + pw / 2 + 4, table - 8, `room ${num(roomMm)}`, 11.5, C.ok, "bold", "start");
+    }
     return out + "</svg>";
   }
 
@@ -851,14 +759,14 @@
     const parts = ((scene && scene.parts) || []).length, near = nearMisses(scene).length;
     if (!parts && !near) return "no part in view";
     const s = `${parts} part${parts === 1 ? "" : "s"} to pick`;
-    return near ? `${s} · ${near} not (outlined on the picture)` : s;
+    return near ? `${s} · ${near} not (yellow, with why)` : s;
   }
 
   root.PerceptronicPick = {
     orderGrid, svgOrderTile, svgPart, svgApproach, areaCorners, farthest, svgReachMap,
     APP_TYPE, PICK_TYPE, VERSION, DEFAULT_PICK_PORT, DEFAULT_COCKPIT_PORT, DEFAULT_TIP_MM,
-    SOCKET, RQ_SOCKET, MAX_POINTS, MAX_AREAS, ORDERS, ORDER_TILES, GRIPPERS, SHAPES, REASONS,
-    SPEED, SETTLE_S, MAX_ATTEMPTS, STROKE_MM, KEEP_OUT_M,
+    SOCKET, MAX_POINTS, MAX_AREAS, ORDERS, ORDER_TILES, SHAPES, REASONS,
+    SPEED, SETTLE_S, MAX_ATTEMPTS, LOOK_STROKE_MM, KEEP_OUT_M,
     NUMBERS, BY_KEY, FOUND_VARIABLE, LOC_VARIABLE,
     num, clamp, defaults, values, modelReach,
     poseToMat, matToPose, matMul, matInv, poseTrans, poseInv, flangeMat, fingertip, plane, tiltDeg,

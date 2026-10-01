@@ -46,6 +46,7 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
     static final String KEY_ORDER_ROWS = "orderRows";
     static final String KEY_SHAPE = "partShape";
     static final String KEY_GRIP_CHECK = "gripCheck";
+    static final String KEY_GRIP_LONG = "gripLongSide";
     static final String KEY_CLOSE_LOOK = "closeLook";
     static final String KEY_POPUP = "popupOnFail";
     static final String KEY_PORT = "pickPort";
@@ -142,7 +143,8 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         s.orderFirst = model.get(KEY_ORDER_FIRST, "LR");
         s.orderRows = model.get(KEY_ORDER_ROWS, "FB");
         s.shape = model.get(KEY_SHAPE, "box");
-        s.gripCheck = model.get(KEY_GRIP_CHECK, false);
+        s.gripCheck = model.get(KEY_GRIP_CHECK, true);
+        s.gripLongSide = model.get(KEY_GRIP_LONG, false);
         s.closeLook = model.get(KEY_CLOSE_LOOK, true);
         s.popupOnFail = model.get(KEY_POPUP, true);
         s.polyscope = polyscopeVersion();
@@ -408,9 +410,12 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
     public void setFlag(final String key, final boolean on) {
         if (PickScreen.FLAG_GRIP_CHECK.equals(key)) {
             change(() -> model.set(KEY_GRIP_CHECK, on));
-            view.screen().setStatus(on ? "grip check on: a part that measures too wide for the fingers, or has no"
-                    + " room beside it, is skipped" : "grip check off: the part's size is known, every part found is"
-                    + " picked", Ui.Kind.INFO);
+            view.screen().setStatus(on ? "grip check on: a part with less than the finger room on either side is"
+                    + " skipped" : "grip check off: a part is picked however close its neighbours are", Ui.Kind.INFO);
+        } else if (PickScreen.FLAG_GRIP_LONG.equals(key)) {
+            change(() -> model.set(KEY_GRIP_LONG, on));
+            view.screen().setStatus(on ? "the fingers close across the part's long side"
+                    : "the fingers close across the part's short side", Ui.Kind.INFO);
         } else if (PickScreen.FLAG_CLOSE_LOOK.equals(key)) {
             change(() -> model.set(KEY_CLOSE_LOOK, on));
             view.screen().setStatus(on ? "closer look on: the arm moves in to measure the part again before the"
@@ -430,7 +435,8 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         change(() -> {
             for (PickScript.Num n : PickScript.NUMBERS) model.set(n.key, n.def);
             model.set(KEY_SHAPE, "box");
-            model.set(KEY_GRIP_CHECK, false);
+            model.set(KEY_GRIP_CHECK, true);
+            model.set(KEY_GRIP_LONG, false);
             model.set(KEY_CLOSE_LOOK, true);
         });
         refresh();

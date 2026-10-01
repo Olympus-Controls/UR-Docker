@@ -482,7 +482,6 @@
                 <div class="fields">
                   <span class="seg" data-pk="shapes"><button data-shape="box">Box</button><button data-shape="cyl">Cylinder</button></span>
                   <div data-pk="card-part"></div>
-                  <label class="check"><input type="checkbox" data-pk="gripCheck" /><span>Grip check<small>skip parts that measure too wide or too crowded to grip</small></span></label>
                 </div>
                 <div class="art" data-pk="part-art"></div>
               </div>
@@ -492,6 +491,8 @@
               <div class="tab">
                 <div class="fields">
                   <div data-pk="card-approach"></div>
+                  <label class="check"><input type="checkbox" data-pk="gripCheck" /><span>Grip check<small>skip a part with less than the finger room on either side</small></span></label>
+                  <label class="check" data-pk="gripLongRow"><input type="checkbox" data-pk="gripLongSide" /><span>Grip across the long side<small>off: the fingers close across the short side</small></span></label>
                   <label class="check"><input type="checkbox" data-pk="closeLook" /><span>Closer look<small>a second, nearer measurement before the approach</small></span></label>
                 </div>
                 <div class="art" data-pk="approach-art"></div>
@@ -520,7 +521,8 @@
         const p = this.params();
         p.values = P.defaults();
         p.shape = "box";
-        p.gripCheck = false;
+        p.gripCheck = true;
+        p.gripLongSide = false;
         p.closeLook = true;
         this.save();
         this.sync();
@@ -530,7 +532,7 @@
         this.save();
         this.sync();
       }));
-      ["gripCheck", "closeLook"].forEach((key) => this.$(key).addEventListener("change", (ev) => {
+      ["gripCheck", "gripLongSide", "closeLook"].forEach((key) => this.$(key).addEventListener("change", (ev) => {
         this.params()[key] = !!ev.target.checked;
         this.save();
         this.sync();
@@ -670,10 +672,15 @@
           r.querySelector("[data-help]").textContent = round ? "across the top, standing on its end" : n.help;
         }
         if (n.key === "partWidthMm") r.classList.toggle("hidden", round);
+        if (n.key === "fingerRoomMm") r.classList.toggle("hidden", !st.gripCheck);
       });
       this.$("part-art").innerHTML = P.svgPart(P.longSide(st), P.shortSide(st), v.partHeightMm, round, 300, 240);
-      this.$("approach-art").innerHTML = P.svgApproach(v.approachMm, v.gripBelowTopMm, v.partHeightMm, P.shortSide(st), 300, 240);
+      const longWay = st.gripLongSide && !round;
+      this.$("approach-art").innerHTML = P.svgApproach(v.approachMm, v.gripBelowTopMm, v.partHeightMm,
+        longWay ? P.longSide(st) : P.shortSide(st), st.gripCheck ? v.fingerRoomMm : 0, 300, 240);
       this.$("gripCheck").checked = st.gripCheck;
+      this.$("gripLongSide").checked = st.gripLongSide;
+      this.$("gripLongRow").classList.toggle("hidden", round); // a cylinder has no side to choose
       this.$("closeLook").checked = st.closeLook;
       // the verdict
       const why = P.problem(st);
@@ -842,8 +849,9 @@
       this.drawScene();
     }
 
-    /** The only graphics on the picture: each candidate that is nearly the part and is not
-     * going to be picked — outlined, with why. A picked part carries none. */
+    /** What is drawn on the picture (0.6.0, Nick 2026-10-01): every part that will be picked
+     * in green with its number in the pick order, and every candidate that is nearly the part
+     * and will not be in yellow with why. Nothing else. */
     drawScene() {
       const img = this.$("img"), cv = this.$("overlay");
       if (!img || !cv) return;
@@ -857,6 +865,23 @@
       if (!sc || !sc.ok || this._nocam) return;
       // the scene's pixels are the colour picture's (the depth view is half its size)
       const sx = w / (sc.width || img.naturalWidth || w), sy = h / (sc.height || img.naturalHeight || h);
+      (sc.parts || []).forEach((p) => {
+        const corners = p.corners_px;
+        if (!Array.isArray(corners) || corners.length !== 4) return;
+        ctx.beginPath();
+        corners.forEach(([u, v], i) => (i ? ctx.lineTo(u * sx, v * sy) : ctx.moveTo(u * sx, v * sy)));
+        ctx.closePath();
+        ctx.fillStyle = "rgba(61,220,132,.25)"; ctx.fill();
+        ctx.strokeStyle = "#3ddc84"; ctx.lineWidth = 2.4; ctx.stroke();
+        if (Array.isArray(p.pixel)) {
+          const x = p.pixel[0] * sx, y = p.pixel[1] * sy;
+          ctx.beginPath(); ctx.arc(x, y, 13, 0, Math.PI * 2);
+          ctx.fillStyle = "#12824a"; ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+          ctx.fillStyle = "#fff"; ctx.font = "bold 13px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(String(p.order || "·"), x, y);
+        }
+      });
       this._P.nearMisses(sc).forEach((r) => {
         const corners = r.corners_px;
         if (!Array.isArray(corners) || corners.length !== 4) return;

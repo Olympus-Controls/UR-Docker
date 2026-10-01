@@ -64,7 +64,7 @@ final class Scene {
         int near = nearMisses().size();
         if (parts.isEmpty() && near == 0) return "no part in view";
         String s = parts.size() + (parts.size() == 1 ? " part" : " parts") + " to pick";
-        return near == 0 ? s : s + " · " + near + " not (outlined on the picture)";
+        return near == 0 ? s : s + " · " + near + " not (yellow, with why)";
     }
 
     Scene(int width, int height, List<Part> parts, List<Part> rejected, String surface, double offsetMm,
