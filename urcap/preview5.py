@@ -16,11 +16,11 @@ Installation's pick areas and reach map. What only a robot can do is stood in fo
 picture point is added without moving an arm, a pick area's three touches are a sample
 rectangle on the demo table, typed values come from a dialog instead of PolyScope's keypad.
 
-    uv run python urcap/preview5.py                   # simulated camera computer
-    uv run python urcap/preview5.py --shuffle 6       # ... that re-scatters the parts every 6 s
-    uv run python urcap/preview5.py --cockpit http://192.168.3.10:7621
-    uv run python urcap/preview5.py --snapshot out.png   # render once and exit (no display)
-    uv run python urcap/preview5.py --screens urcap/perceptronic-ps5/screens   # the README's three pictures
+    python3 urcap/preview5.py                   # simulated camera computer
+    python3 urcap/preview5.py --shuffle 6       # ... that re-scatters the parts every 6 s
+    python3 urcap/preview5.py --cockpit http://192.168.3.10:7621
+    python3 urcap/preview5.py --snapshot out.png   # render once and exit (no display)
+    python3 urcap/preview5.py --screens urcap/perceptronic-ps5/screens   # the README's three pictures
 
 Needs a JDK (``javac``).
 """

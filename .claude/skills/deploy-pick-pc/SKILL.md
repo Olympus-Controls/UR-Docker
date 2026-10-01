@@ -19,7 +19,7 @@ The human version, with what the installer does step by step, is
 
 - `scripts/deploy-pi.sh <user@host> [--cell NAME] [--robot-host IP] [--allow-from CIDR]
   [--doctor-only] [--rollback]` runs **on the laptop** (this checkout). It builds the
-  wheel with `uv build`, scps it plus `deploy/pi/`, runs `install.sh` under sudo on the
+  wheel with `python3 -m pip wheel`, scps it plus `deploy/pi/`, runs `install.sh` under sudo on the
   PC, then runs `sudo perceptronics-doctor` there.
 - `deploy/pi/install.sh` runs **on the PC** as root, idempotently. It covers apt,
   librealsense v2.58.4 (RSUSB), udev rules, the `perceptronics` user, a venv per release,
@@ -41,9 +41,9 @@ to do.
 | arm64 + supported OS? | `ssh <pc> 'uname -m; . /etc/os-release; echo $ID $VERSION_CODENAME; python3 -V'` | Expect `aarch64`, `debian`/`raspbian`, bookworm/trixie, Python ≥ 3.10. Another distro: say so and stop. |
 | Is the D435 there? | `ssh <pc> 'grep -l 0b07 /sys/bus/usb/devices/*/idProduct'` (works before `usbutils` is installed); after install, `lsusb -d 8086:0b07` | Nothing found: the camera isn't plugged in or isn't powered. You can still deploy; the doctor will flag it. |
 | USB 3 link? | `ssh <pc> 'for d in /sys/bus/usb/devices/*; do [ "$(cat $d/idVendor 2>/dev/null)$(cat $d/idProduct 2>/dev/null)" = 80860b07 ] && echo "$d $(cat $d/speed) Mb/s"; done'` | `5000` is USB 3. `480` is USB 2: the cockpit still works (it negotiates 640×480 @ 15), but tell Nick to move it to a blue port with a short cable and no hub. |
-| Robot IP? | The request, else the cell's value: `uv run perceptronics cells --export ur3` (`UR_HOST`), else `/etc/perceptronics/cell.env` on an already deployed PC (`ssh <pc> sudo grep UR_HOST /etc/perceptronics/cell.env`) | No address anywhere: ask for it. It is on the pendant under Settings → System → Network. |
+| Robot IP? | The request, else the cell's value: `python3 -m perceptronics cells --export ur3` (`UR_HOST`), else `/etc/perceptronics/cell.env` on an already deployed PC (`ssh <pc> sudo grep UR_HOST /etc/perceptronics/cell.env`) | No address anywhere: ask for it. It is on the pendant under Settings → System → Network. |
 | Is it an e-Series on PolyScope 5, and which model? | From the PC: `ssh <pc> 'exec 3<>/dev/tcp/<robot>/29999; head -1 <&3; printf "PolyscopeVersion\nget robot model\nquit\n" >&3; head -2 <&3'` | No Dashboard banner means the address is wrong, or it is PolyScope X (no Dashboard). The URCap for this path is the PolyScope 5 one. |
-| Cell name? | `uv run perceptronics cells`. `ur3` is the only shipped e-Series cell (UR3e, `eseries` bracket, Hand-E `PERCEPTRONICS_TIP_M=0.163`). | Another model: deploy with `--cell ur3 --robot-host <ip>`, then edit `UR_ROBOT_MODEL`, `PERCEPTRONICS_TIP_M`, `PERCEPTRONICS_BRACKET` and `PERCEPTRONICS_HOME_POSE` in `/etc/perceptronics/cell.env`, and tell Nick which values are guesses. |
+| Cell name? | `python3 -m perceptronics cells`. `ur3` is the only shipped e-Series cell (UR3e, `eseries` bracket, Hand-E `PERCEPTRONICS_TIP_M=0.163`). | Another model: deploy with `--cell ur3 --robot-host <ip>`, then edit `UR_ROBOT_MODEL`, `PERCEPTRONICS_TIP_M`, `PERCEPTRONICS_BRACKET` and `PERCEPTRONICS_HOME_POSE` in `/etc/perceptronics/cell.env`, and tell Nick which values are guesses. |
 | Cell subnet for the firewall? | The installer defaults to `UR_HOST`'s /24 | Only if the PC and robot sit on different subnets: pass `--allow-from <CIDR>`. |
 | Internet on the PC? (the first build fetches from GitHub/sqlite.org) | `ssh <pc> 'python3 -c "import urllib.request as u; u.urlopen(\"https://github.com\", timeout=10); print(\"ok\")"'` | No internet: apt and the librealsense build can't run. Say so; the README's *Open items* has the copy-a-built-tree path. |
 | Enough room? | `ssh <pc> 'df -h /var/tmp; free -m'` | The build wants ≥ 5 GiB free. Low RAM is handled (temporary swapfile). |

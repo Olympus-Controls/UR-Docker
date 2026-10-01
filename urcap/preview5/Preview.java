@@ -28,7 +28,7 @@ import javax.swing.SwingUtilities;
  * real answer ({@code GET /api/pick/scene}) to exactly the options the program would send.
  *
  * <p>Not part of the URCap (it is outside {@code perceptronic-ps5/src}). Run it with
- * {@code uv run python urcap/preview5.py}.
+ * {@code python3 urcap/preview5.py}.
  *
  * <pre>java … Preview http://127.0.0.1:7650 [--snapshot out.png | --screens dir]</pre>
  */

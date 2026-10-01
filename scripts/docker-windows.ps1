@@ -13,7 +13,7 @@
 # Idempotent: re-run it after a reboot or after re-plugging the camera (an attach
 # does not survive either). docs\windows-docker.md is the walk-through.
 #
-# Nothing here needs Python, uv or the RealSense SDK on Windows.
+# Nothing here needs Python or the RealSense SDK on Windows.
 # Kept ASCII and Windows PowerShell 5.1 compatible on purpose.
 [CmdletBinding()]
 param(

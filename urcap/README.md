@@ -46,7 +46,7 @@ this repository). The pendant shows the cockpit's picture over the cell network.
 2. **Install it** on the robot (see [Install the URCap](#1-install-the-urcap)).
 3. **Start the cockpit** on the camera computer, with the robot's address:
    ```bash
-   uv run perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
+   python3 -m perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
    ```
 4. On the pendant: **Application → Perceptronic**, type
    `http://<camera-computer-ip>:7621` in **Cockpit**, press **Save**. The feed
@@ -66,7 +66,7 @@ it's the `--cors` value, prints the exact flag to restart the cockpit with. See
 | --- | --- |
 | **Robot** | A PolyScope X controller on the release above (see [What has been verified](#what-has-been-verified)). The admin password (UR's factory default is `easybot`; the first use asks you to change it). |
 | **Camera** | An Intel RealSense **D435** on the tool flange. A printable bracket is in [`hardware/d435-tool-bracket/`](../hardware/d435-tool-bracket/) (e-Series ISO-50 and UR20 prints). |
-| **Computer** | Windows, macOS or Linux (amd64/arm64) on the **same network as the robot**, with the D435 on a **USB 3** port, [`uv`](https://docs.astral.sh/uv/) and librealsense ([docs/realsense.md](../docs/realsense.md) covers each OS; macOS needs `sudo`). |
+| **Computer** | Windows, macOS or Linux (amd64/arm64) on the **same network as the robot**, with the D435 on a **USB 3** port, Python 3.10 or newer and librealsense ([docs/realsense.md](../docs/realsense.md) covers each OS; macOS needs `sudo`). |
 
 ---
 
@@ -132,7 +132,7 @@ Get this repository and its environment:
 
 ```bash
 git clone https://github.com/Olympus-Controls/UR-utils.git && cd UR-utils
-uv sync --extra vision
+python3 -m pip install -e ".[vision]"   # optional: numpy/OpenCV for the classic-CV backend; the cockpit itself needs nothing installed
 ```
 
 Describe your cell in one small file (copy [`perceptronics/cells/ur20.env`](../perceptronics/cells/ur20.env), the
@@ -152,13 +152,13 @@ PERCEPTRONICS_BRACKET=ur20       # which bracket print: eseries (ISO-50) or ur20
 Check everything before the first run (it prints a fix next to each failure):
 
 ```bash
-uv run perceptronics --cell mycell.env doctor
+python3 -m perceptronics --cell mycell.env doctor
 ```
 
 Then start the cockpit so the pendant can reach it:
 
 ```bash
-uv run perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
+python3 -m perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-ip>
 ```
 
 - `--bind 0.0.0.0` lets the pendant reach the computer (the default is this
@@ -175,7 +175,7 @@ uv run perceptronics --cell mycell.env gui --bind 0.0.0.0 --cors http://<robot-i
 **Calibrate once per camera mounting.** Without it, positions come from the
 bracket's nominal geometry and can be off by a few centimetres. With the cockpit
 running, put a block under the camera and run
-`uv run perceptronics --cell mycell.env calibrate --apply` in a second terminal (the
+`python3 -m perceptronics --cell mycell.env calibrate --apply` in a second terminal (the
 arm orbits the block and the result is saved), or use the cockpit's **Calibrate
 hand-eye**. See [docs/realsense.md §Hand-eye](../docs/realsense.md).
 

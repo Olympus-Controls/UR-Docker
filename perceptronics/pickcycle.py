@@ -594,7 +594,7 @@ class PickCycle:
         if r.get("ok") or "no route" not in (r.get("error") or ""):
             return r
         # A cockpit that predates the gripper route: drive the robot it is linked to
-        # in-process (the same Robot.gripper `urctl gripper` calls) — no uv, no PATH.
+        # in-process (the same Robot.gripper `urctl gripper` calls) — no console script, no PATH.
         host = (self.cockpit.get("/api/robot").get("robot") or {}).get("host") or None
         try:
             return Robot(RobotConfig.from_env(host=host)).gripper(action, force=self.force)

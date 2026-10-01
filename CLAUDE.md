@@ -817,8 +817,8 @@ which side of that line you're on.
 ```bash
 export SSHPASS='<password>'                       # do not pass -p (visible in ps)
 sshpass -e scp programs/Dance/Dance.urp root@192.168.1.50:/programs/Dance.urp
-uv run urctl --host 192.168.1.50 load Dance
-uv run urctl --host 192.168.1.50 play
+python3 -m urctl --host 192.168.1.50 load Dance
+python3 -m urctl --host 192.168.1.50 play
 ```
 
 Verified: real e-Series ships Debian + sshd on `:22`, root login enabled,
@@ -890,7 +890,7 @@ runs and one that pops "cannot reach the required pose" mid-cycle.
 | Every cockpit click on the UR3e cell reads **OUT OF REACH** although the arm reaches the parts | The reach check was the datasheet radius (0.5 m) from the base **origin**; the parts sit 0.27 m below the base | Fixed 2026-09-27: `locate` and every absolute move ask the controller's IK (`reach_check: controller_ik`); the sphere is only the no-answer fallback. If you still see `reach_check: sphere`, Primary isn't answering (PolyScope X in Local, Primary disabled) |
 | A cockpit Move with the Hand-E on drives the fingers into the part | The standoff was measured from the **flange** (`PERCEPTRONICS_APPROACH_REFERENCE=flange`, 75 mm) — the fingertips are 163 mm past it | Fixed 2026-09-27: approach by the fingertips (the default); check `perceptronics doctor`'s `approach` line shows the tool length you measured |
 | The Perceptronic Pick node (or any FIND) seems **hung**: nothing moves, the pick-server log shows `FIND: no fresh camera frame` (status −4) over and over | The D435 dropped out of the cockpit: its frames freeze at one `seq` (`/api/info` now says `stalled: true`, `fps` 0 — before 2026-09-30 `fps` kept reading ~30), and `/api/info`'s `last_error` says `Frame didn't arrive within 5000` (the macOS USB-claim race). Each FIND waits for a frame newer than the request, gets none, answers −4, and a looping program asks again | Re-plug the camera; the lean open re-opens it by itself. The sidecar's log now says `cockpit frames stalled at seq N` with the camera's error, and 0.3.0 pops up the reason instead of looping silently |
-| The cockpit runs the **old hand-eye** although `perceptronics/cells/ur3.env` has the new solve (`/api/info` → `robot.handeye.flange_to_depth_pose` ≠ the cell file's value; seen 2026-09-27) | `apply_cell` only fills keys the environment doesn't already have, so a `PERCEPTRONICS_T_FLANGE_CAMERA` already in the cockpit's environment wins. `handeye.source` reads `env:…` either way, so it can't tell you which one won | Launch with `sudo env -u PERCEPTRONICS_T_FLANGE_CAMERA .venv/bin/perceptronics --cell ur3 gui …`; after every launch compare `flange_to_depth_pose` in `/api/info` with the cell file |
+| The cockpit runs the **old hand-eye** although `perceptronics/cells/ur3.env` has the new solve (`/api/info` → `robot.handeye.flange_to_depth_pose` ≠ the cell file's value; seen 2026-09-27) | `apply_cell` only fills keys the environment doesn't already have, so a `PERCEPTRONICS_T_FLANGE_CAMERA` already in the cockpit's environment wins. `handeye.source` reads `env:…` either way, so it can't tell you which one won | Launch with `sudo env -u PERCEPTRONICS_T_FLANGE_CAMERA python3 -m perceptronics --cell ur3 gui …`; after every launch compare `flange_to_depth_pose` in `/api/info` with the cell file |
 | RealSense colour panel black, depth fine, RGB options at factory | depth and colour streaming at **different sizes** on the D435 | keep both at 848×480 (the default); `docs/realsense.md` §Depth quality |
 | Cockpit shows nothing on a **USB 2** link; log says `Couldn't resolve requests` then `RS2_USB_STATUS_ACCESS` on every retry | USB 2 lists **no 848×480 colour** (and 848×480 depth only at 10/6 Hz), so the default pair can't start; each failed open re-runs the macOS UVC race | Fixed: `open()` enumerates the camera's profiles (`Api.stream_modes`) and `negotiate_mode` picks the fastest same-size pair it offers (640×480 @ 15 on the D435) — no flags needed; re-plug once to clear the race. `docs/realsense.md` §Troubleshooting |
 | RealSense open fails on the Mac with `RS2_USB_STATUS_ACCESS` / `set_xu … timed out` / no frame, and the process **segfaults** after `usb device disconnected` | The Mac is a desktop now: libusb's claim re-enumerates the device and every camera-aware app (Spotify won it on 2026-09-24; browsers; Apple's UVCAssistant) races for it; a disconnect mid-open crashes librealsense 2.58.4 in libusb | Don't chase it. On this Mac every libusb handle open resets the camera (root-only kernel-driver detach = re-enumerate with capture) and Apple's `UVCAssistant` re-claims it each time: 43 resets in 40 s and a stream that dies after 2 frames, with nothing else on the bus (2026-09-25, webcams and Spotify gone). The Mac-as-desktop is not a D435 host; use the Windows laptop under WSL2 (verified 09-23) or the Jetson. the cockpit under `--rs-lean`. `docs/realsense.md` §Troubleshooting |
@@ -914,7 +914,7 @@ URCap and the matrix never blocks unrelated PRs. Before a new required job, make
 unit tests on Python 3.10/3.12/3.14, and a packaging job that builds the wheel,
 verifies it carries `perceptronics/webui/` + the vendored `_urp_convert.py`, and
 smoke-installs it. Integration tests (URSim boot) run on pushes to main or on
-PRs labeled **`run-integration`**. Dependabot maintains uv deps, action pins,
+PRs labeled **`run-integration`**. Dependabot maintains the pinned dev requirements (pip), action pins,
 and simulator images (weekly/monthly, grouped); minor/patch non-simulator
 bumps auto-merge once CI is green (`dependabot-auto-merge.yml` — needs
 "Allow auto-merge" enabled in repo settings). CodeQL scans Python + JS weekly
@@ -927,7 +927,7 @@ the URCap API jars exist only in the URSim image).
 
 Unit tests assume a clean shell: with `UR_CELL` (or `PERCEPTRONICS_*`) exported,
 the handeye/webapp/cockpit tests pick up the cell's defaults and fail — run them
-with `env -u UR_CELL uv run pytest …` or in a fresh shell.
+with `env -u UR_CELL python3 -m pytest …` or in a fresh shell.
 
 ```bash
 make sim-up          # start URSim
@@ -938,20 +938,34 @@ make lint            # ruff + shellcheck
 make sim-down        # stop URSim
 ```
 
-Environment + deps are managed with **`uv`** (the repo's `pyproject.toml`
-declares the `urctl`/`perceptronics` packages and a `dev` group). `uv sync` builds
-`.venv`; prefix commands with `uv run`. The core (`urctl` + perceptronics core) is
-pure stdlib — numpy/OpenCV/torch/the MCP SDK are optional extras
-(`uv sync --extra vision`).
+**No uv (Nick, 2026-09-30: "completely remove UV from the equation since we don't have any
+dependencies") — this repo is the exception to the global Python → uv default.** The core
+(`urctl` + perceptronics core) is pure stdlib, so nothing is installed to run it: any Python
+≥ 3.10 runs it from the checkout as `python3 -m urctl …` / `python3 -m perceptronics …` /
+`python3 -m perceptronics.mcp_server` (`.mcp.json`). macOS's own `/usr/bin/python3` is 3.9 — use
+Homebrew's; `scripts/cockpit*.sh` check and take `PYTHON=`. The console scripts (`urctl`,
+`perceptronics`, …) exist only after `pip install .`. numpy/OpenCV/torch are optional extras
+(`python3 -m pip install -e ".[vision]"`).
+
+The only third-party packages are the **development tools** — pytest, hypothesis, ruff, build,
+hatchling. `requirements-dev.in` lists them; `requirements-dev.txt` pins them and everything
+they pull in, with hashes, for every supported Python and OS (`requirements-vision.txt` does
+the same for the `vision` extra). CI installs with `pip install --require-hashes -r …` (the
+lockfile rule, kept) and builds with `python -m build --no-isolation` so hatchling is the
+pinned one. Dependabot's `pip` ecosystem updates the pins and their hashes; a bump that needs a
+*new* transitive package fails the hash check in CI — add it to the `.txt` by hand (name,
+version, `--hash` lines from PyPI). Windows: `scripts/setup-windows.ps1` installs Python with
+winget when none is found (`scripts/_python.ps1` finds it, skipping the Microsoft Store stub);
+the Windows CI leg runs `cockpit.ps1 -Doctor` and `Windows-Setup.cmd` under Windows PowerShell 5.1.
 
 ```bash
-uv sync                                   # create .venv with dev deps
-uv run pytest -m "not integration"        # unit tests
-uv run urctl state                        # run the CLI in the env
+make install-dev                              # .venv + the pinned dev tools (pip, hash-checked)
+make test                                     # unit tests (.venv/bin/python -m pytest)
+python3 -m urctl state                        # run the CLI: no env needed
 ```
 
-Host-side control (via `uv run`, or after `uv sync` activate `.venv`), against
-the sim or a real robot:
+Host-side control (`urctl` below is `python3 -m urctl`, or the console script after
+`pip install .`), against the sim or a real robot:
 
 ```bash
 urctl state                              # read state as JSON (localhost)

@@ -14,8 +14,8 @@ controller parsed and ran every line — the picture, ``FIND``, the close look, 
 gripper: the sim has no Robotiq), the lift, the routine after the pick — twice, and set
 the result and location variables.
 
-    uv run python urcap/pick5_e2e.py                 # the x86 VM sim: scripts/ursim-e-vm.sh up
-    uv run python urcap/pick5_e2e.py --host 10.0.0.5 --reach-back 192.168.3.10   # other sims
+    python3 urcap/pick5_e2e.py                 # the x86 VM sim: scripts/ursim-e-vm.sh up
+    python3 urcap/pick5_e2e.py --host 10.0.0.5 --reach-back 192.168.3.10   # other sims
 
 ``--reach-back`` is the address the *controller* uses to reach this machine
 (10.0.2.2 from inside the QEMU VM; the docker network's gateway for a local URSim
