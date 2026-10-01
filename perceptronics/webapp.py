@@ -957,12 +957,14 @@ class ViewerApp:
     def depth_png(self, after: int | None, timeout_s: float) -> tuple[int, bytes | None]:
         """The depth image as a heatmap PNG (``GET /api/depth.png``): the same long-poll as
         :meth:`color_png`, for the URCap's picture/heatmap toggle. Aligned to the colour
-        image and half its size each way (a pixel loop in Python: a quarter of the work),
-        on a fixed 0.15–1.0 m ramp so the colours mean the same distance in every frame."""
+        image and half its size each way (a pixel loop in Python: a quarter of the work).
+        The ramp spans what the frame holds (:func:`heatmap_range`): a 30 mm part on a
+        table 0.4 m away is a few percent of a fixed 0.15–1 m ramp — one colour."""
         seq, frame = self.wait_frame(after, timeout_s) if after is not None else self.latest()
         if frame is None:
             return seq, None
-        return seq, colourise_depth_png(frame, HEATMAP_NEAR_M, HEATMAP_FAR_M, step=2)
+        near, far = heatmap_range(frame)
+        return seq, colourise_depth_png(frame, near, far, step=2)
 
     # -- the robot program's pick server (perceptronics.picknode) ------------------------
 
@@ -1820,6 +1822,32 @@ _PALETTE = _depth_palette()
 
 
 HEATMAP_NEAR_M, HEATMAP_FAR_M = 0.15, 1.0
+HEATMAP_STEP_M = 0.01  # the ramp's ends move in steps: frame-to-frame noise does not shimmer it
+HEATMAP_MIN_SPAN_M = 0.05
+
+
+def heatmap_range(frame: RgbdFrame) -> tuple[float, float]:
+    """The near and far ends of the heatmap's ramp for this frame: the 2nd and 98th
+    percentile of its valid depths (a flying pixel does not stretch it), rounded outward to
+    :data:`HEATMAP_STEP_M`, at least :data:`HEATMAP_MIN_SPAN_M` apart. A frame with no
+    depth gets the fixed 0.15–1.0 m."""
+    w, h, data, scale = frame.depth.width, frame.depth.height, frame.depth.data, frame.depth.scale_m
+    vals = []
+    for y in range(0, h, 8):
+        for k in range(2 * y * w, 2 * (y + 1) * w, 16):
+            raw = data[k] | (data[k + 1] << 8)
+            if raw:
+                vals.append(raw)
+    if len(vals) < 20:
+        return HEATMAP_NEAR_M, HEATMAP_FAR_M
+    vals.sort()
+    near = vals[len(vals) * 2 // 100] * scale
+    far = vals[min(len(vals) - 1, len(vals) * 98 // 100)] * scale
+    near = math.floor(near / HEATMAP_STEP_M) * HEATMAP_STEP_M
+    far = math.ceil(far / HEATMAP_STEP_M) * HEATMAP_STEP_M
+    if far - near < HEATMAP_MIN_SPAN_M:
+        far = near + HEATMAP_MIN_SPAN_M
+    return near, far
 
 
 def colourise_depth_png(

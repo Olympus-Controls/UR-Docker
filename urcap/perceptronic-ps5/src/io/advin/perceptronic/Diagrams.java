@@ -18,9 +18,9 @@ import java.util.Locale;
 import javax.swing.JComponent;
 
 /**
- * The small live drawings that explain a setting as it changes: the pick-order tiles, the
- * part with its dimensions, the approach seen from the side, and the cell from above (reach
- * and the taught pick areas). No UR API.
+ * The small drawings that explain a setting as it changes: the pick-order tiles, the part
+ * (box or cylinder) with its dimensions, the approach seen from the side, and the cell from
+ * above (the arm's reach and the taught pick areas). No UR API.
  */
 // Swing components are never serialized here; javac's serial lint does not apply to them
 @SuppressWarnings("serial")
@@ -108,42 +108,69 @@ final class Diagrams {
         }
     }
 
-    /** The part, drawn in proportion, with its length, width and height. */
+    /** The part, drawn in proportion, with its dimensions: a box, or a cylinder standing on its end. */
     static final class PartDrawing extends JComponent {
         private double l = 50;
         private double wd = 30;
         private double ht = 30;
+        private boolean round;
 
-        void set(double length, double width, double height) {
+        void set(double length, double width, double height, boolean cylinder) {
             l = Math.max(length, width);
             wd = Math.min(length, width);
             ht = height;
+            round = cylinder;
             repaint();
         }
 
         @Override
         public Dimension getPreferredSize() {
-            return new Dimension(140, 140);
+            return new Dimension(300, 240);
         }
 
         @Override
         protected void paintComponent(Graphics g0) {
             Graphics2D g = Ui.smooth(g0);
-            int w = getWidth(), h = getHeight();
+            if (round) paintCylinder(g, getWidth(), getHeight());
+            else paintBox(g, getWidth(), getHeight());
+            g.dispose();
+        }
+
+        private void paintCylinder(Graphics2D g, int w, int h) {
+            double k = Math.min(Math.min((w - 130) / l, (h - 50) / (ht + l * 0.35)), 4.0);
+            int rx = (int) (l * k / 2), ry = (int) (l * k * 0.35 / 2), hh = (int) (ht * k);
+            int cx = w / 2 - 14, top = (h - hh - 2 * ry) / 2 + ry, bot = top + hh;
+            g.setColor(new Color(0xb4cdf5));
+            g.fillRect(cx - rx, top, 2 * rx, hh);
+            g.fillOval(cx - rx, bot - ry, 2 * rx, 2 * ry);
+            g.setColor(new Color(0xe8f0fd));
+            g.fillOval(cx - rx, top - ry, 2 * rx, 2 * ry);
+            g.setColor(Ui.ACCENT);
+            g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.drawOval(cx - rx, top - ry, 2 * rx, 2 * ry);
+            g.drawArc(cx - rx, bot - ry, 2 * rx, 2 * ry, 180, 180);
+            g.drawLine(cx - rx, top, cx - rx, bot);
+            g.drawLine(cx + rx, top, cx + rx, bot);
+            g.setFont(Ui.font(12f, true));
+            g.setColor(Ui.INK);
+            Ui.centre(g, "Ø " + PickScript.num(l), cx, top);
+            Ui.centre(g, PickScript.num(ht), cx + rx + 22, (top + bot) / 2);
+        }
+
+        private void paintBox(Graphics2D g, int w, int h) {
             double cos30 = Math.cos(Math.toRadians(30)), sin30 = 0.5;
             double span = (l + wd) * cos30, tall = ht + (l + wd) * sin30;
-            double k = Math.min((w - 30) / span, (h - 34) / tall);
-            double ox = 15 + wd * cos30 * k, oy = h - 18 - 0.0;
-            // iso: x along the length (right-down), y along the width (left-down), z up
+            double k = Math.min(Math.min((w - 110) / span, (h - 44) / tall), 4.0);
+            double ox = (w - span * k) / 2 + wd * cos30 * k, oy = h - 22 - (h - 44 - tall * k) / 2;
+            // iso: x along the length (right-up), y along the width (left-up), z up
             double[][] base = {{0, 0}, {l, 0}, {l, wd}, {0, wd}};
             int[][] bot = new int[4][], top = new int[4][];
             for (int i = 0; i < 4; i++) {
                 double x = base[i][0], y = base[i][1];
                 double sx = ox + (x - y) * cos30 * k, sy = oy - ((x + y) * sin30) * k;
-                bot[i] = new int[] {(int) sx, (int) (sy - 0)};
+                bot[i] = new int[] {(int) sx, (int) sy};
                 top[i] = new int[] {(int) sx, (int) (sy - ht * k)};
             }
-            // shift so the drawing's lowest point (the near corner, index 0) sits at the bottom
             Polygon topFace = poly(top[0], top[1], top[2], top[3]);
             Polygon right = poly(bot[0], bot[1], top[1], top[0]);
             Polygon left = poly(bot[3], bot[0], top[0], top[3]);
@@ -158,24 +185,11 @@ final class Diagrams {
             g.drawPolygon(topFace);
             g.drawPolygon(right);
             g.drawPolygon(left);
-            g.setFont(Ui.font(11.5f, true));
+            g.setFont(Ui.font(12f, true));
             g.setColor(Ui.INK);
-            label(g, PickScript.num(l), (bot[0][0] + bot[1][0]) / 2 + 8, (bot[0][1] + bot[1][1]) / 2 + 12);
-            label(g, PickScript.num(wd), (bot[3][0] + bot[0][0]) / 2 - 10, (bot[3][1] + bot[0][1]) / 2 + 12);
-            label(g, PickScript.num(ht), bot[0][0] + 16, (bot[0][1] + top[0][1]) / 2 + 2);
-            // the jaws: against the two long faces (the fingers close across the width)
-            g.setColor(Ui.JAW);
-            g.setStroke(new BasicStroke(4.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            double ex = cos30, ey = -sin30; // screen direction of the length
-            double len = l * cos30 * k * 0.22 / cos30;
-            // near long face (width 0): its middle, pushed out toward the viewer (down-right)
-            double fx = (bot[0][0] + bot[1][0] + top[0][0] + top[1][0]) / 4.0 + cos30 * 9;
-            double fy = (bot[0][1] + bot[1][1] + top[0][1] + top[1][1]) / 4.0 + sin30 * 9;
-            g.drawLine((int) (fx - ex * len), (int) (fy - ey * len), (int) (fx + ex * len), (int) (fy + ey * len));
-            // far long face: along the top's far edge, pushed away (up-left)
-            double bx = (top[2][0] + top[3][0]) / 2.0 - cos30 * 9, by = (top[2][1] + top[3][1]) / 2.0 - sin30 * 9 - 4;
-            g.drawLine((int) (bx - ex * len), (int) (by - ey * len), (int) (bx + ex * len), (int) (by + ey * len));
-            g.dispose();
+            Ui.centre(g, PickScript.num(l), (bot[0][0] + bot[1][0]) / 2 + 10, (bot[0][1] + bot[1][1]) / 2 + 13);
+            Ui.centre(g, PickScript.num(wd), (bot[3][0] + bot[0][0]) / 2 - 12, (bot[3][1] + bot[0][1]) / 2 + 13);
+            Ui.centre(g, PickScript.num(ht), bot[1][0] + 18, (bot[1][1] + top[1][1]) / 2);
         }
 
         private static Polygon poly(int[]... pts) {
@@ -183,50 +197,41 @@ final class Diagrams {
             for (int[] q : pts) p.addPoint(q[0], q[1]);
             return p;
         }
-
-        private static void label(Graphics2D g, String s, int x, int y) {
-            Ui.centre(g, s, x, y);
-        }
     }
 
-    /** The approach from the side: the table, the part, the open fingers over it, the grip and the lift. */
+    /** The approach from the side: the table, the part, the open fingers over it and how deep they grip. */
     static final class ApproachDrawing extends JComponent {
         private double approach = 25;
         private double grip = 15;
-        private double lift = 60;
         private double height = 30;
         private double width = 30;
-        private double stroke = 50;
 
-        void set(double approachMm, double gripMm, double liftMm, double heightMm, double widthMm, double strokeMm) {
+        void set(double approachMm, double gripMm, double heightMm, double widthMm) {
             approach = approachMm;
             grip = gripMm;
-            lift = liftMm;
             height = heightMm;
             width = widthMm;
-            stroke = strokeMm;
             repaint();
         }
 
         @Override
         public Dimension getPreferredSize() {
-            return new Dimension(150, 170);
+            return new Dimension(260, 220);
         }
 
         @Override
         protected void paintComponent(Graphics g0) {
             Graphics2D g = Ui.smooth(g0);
             int w = getWidth(), h = getHeight();
-            double total = height + Math.max(approach, lift) + 40; // mm shown top to bottom
-            double k = Math.min((h - 26) / total, (w - 80) / Math.max(stroke + 20, width + 20));
+            double open = Math.max(PickScript.STROKE_MM, width + 8);
+            double total = height + approach + 45; // mm shown top to bottom
+            double k = Math.min(Math.min((h - 26) / total, (w - 190) / (open + 20)), 3.0);
             int table = h - 14;
-            int cx = w / 2 - 6;
-            // table
+            int cx = w / 2 - 50;
             g.setColor(new Color(0xe6eaf0));
             g.fillRect(0, table, w, 14);
             g.setColor(Ui.FAINT);
             g.drawLine(0, table, w, table);
-            // part
             int pw = (int) (width * k), ph = (int) (height * k);
             g.setColor(new Color(0xcfe0fb));
             g.fillRect(cx - pw / 2, table - ph, pw, ph);
@@ -235,30 +240,23 @@ final class Diagrams {
             int topY = table - ph;
             // fingers, fully open, tips `approach` over the top
             int tipY = topY - (int) (approach * k);
-            int half = (int) (stroke * k / 2);
+            int half = (int) (open * k / 2);
             g.setColor(new Color(0x3b4756));
             for (int sx : new int[] {-1, 1}) {
                 int x = cx + sx * half;
                 g.fillRoundRect(x - (sx < 0 ? 7 : 0), tipY - 38, 7, 38, 3, 3);
             }
             g.fillRoundRect(cx - half - 10, tipY - 50, 2 * half + 20, 12, 6, 6);
-            // the grip depth
+            // where the fingertips stop to grip
             g.setColor(Ui.JAW);
             g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 1f, new float[] {4f, 4f}, 0f));
             int gripY = topY + (int) (grip * k);
             g.drawLine(cx - half - 16, gripY, cx + half + 16, gripY);
-            // dimensions
             g.setStroke(new BasicStroke(1.2f));
-            g.setFont(Ui.font(11f, true));
-            int dx = cx + half + 14;
-            dim(g, dx, tipY, topY, PickScript.num(approach), Ui.ACCENT);
-            dim(g, dx, topY, gripY, PickScript.num(grip), new Color(0x9a6a00));
-            int liftY = topY - (int) (lift * k);
-            g.setColor(Ui.OK);
-            int ax = cx - half - 18;
-            g.drawLine(ax, gripY, ax, liftY);
-            g.fillPolygon(new int[] {ax - 5, ax + 5, ax}, new int[] {liftY + 8, liftY + 8, liftY}, 3);
-            g.drawString("lift " + PickScript.num(lift), Math.max(2, ax - 12), Math.max(12, liftY - 6));
+            g.setFont(Ui.font(11.5f, true));
+            int dx = cx + half + 16;
+            dim(g, dx, tipY, topY, "approach " + PickScript.num(approach), Ui.ACCENT);
+            dim(g, dx, topY, gripY, "grip " + PickScript.num(grip), new Color(0x9a6a00));
             g.dispose();
         }
 
@@ -272,21 +270,27 @@ final class Diagrams {
     }
 
     /**
-     * The cell from above: the base, the ring the parts may be in (the reach limits), and every
-     * taught pick area — so the operator sees at once that an area is out of reach.
+     * The cell from above: the base, how far the arm reaches (its rated reach, drawn and
+     * labelled), the keep-out round the base, and every taught pick area — so the operator
+     * sees at once where an area sits in the arm's reach. Which parts are actually pickable
+     * is the arm's kinematics' answer, part by part; this is the map.
      */
     static final class ReachMap extends JComponent {
         private double baseR = 0.064;
-        private double minR = 0.214;
-        private double maxR = 0.35;
+        private double keepOutR = 0.214;
+        private double reachR = 0.5;
+        private String model = "";
         private final List<double[]> areas = new ArrayList<double[]>(); // each: 4 corners (x, y) m
         private final List<String> names = new ArrayList<String>();
         private int highlight = -1;
 
-        void set(double baseRadius, double min, double max, List<double[]> corners, List<String> labels, int hi) {
+        /** {@code reach} 0: the model is unknown, no reach circle. */
+        void set(String modelName, double baseRadius, double keepOut, double reach, List<double[]> corners,
+                List<String> labels, int hi) {
+            model = modelName == null ? "" : modelName;
             baseR = baseRadius;
-            minR = min;
-            maxR = max;
+            keepOutR = keepOut;
+            reachR = reach;
             areas.clear();
             areas.addAll(corners);
             names.clear();
@@ -297,29 +301,30 @@ final class Diagrams {
 
         @Override
         public Dimension getPreferredSize() {
-            return new Dimension(240, 240);
+            return new Dimension(300, 300);
         }
 
         @Override
         protected void paintComponent(Graphics g0) {
             Graphics2D g = Ui.smooth(g0);
             int w = getWidth(), h = getHeight();
-            double extent = Math.max(maxR > 0 ? maxR : minR * 2, minR) * 1.15;
+            double extent = Math.max(reachR > 0 ? reachR : keepOutR * 2, keepOutR) * 1.12;
             for (double[] a : areas) {
                 for (int i = 0; i < 8; i += 2) extent = Math.max(extent, Math.max(Math.abs(a[i]), Math.abs(a[i + 1])) * 1.1);
             }
-            double k = (Math.min(w, h) / 2.0 - 8) / extent;
-            int cx = w / 2, cy = h / 2;
+            double k = (Math.min(w, h - 34) / 2.0 - 6) / extent;
+            int cx = w / 2, cy = 12 + (h - 34) / 2;
             g.setColor(Ui.BG);
             g.fillRoundRect(0, 0, w, h, 14, 14);
-            if (maxR > 0) {
-                int R = (int) (maxR * k);
+            if (reachR > 0) {
+                int R = (int) (reachR * k);
                 g.setColor(new Color(0xe2f5eb));
                 g.fillOval(cx - R, cy - R, 2 * R, 2 * R);
                 g.setColor(Ui.OK);
+                g.setStroke(new BasicStroke(1.8f));
                 g.drawOval(cx - R, cy - R, 2 * R, 2 * R);
             }
-            int r = (int) (minR * k);
+            int r = (int) (keepOutR * k);
             g.setColor(new Color(0xfde3e3));
             g.fillOval(cx - r, cy - r, 2 * r, 2 * r);
             g.setColor(Ui.ERR);
@@ -357,12 +362,30 @@ final class Diagrams {
                 Ui.centre(g, i < names.size() ? names.get(i) : String.valueOf(i + 1), cx + (int) (mx * k),
                         cy - (int) (my * k));
             }
-            g.setFont(Ui.font(10.5f, false));
+            if (reachR > 0) {
+                // the reach, named on its own circle (drawn last: an area never hides it)
+                int R = (int) (reachR * k);
+                g.setFont(Ui.font(12f, true));
+                String label = String.format(Locale.ROOT, "reach %.0f mm", reachR * 1000);
+                int tw = g.getFontMetrics().stringWidth(label);
+                g.setColor(Ui.OK);
+                g.fillRoundRect(cx - tw / 2 - 8, cy - R - 9, tw + 16, 20, 20, 20);
+                g.setColor(Color.WHITE);
+                Ui.centre(g, label, cx, cy - R + 1);
+            }
+            g.setFont(Ui.font(11f, false));
             g.setColor(Ui.MUTED);
-            g.drawString(String.format(Locale.ROOT, "pick between %.0f and %s mm from the base axis", minR * 1000,
-                    maxR > 0 ? String.format(Locale.ROOT, "%.0f", maxR * 1000) : "∞"), 8, h - 8);
+            g.drawString(reachR > 0 ? "green: as far as the " + model + " reaches · red: too near its base"
+                    : "robot model unknown: no reach to draw", 8, h - 8);
             g.dispose();
         }
+    }
+
+    /** How far the farthest corner of a taught area is from the base axis (m). */
+    static double farthest(double[] corners) {
+        double far = 0;
+        for (int i = 0; i < 8; i += 2) far = Math.max(far, Math.hypot(corners[i], corners[i + 1]));
+        return far;
     }
 
     /** The four corners (x, y; m) of a taught area {@code [pose(6), sizeX, sizeY]}, for {@link ReachMap}. */

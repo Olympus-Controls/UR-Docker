@@ -3,21 +3,23 @@
 Vision-guided picking for an e-Series robot on PolyScope 5, with a RealSense D435 on the
 wrist and a small camera computer beside the robot (`deploy/pi/`). Two nodes and a button:
 
-- **Perceptronic Pick** (Program tab → URCaps): finds the part by its size in the picture from
-  any number of picture points and picks the next one in the order you choose.
+- **3D Pick** (Program tab → URCaps): one move sequence — it surveys from any number of
+  picture points, finds the part by its size, and ends with the gripper clamped on the next
+  one in the order you choose.
 - **Perceptronic** (Installation tab → URCaps): the camera computer's address, the live
-  feed (tap a point, send the arm there), the **pick areas** taught with the fingertips,
-  and the **reach**.
+  feed (tap a point, send the arm there), and the **pick areas** taught with the
+  fingertips, on a map of the arm's reach.
 - **The P button** in PolyScope's header (a toolbar contribution, the way Robotiq's gripper
   button works): tap it on any screen and the live picture drops down in a popup, with the
   frame rate and the camera computer's address; tap again to close. It reads the address
   the Installation node saved, so there is nothing to set up.
 
 The mark — a P with a lens in its bowl — is [`../perceptronic.svg`](../perceptronic.svg);
-the same glyph is the toolbar button, every screen's header and a faint watermark on every
-live picture (`Logo.java` draws it with Java2D; a test holds it equal to the SVG).
+the same glyph is the toolbar button, every screen's header and a faint watermark on the
+Installation's and the popup's live picture (`Logo.java` draws it with Java2D; a test holds
+it equal to the SVG).
 
-Download: [`../dist/perceptronic-ps5-0.6.0.urcap`](../dist/perceptronic-ps5-0.6.0.urcap)
+Download: [`../dist/perceptronic-ps5-0.7.0.urcap`](../dist/perceptronic-ps5-0.7.0.urcap)
 
 ## Install on the robot
 
@@ -26,7 +28,7 @@ You need a USB stick and nothing else: no tools, no command line. Two files matt
 
 | File | What it is |
 | --- | --- |
-| [`perceptronic-ps5-0.6.0.urcap`](../dist/perceptronic-ps5-0.6.0.urcap) | The URCap. Always needed. |
+| [`perceptronic-ps5-0.7.0.urcap`](../dist/perceptronic-ps5-0.7.0.urcap) | The URCap. Always needed. |
 | [`urmagic_perceptronic.sh`](../dist/urmagic_perceptronic.sh) | Optional. Lets the robot install the URCap by itself when the stick goes in (B below). |
 
 ### 1. Put the files on a stick
@@ -43,14 +45,14 @@ You need a USB stick and nothing else: no tools, no command line. Two files matt
    Trash) before pulling it out. A stick pulled early can hold a half-written file.
 
 On a Mac, Finder also writes hidden `._…` companions next to each file. They are harmless
-except that PolyScope's file picker lists `._perceptronic-ps5-0.6.0.urcap` too — pick the
+except that PolyScope's file picker lists `._perceptronic-ps5-0.7.0.urcap` too — pick the
 one **without** `._`. `scripts/urcap5-usb.sh` does the whole of this step without them.
 
 ### 2A. Install by hand on the pendant (always works)
 
 1. Plug the stick into the pendant.
 2. Tap ☰ (top right) → **Settings** → **System** → **URCaps**.
-3. Tap **+**, tap `perceptronic-ps5-0.6.0.urcap`, tap **Open**.
+3. Tap **+**, tap `perceptronic-ps5-0.7.0.urcap`, tap **Open**.
 4. Tap **Restart** when PolyScope asks.
 5. After the restart: **Installation** tab → **URCaps** → **Perceptronic**.
 
@@ -75,6 +77,16 @@ different bundle (`io.advin.perceptronic`, vendor Nick Armenta — was
 **RealSense Pilot** (Settings → System → URCaps → select it → −) before or after adding
 this one, and type the cockpit address and teach the pick areas again — the old node's
 saved data and any program's **RealSense Pick** nodes belong to the old bundle.
+
+**Upgrading from 0.6.0?** Same bundle, so the installation's address and pick areas stay.
+The program node is now called **3D Pick** and has **no children**: a node saved by 0.6.0
+keeps its picture points, part size and order, but what you had inside it — the routine
+after the pick, or your own gripper nodes — must move to after the node (`If rs_pick_found`
+…); how PolyScope opens a saved node whose children are no longer allowed has not been
+tried. The camera computer must be updated too (it serves the depth view and the reach by
+kinematics); an older one still works, with the 0.6.0 checks.
+
+### Or let the stick install it
 
 ### How the stick installs it
 
@@ -140,102 +152,143 @@ urcap5-package`, commit `dist/`, then tag. The Python package's `v*` tags are a 
     python3 urcap/preview5.py                  # a simulated camera computer (a box scene)
     python3 urcap/preview5.py --shuffle 6      # ... re-scattering the parts every 6 s
     python3 urcap/preview5.py --cockpit http://192.168.3.10:7621   # the real one
+    python3 urcap/preview5.py --snapshot out.png --view part       # one screen, no display
 
-A 1280 × 800 window (the pendant's size) with the Pick node's and the Installation node's own
-screens: add picture points, tap the order tiles and watch the numbers change, open
-Options, teach pick areas. The numbers and reasons are the real detector's answers. What only
-a robot can do is stood in for (no arm moves; a pick area's touches are a sample rectangle;
-typed values come from a dialog). Needs a JDK. The simulated picture is stamped **NO CAMERA
-CONNECTED — SIMULATED TEST SCENE**, and whenever there is no live picture at all — on the
-pendant too — the view is a test card that says **NO CAMERA CONNECTED**, never a blank or a
-frozen frame.
+A 1280 × 800 window (the pendant's size) with the 3D Pick node's and the Installation node's
+own screens: add picture points, tap the order tiles, switch the picture to depth, open
+Options, teach pick areas. What is outlined is the real detector's answer. What only a robot
+can do is stood in for (no arm moves; a pick area's touches are a sample rectangle; typed
+values come from a dialog). Needs a JDK. The simulated picture is stamped **NO CAMERA
+CONNECTED — SIMULATED TEST SCENE**.
 
-## Perceptronic Pick (0.5.0): find the part by its size, pick in order
+## 3D Pick (0.7.0): survey, find the part by its size, clamp it
 
-![The Pick node's main screen](screens/pick-main.png)
+![The 3D Pick node's main screen](screens/pick-main.png)
 
 *Rendered off-pendant from the same Swing classes (`PickScreen`), 1000 × 560, with a
-ray-cast scene through the real detector. The first look at it on a pendant is still owed.*
+ray-cast scene through the real detector (`python3 urcap/preview5.py --screens
+urcap/perceptronic-ps5/screens` writes every picture on this page). The first look at it on
+a pendant is still owed.*
 
-**Program tab → URCaps → Perceptronic Pick.** One run of the node picks **one part**; put it in
-a loop. The screen is the live picture — most of it — with every part the program will
-pick outlined in green and **numbered in pick order**, the jaws (yellow) where the fingers
-close across the short side, and everything else it saw dashed grey with why not
-(`too long`, `2 parts touching?`, `out of reach`, `cut off by the edge of the picture`).
-The numbers are the pick server's own order, asked with exactly the options the program
-will send, so what you see is what it does.
+**Program tab → URCaps → 3D Pick.** The node is **one line in the program — a move sequence
+with no children**: it starts with the survey and ends with the gripper clamped on **one
+part**. What happens next is your program: put the node in a loop and follow it with
+`If rs_pick_found` → lift, place. `rs_pick_loc` says which picture point the part came from.
+
+**Nothing on its screens scrolls.** The picture takes most of the screen, and the only
+things drawn on it are the candidates that are **nearly the part and are not going to be
+picked** — outlined, each with why: `too long`, `too flat`, `2 parts touching?`,
+`out of reach (no joint solution)`, `outside the pick area`, `cut off by the edge of the
+picture`. A part that will be picked carries no graphic, and neither does anything that is
+nothing like the part (a clamp, a cable). The line beside the picture counts both
+(`7 parts to pick · 3 not`).
+
+**Picture / Depth** — the toggle at the picture's top right, inside its frame — switches the
+stream between the camera's picture and the depth as a heatmap (near = violet, far =
+yellow; the ramp spans what the frame holds):
+
+![The depth view](screens/pick-depth.png)
 
 Beside the picture, all an operator does day to day:
 
-1. **Picture points** — as many as you like (up to 12). Move the arm to where the camera
-   sees the parts (≥ 0.25 m away: the D435 is blind closer) and tap **Add picture point
-   here**; PolyScope's own move screen confirms the position. **Go** moves back there,
-   **Here** retakes it, **✕** removes it. Tap a point's second line to choose the **pick
-   area** it looks at (taught in the Installation, below) or the live table. The program
-   visits the points in turn: an empty one sends the arm on to the next.
+1. **Picture points** — up to 12, as a fixed grid of numbered buttons. Move the arm to where
+   the camera sees the parts (≥ 0.3 m away: the D435 is blind closer) and tap **+**;
+   PolyScope's own move screen confirms the position. Tap a number to select it: **Go**
+   moves back there, **Here** retakes it, **✕** removes it, and its second line chooses the
+   **pick area** it looks at (taught in the Installation, below) or the live table. The
+   program visits the points in turn: an empty one sends the arm on to the next.
 2. **Pick order** — eight tiles: left→right or right→left, rows front→back or back→front,
-   or by columns. Front is the **bottom of the picture** as the pendant shows it. Tapping a
-   tile renumbers the parts on the picture at once.
-3. **Options** — every default, with a drawing that follows each change:
+   or by columns. Front is the **bottom of the picture** as the pendant shows it.
+3. **Options** — two tabs, and nothing about speeds or the gripper:
 
-![The Options view](screens/pick-options.png)
+![Options: the part](screens/pick-options.png)
 
-| Group | Settings (default) |
-| ----- | ------------------ |
-| The part | length × width × height as it lies (50 × 30 × 30 mm), tolerance (±25 %, never tighter than ±5 mm) |
-| Approach and grip | **approach: fingertips 25 mm over the top, fingers fully open**; grip depth 15 mm; lift 60 mm; close look 90 mm |
-| Gripper | **Robotiq Hand-E** driven by the node (activated if it lost activation, opened fully while the arm travels, closed at the grip, object-detected check), a **digital output** (close = on), or **my own nodes** (0.4.0's contract: your Close nodes inside the node run at the grip); open width 50 mm, force, speed |
-| Motion and behaviour | speed (60 %), settle before the picture (0.2 s — shorter is a faster cycle), grasps per run (3), popup when nothing is picked, a routine per picture point |
+| Tab | Settings (default) |
+| --- | ------------------ |
+| **Part** | **Box** or **Cylinder** (standing on its end); length × width × height as it lies (50 × 30 × 30 mm) — a cylinder: diameter × height; tolerance (±25 %, never tighter than ±5 mm); **Grip check** (off) |
+| **Approach** | **approach: fingertips 25 mm over the top, fingers fully open**; grip depth 15 mm; **Closer look** (on) |
+
+![Options: the approach](screens/pick-approach.png)
+
+- **Grip check** (off by default): with it on, a part that *measures* wider than the fingers
+  open, or that has no room for a finger beside it, is skipped. Off, the part's size is
+  taken as known — the camera reads parts a little wide and low, and that must not veto a
+  part the fingers fit.
+- **Closer look** (on by default): before the approach the arm moves in for a second
+  measurement — the camera 0.3 m from the part, the part held 12° off the middle of the
+  picture on the side away from the gripper, so the open fingers are not in front of it.
+  Off, the approach uses the measurement from the picture point, and every part is measured
+  from there (no part is taken from the last survey's queue).
+
+**What is pickable is the arm's kinematics' answer.** The node names the arm
+(`arm=UR3`); the camera computer solves the arm's inverse kinematics for the approach and
+the grip (`perceptronics/armik.py` — straight down, then leaned 12° and 24°, the program's
+own ladder) and leaves out only the parts with no joint solution, plus those inside the
+base's keep-out (its outer radius + 150 mm). There is no reach ring to tune. In the program
+the controller's own `get_inverse_kin_has_solution` has the last word (PolyScope 5.9.4+).
 
 **What a run does:** force the TCP to the flange; open the gripper; ask the camera computer
-`NEXT` — a part it already saw sends the arm **straight to the close look** over it (no trip
-back to the picture point); otherwise `movej` to the picture point, settle, `FIND`. The close
-look re-measures the part from nearer (`LOOK` → `REFINE`, leaning 12° / 24° only if the
-controller's IK can't solve it straight down), then the approach (fingertips 25 mm over the
-top, fully open), down to the grip, close, lift. A close on nothing opens, lifts and tries
-the next part. Then `rs_pick_found = True`, `rs_pick_loc` = the picture point it came from,
-and the node's **children run — the routine after the pick** (place it…) with your TCP
-back. With **A routine per picture point** on, the node holds one **After picture N** child
-per point, each run only for parts from that point.
+`NEXT` — a part it already saw sends the arm **straight to the closer look** over it (no
+trip back to the picture point); otherwise the survey: `movej` to the picture point, settle,
+`FIND`. The closer look re-measures the part (`LOOK` → `REFINE`, leaning 12° / 24° only if
+the controller's IK can't solve it straight down), then the approach (fingertips 25 mm over
+the top, fully open), down to the grip, **close — and the node ends there**, your TCP back,
+`rs_pick_found = True`. A close on nothing opens, backs up and tries the next part (three
+grasps per run). Anything that stops short says why in a popup.
+
+The node travels at 60 % of its own limits and drives a **Robotiq** gripper through its
+URCap's socket on the controller (activated if it lost activation, opened fully while the
+arm travels, closed at the grip, object-detected check); neither has a setting.
 
 **The detector** (`perceptronics/volume.py`) is depth only — no colour threshold: a part is
 what stands the part's height above the surface, with a top face the part's length ×
 width. The surface is the picture point's **taught pick area** (its plane, nudged ≤ 15 mm to
 the live table) or, without one, the table found live (level in the base frame). Each
 part's minimum-area rectangle gives its centre and axes; the grasp is straight down, wrist
-turned so the fingers close across the short side. Parts outside the reach ring, outside
-the area, cut off by the picture's edge, wider than the open fingers or with no room for a
-finger beside them are reported, not picked.
+turned so the fingers close across the short side (a cylinder: the wrist stays as it is).
 
-## Installation: pick areas and reach
+## When the camera computer does not answer
+
+![No camera connected](screens/no-camera.png)
+
+The picture's place says what to check, most likely first — **cables**, the **IP address**,
+the **firewall** (TCP 7621 and 7622) — or, when the computer answers but has no picture, the
+**camera's USB cable**. The exception, the URL and the command that starts the cockpit are
+not on the screen: they go to the log (`Log.java`: the JVM's logger `perceptronic`; where
+PolyScope files that on a pendant has not been checked).
+
+## Installation: pick areas on the arm's reach
 
 ![The Installation's pick areas](screens/installation-areas.png)
 
-**Installation → URCaps → Perceptronic → Pick areas + reach.** A pick area is a patch of
-the work surface taught by **touching the table with the fingertips** at three points —
-its corner, a point along one edge (that edge is the area's X), a point on the far side —
-each through PolyScope's move screen. The node measures the fingertips from the flange
-(**Fingertip length**, 163 mm for the UR3e's Hand-E + adapter) whatever TCP PolyScope has
-active. An area tilted more than 2° from level is flagged: the table is flat, so tilt is a
-teaching error (a touch on a part, not the table).
+**Installation → URCaps → Perceptronic → Pick areas.** A pick area is a patch of the work
+surface taught by **touching the table with the fingertips** at three points — its corner,
+a point along one edge (that edge is the area's X), a point on the far side — each through
+PolyScope's move screen. The node measures the fingertips from the flange (**Fingertip
+length**, 163 mm for the UR3e's Hand-E + adapter) whatever TCP PolyScope has active. An
+area tilted more than 2° from level is flagged: the table is flat, so tilt is a teaching
+error (a touch on a part, not the table). Only the selected area is open (its three
+touches); up to eight fit the screen.
 
-The **reach** ring: parts are picked only between the base's outer radius + the inner
-margin and the arm's rated reach − the outer margin (both 150 mm by default; UR3e: 214 to
-350 mm from the base axis). The map draws the base, the ring and every taught area, so an
-area out of reach shows at a glance.
+The map draws the base, **how far this arm reaches** (its rated reach, named on its
+circle), the keep-out round the base and every taught area — an area that goes past the
+reach is flagged. There are no reach margins to set: which parts can be picked is the
+kinematics' answer, part by part.
 
 ## The wire (pick server protocol 2)
 
 One line per request, one parenthesised list per answer (URScript's
 `socket_read_ascii_float`). Every request carries the node's options:
-`part=50x30x30 tol=25 order=LR,FB grip=15 stroke=50 [reach=0.214,0.350]
-[plane=p[…] area=300x200] node=<id> loc=<i> locs=<n> proto=2`
+`part=50x30x30 tol=25 [shape=cyl] order=LR,FB grip=15 stroke=50 approach=25 gripcheck=0
+[arm=UR3] [plane=p[…] area=300x200] node=<id> loc=<i> locs=<n> proto=2` (0.5 / 0.6 sent
+`reach=<min>,<max>` instead of `arm=`; the server still honours it)
 (`perceptronics/picknode.py` `parse_options`; the Java `PickScript.tokens` writes it, and a test
 reads the Java's tokens back with the Python parser). Verbs: `NEXT` (the queue), `FIND`,
 `LOOK`, `REFINE`, `LOG`. Answers: `(status, centre xyz, flange pose ×6, loc, order,
 remaining, L, W, H)`. The teach screen asks `GET /api/pick/scene?opts=<the same tokens>`
 (and `&approach_mm=` for **Check approach**, which answers the approach in PolyScope's
-active TCP for its hold-to-move screen).
+active TCP for its hold-to-move screen). The picture is `GET /api/color.png`, the depth view
+`GET /api/depth.png` — both long-polled by sequence number.
 
 ## Build it
 
@@ -265,18 +318,19 @@ through the arm's nominal geometry (UR3e/5e/10e/16e; `PoseMath.flange`, the rows
 `perceptronics/armfk.py`). `python3 urcap/urcap5.py check --sdk <dir>` holds the URCap to any
 version's jars (`urcap5.py sdk --image 5.12.8 --dir <dir>`).
 
-## Status (2026-09-28, 0.5.0)
+## Status (2026-09-30, 0.7.0)
 
 - Compiles against PolyScope 5.4's URCap API (and each version's own, in the matrix) with
   `-Xlint:all -Werror`; the script, the option tokens, the order tiles, the plane and pose
   maths, the reach table and the scene parsing are tested against the Python they stand
-  for, under a JDK
-  (`tests/test_urcap5_pick.py`).
-- The screens are pure Swing (no UR API) and render in a harness; **not yet seen on a
-  pendant** — PolyScope's JVM crashes under emulation on the Mac, and CI checks the
-  bundle and the script, not pixels.
-- 0.4.0 nodes open in 0.5.0 with their survey position as picture point 1 and their
-  gripper nodes kept (gripper "my own nodes").
+  for, under a JDK (`tests/test_urcap5_pick.py`).
+- The screens are pure Swing (no UR API) and render in a harness; a test lays each one out
+  at two panel sizes with 0, 1 and 12 picture points and fails if any control is past the
+  edge or a scroll pane exists. **Not yet seen on a pendant** — PolyScope's JVM crashes
+  under emulation on the Mac, and CI checks the bundle and the script, not pixels.
+- 0.7.0 has **not run on a robot**: the closer look's new aim, the clamp-and-stop ending
+  and the reach by kinematics are verified against ray-cast scenes and the arm's forward
+  kinematics only.
 - `get_inverse_kin_has_solution` / `get_inverse_kin` verified on the UR3e (PolyScope
   5.25.1). The Robotiq socket commands are `urctl gripper`'s, verified on the UR3e +
   Hand-E (2026-09-25); the node's own gripper sequence has not run on the robot yet.
@@ -334,9 +388,9 @@ Per version:
    polyscope.log never says a URCap started; any polyscope.log line or stack frame naming the
    URCap with a failure fails the run.
 3. **Run** — the arm is brought up and the Pick node's own URScript, generated for that
-   controller's PolyScope, runs twice against a pick server on the runner
-   (`urcap/pick5_e2e.py`: FIND → closer look → REFINE → grip → child nodes → lift, then the
-   second part from the queue).
+   controller's PolyScope, runs three times against a pick server on the runner
+   (`urcap/pick5_e2e.py`: survey → FIND → closer look → REFINE → clamp, then the second
+   part from the queue, then once with the closer look off).
 4. **Compile probe** — the script with the Robotiq gripper and the failure popup (which a
    sim can't run) inside `if False:` must compile on the controller; the control, a dead
    branch naming an undefined function, must not (it doesn't, on every version).

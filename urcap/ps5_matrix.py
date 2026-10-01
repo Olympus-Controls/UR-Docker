@@ -406,7 +406,7 @@ def fetch_tags(url: str = HUB_TAGS) -> list[str]:
 NODE_SERVICES = (
     "com.ur.urcap.api.contribution.installation.swing.SwingInstallationNodeService",
     "com.ur.urcap.api.contribution.program.swing.SwingProgramNodeService",
-    "com.ur.urcap.api.contribution.toolbar.swing.SwingToolbarService",  # the P button (0.6.0)
+    "com.ur.urcap.api.contribution.toolbar.swing.SwingToolbarService",  # the P button (since 0.6.0)
 )
 _PS_ROW = re.compile(r"^\[\s*(\d+)\]\s*\[\s*([A-Za-z]+)\s*\]\s*\[\s*(\d+)\]\s*(.*?)\s*$")
 # ... and the old identity (RealSense Pilot, Olympus Controls): the real logs in tests/fixtures

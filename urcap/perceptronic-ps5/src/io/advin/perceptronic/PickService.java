@@ -9,9 +9,10 @@ import com.ur.urcap.api.domain.data.DataModel;
 import java.util.Locale;
 
 /**
- * Program tab → URCaps → Perceptronic Pick: look from the picture points, find the part by its
- * size, pick the next one in order. Its children are the routine after the pick (or, with
- * the gripper set to "my own nodes", the gripper's Close, run at the grip).
+ * Program tab → URCaps → 3D Pick: one move sequence, from the survey at the picture points to
+ * the gripper clamped on the next part in order. It has no children (0.7.0): what happens to
+ * the part is the program's next nodes. The service id keeps its 0.6.0 name so a saved
+ * program still finds its node.
  */
 public class PickService implements SwingProgramNodeService<PickContribution, PickView> {
     @Override
@@ -21,13 +22,13 @@ public class PickService implements SwingProgramNodeService<PickContribution, Pi
 
     @Override
     public void configureContribution(ContributionConfiguration configuration) {
-        configuration.setChildrenAllowed(true);
+        configuration.setChildrenAllowed(false);
         configuration.setUserInsertable(true);
     }
 
     @Override
     public String getTitle(Locale locale) {
-        return "Perceptronic Pick";
+        return "3D Pick";
     }
 
     @Override

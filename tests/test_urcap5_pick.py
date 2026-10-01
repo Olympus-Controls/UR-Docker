@@ -1,6 +1,8 @@
-"""The 0.5.0 Perceptronic Pick node's contract, under a JDK: the URScript it writes, the request
-options it sends (read back by the Python pick server's own parser), and the pendant's
-drawings and pose math agreeing with the Python side they stand for.
+"""The 3D Pick node's contract (0.7.0), under a JDK: the URScript it writes — one move
+sequence from the survey to the gripper clamped on a part, no children — the request options
+it sends (read back by the Python pick server's own parser), its screens (nothing scrolls,
+two option tabs, only near misses drawn on the picture), and the pendant's drawings and pose
+math agreeing with the Python side they stand for.
 
 The Java runs in the harness of :mod:`tests.test_urcap5` (no UR API needed)."""
 
@@ -55,42 +57,42 @@ def balanced(text: str) -> bool:
 # -- the script ---------------------------------------------------------------------------------
 
 
-def test_the_script_is_ascii_balanced_and_runs_in_the_documented_order(java_client):  # noqa: F811
-    out = pick(java_client, children="  AFTER_PICK()")
+def test_the_script_is_one_move_sequence_from_the_survey_to_the_clamp(java_client):  # noqa: F811
+    out = pick(java_client)
     assert out["problem"] is None
     text = out["script"]
     assert text.isascii() and balanced(text)
+    assert text.startswith("# 3D Pick 0.7.0 ")
     order = [
         "set_tcp(p[0, 0, 0, 0, 0, 0])",
         'socket_open("192.168.3.10", 7622, "rs_pick")',
         'socket_open("127.0.0.1", 63352, "rs_rq")',  # the Robotiq daemon, controller-local
         '"SET POS 0"',  # fully open while the arm travels
         '"NEXT "',
-        "movej([-1.370000, -0.490000, 1.610000, -2.690000, -1.570000, 0.610000]",
+        "movej([-1.370000, -0.490000, 1.610000, -2.690000, -1.570000, 0.610000]",  # the survey
         '"FIND "',
         '"LOOK "',
         '"REFINE "',
         "movel(rs_hover",
         '"GET OBJ"',  # the fingers really are open at the approach
         "movel(rs_grip, a=0.3, v=0.05)",
-        '"SET POS 255"',
-        "movel(rs_lift",
+        '"SET POS 255"',  # the clamp
         "rs_pick_found = True",
         "rs_pick_loc = rs_loc",
         'socket_close("rs_pick")',
         "set_tcp(rs_tcp0)",
-        "if rs_pick_found:",
-        "AFTER_PICK()",
     ]
     at = [text.index(s) for s in order]
     assert at == sorted(at), [s for s, i in zip(order, at, strict=True) if i != sorted(at)[at.index(i)]]
-    # nothing moves toward a part before the controller's own IK solved approach, grip and lift
+    # nothing moves toward a part before the controller's own IK solved approach and grip
     assert text.index("get_inverse_kin_has_solution(rs_hover") < text.index("movel(rs_hover")
     # the approach: fingertips 25 mm over the top, along the tool axis; grip 15 mm past it
     assert "pose_trans(rs_top, p[0, 0, -0.0250, 0, 0, 0])" in text
     assert "pose_trans(rs_top, p[0, 0, 0.0150, 0, 0, 0])" in text
-    # the routine after the pick runs with the operator's TCP back, once, after everything
-    assert text.rstrip().endswith("end") and text.count("AFTER_PICK()") == 1
+    # it ends at the clamp: a held part is never lifted by the node, and nothing runs after it
+    held = text.index("rs_pick_found = True")
+    assert "movel(" not in text[held : text.index("else:", held)]
+    assert "rs_lift" not in text and "if rs_pick_found:" not in text
 
 
 def test_every_picture_point_is_visited_by_its_own_joints_and_options(java_client):  # noqa: F811
@@ -108,13 +110,18 @@ def test_the_options_it_sends_are_what_the_pick_server_reads(java_client):  # no
         "partHeightMm": 27,
         "partTolPct": 20,
         "gripBelowTopMm": 12,
+        "approachMm": 35,
     }
-    out = pick(java_client, values=values, order=["RL", "BF"], reach=[0.214, 0.35])
+    out = pick(java_client, values=values, order=["RL", "BF"], arm="UR3")
     for i, tok in enumerate(out["tokens"]):
         o = parse_options(tok)
         assert o.part == PartSpec.from_mm(61, 42, 27, 20)  # long side first, however it was typed
-        assert o.order == ("RL", "BF") and o.reach == Reach(0.214, 0.35)
-        assert (o.grip_below_m, o.stroke_m, o.node, o.locs, o.proto) == (0.012, 0.05, "a1b2c3", 2, 2)
+        assert o.order == ("RL", "BF")
+        # no ring: the arm is named, and the server asks its kinematics
+        assert o.reach is None and o.arm == "UR3" and "reach=" not in tok
+        assert (o.grip_below_m, o.stroke_m, o.approach_m) == (0.012, 0.05, 0.035)
+        assert o.grip_check is False  # the default: the part's size is known
+        assert (o.node, o.locs, o.proto) == ("a1b2c3", 2, 2)
         assert o.loc == i  # tokens(-1) (the teach screen with no point yet) carries no loc
     plane = parse_options(out["tokens"][2]).surface
     want = Surface.from_pose(PLANE, (0.3, 0.2))
@@ -122,16 +129,37 @@ def test_the_options_it_sends_are_what_the_pick_server_reads(java_client):  # no
     assert parse_options(out["tokens"][1]).surface is None  # point 1 finds the table live
 
 
+def test_the_grip_check_is_a_switch_and_off_unless_asked_for(java_client):  # noqa: F811
+    off, on = pick(java_client), pick(java_client, gripCheck=True)
+    assert parse_options(off["tokens"][1]).grip_check is False
+    assert parse_options(on["tokens"][1]).grip_check is True
+    # a part wider than the fingers open: refused only when the check is on
+    wide = {"partWidthMm": 48}
+    assert pick(java_client, values=wide)["problem"] is None
+    assert "switch the grip check off" in pick(java_client, values=wide, gripCheck=True)["problem"]
+
+
+def test_a_cylinder_is_sent_by_its_diameter(java_client):  # noqa: F811
+    out = pick(java_client, shape="cyl", values={"partLengthMm": 40, "partWidthMm": 12, "partHeightMm": 30})
+    assert out["problem"] is None and out["words"] == "cylinder D40 x 30 mm +-25 %"
+    o = parse_options(out["tokens"][1])
+    assert o.part == PartSpec.from_mm(40, 40, 30, 25, shape="cyl")  # the width field plays no part
+    assert parse_options(pick(java_client)["tokens"][1]).part.shape == "box"
+    assert "unknown part shape" in pick(java_client, shape="hex")["problem"]
+
+
 def test_every_request_line_it_can_send_parses(java_client):  # noqa: F811
-    text = pick(java_client)["script"]
+    text = pick(java_client, arm="UR10", shape="cyl", gripCheck=True, values={"partLengthMm": 40})["script"]
     pose = "p[0.3, -0.1, 0.12, 3.14159, 0, 0]"
     toks = re.findall(r'rs_tok = "( [^"]+)"', text)
-    lines = [f"NEXT {pose} node=a1b2c3 locs=2 proto=2", f"LOOK {pose} p[0.3, 0, -0.24, 0, 0, 0]"]
+    look_tail = re.search(r'to_str\(rs_c\), "( [^"]+)"\)\)\)\), "rs_pick"', text).group(1)
+    lines = [f"NEXT {pose} node=a1b2c3 locs=2 proto=2", f"LOOK {pose} p[0.3, 0, -0.24, 0, 0, 0]{look_tail}"]
     lines += [f"FIND {pose}{t}" for t in toks]
     lines += [f"REFINE {pose} p[0.3, 0, -0.24, 0, 0, 0]{t} lean=12" for t in toks]
     for line in lines:
         assert len(line) < 1024
         parse_request(line)  # raises on anything the server would refuse
+    assert parse_request(lines[1])["options"].stroke_m == 0.05  # the look knows how wide the fingers are
 
 
 def test_the_popup_names_every_status_the_server_can_send(java_client):  # noqa: F811
@@ -151,10 +179,10 @@ def test_the_popup_names_every_status_the_server_can_send(java_client):  # noqa:
         ({"points": []}, "add a picture point"),
         ({"points": [{"q": [0, 0, 0]}]}, "not a joint position"),
         ({"values": {"gripBelowTopMm": 29, "partHeightMm": 30}}, "fingertips on the table"),
-        ({"values": {"partWidthMm": 48}}, "wider than 50 mm"),
         ({"order": ["LR", "RL"]}, "one horizontal and one vertical"),
         ({"gripper": "vacuum"}, "unknown gripper"),
-        ({"reach": [0.4, 0.3]}, "reach limits"),
+        ({"gripper": "children"}, "unknown gripper"),  # 0.6.0's "my own nodes": the node has no children now
+        ({"arm": 'UR3" stop'}, "robot model"),  # PolyScope's model name can't inject into a request
         ({"var": "1bad name"}, "variable"),
         ({"values": {"approachMm": 1}}, "approach must be 5..200"),
     ],
@@ -165,30 +193,22 @@ def test_it_refuses_what_it_cannot_generate_safely(java_client, kw, problem):  #
     assert out["script"] is None
 
 
-def test_a_digital_output_gripper(java_client):  # noqa: F811
-    text = pick(java_client, gripper="digital", values={"gripperDo": 3, "gripperWaitS": 0.4})["script"]
+def test_the_simulators_digital_output_gripper(java_client):  # noqa: F811
+    text = pick(java_client, gripper="digital")["script"]
     assert balanced(text)
     assert "63352" not in text
-    opened = text.index("set_standard_digital_out(3, False)")
-    closed = text.index("set_standard_digital_out(3, True)")
+    opened = text.index("set_standard_digital_out(0, False)")
+    closed = text.index("set_standard_digital_out(0, True)")
     assert opened < text.index("movel(rs_hover") < text.index("movel(rs_grip") < closed
-    assert "sleep(0.40)" in text
+    assert "sleep(0.50)" in text
 
 
-def test_my_own_gripper_nodes_run_at_the_grip_with_the_operators_tcp(java_client):  # noqa: F811
-    text = pick(java_client, gripper="children", children="  CLOSE_IT()")["script"]
-    assert balanced(text) and "63352" not in text
-    grip, child, lift = text.index("movel(rs_grip"), text.index("CLOSE_IT()"), text.index("movel(rs_lift")
-    assert grip < text.index("set_tcp(rs_tcp0)", grip) < child < lift
-    assert "if rs_pick_found:" not in text  # no routine after: the program's next nodes are it
-
-
-def test_a_close_on_nothing_opens_and_tries_the_next_part(java_client):  # noqa: F811
+def test_a_close_on_nothing_opens_backs_up_and_tries_the_next_part(java_client):  # noqa: F811
     text = pick(java_client)["script"]
     miss = text.index('rs_why = "the gripper closed on nothing"')
-    assert text.index('"SET POS 0"', miss) < text.index(
-        "socket_close", miss
-    )  # opened again before the next try
+    opened = text.index('"SET POS 0"', miss)
+    backed = text.index("movel(rs_hover", miss)  # straight back up before it travels to the next part
+    assert opened < backed < text.index("socket_close", miss)
     assert re.search(r"while \(rs_ok\) and \(rs_try < 6\) and \(rs_pick_found == False\):", text)  # 2 + 3 + 1
 
 
@@ -197,11 +217,42 @@ def test_without_the_popup_a_failed_run_just_leaves_the_result_false(java_client
     assert "popup(" in pick(java_client)["script"]
 
 
-def test_speed_scales_the_nodes_own_travel(java_client):  # noqa: F811
-    slow = pick(java_client, values={"speedPct": 10})["script"]
-    # movej: 1.4 rad/s^2 and 1.05 rad/s at 10 %
-    assert re.search(r"movej\(\[[^]]*\], a=0\.14, v=0\.1[01]\)", slow)
-    assert "movel(rs_grip, a=0.3, v=0.05)" in slow  # the last stretch into the part never speeds up
+def test_the_nodes_travel_speed_is_fixed_and_the_last_stretch_is_slow(java_client):  # noqa: F811
+    text = pick(java_client)["script"]
+    assert re.search(r"movej\(\[[^]]*\], a=0\.84, v=0\.63\)", text)  # 60 % of 1.4 rad/s^2 and 1.05 rad/s
+    assert "movel(rs_hover, a=0.36, v=0.15)" in text
+    assert "movel(rs_grip, a=0.3, v=0.05)" in text
+
+
+def test_without_the_closer_look_every_part_is_measured_from_its_picture_point(java_client):  # noqa: F811
+    """Options → Approach → Closer look, off: no LOOK, no move in — and no part taken from the
+    queue, because a queued part was seen from a picture point the arm is no longer at."""
+    text = pick(java_client, closeLook=False)["script"]
+    assert balanced(text) and '"LOOK "' not in text and "rs_look" not in text
+    assert "next part already seen" not in text
+    # the survey is not behind an "unless a part is queued": NEXT, then always the picture point
+    lines = text.splitlines()
+    nxt = next(i for i, line in enumerate(lines) if '"NEXT "' in line)
+    movej = next(i for i, line in enumerate(lines) if "movej([-1.37" in line)
+    indent = len(lines[movej]) - len(lines[movej].lstrip())
+    assert nxt < movej and indent == 6  # while > if rs_loc == 1 > movej: nothing else around it
+    order = ['"FIND "', '"REFINE "', "movel(rs_hover", "movel(rs_grip", '"SET POS 255"']
+    at = [text.index(s) for s in order]
+    assert at == sorted(at)
+    assert "- no closer look" in lines[0]
+    with_look = pick(java_client)["script"]
+    assert '"LOOK "' in with_look and "next part already seen" in with_look
+
+
+def test_no_closer_look_pose_means_measuring_again_from_where_the_arm_is(java_client):  # noqa: F811
+    """0.6.0 fell back to a pose straight over the part — the camera behind its own gripper."""
+    text = pick(java_client)["script"]
+    assert "lookMm" not in text and "rs_see = False" in text
+    seen = text.index("if rs_see:", text.index("rs_see = get_inverse_kin_has_solution"))
+    move = text.index("movej(get_inverse_kin(rs_look", seen)
+    other = text.index("else:", move)
+    assert "no closer look from here" in text[other : text.index('"REFINE "', other)]
+    assert "movej(" not in text[other : text.index('"REFINE "', other)]
 
 
 # -- the settings table ---------------------------------------------------------------------------
@@ -213,7 +264,15 @@ def test_every_default_is_within_its_own_limits_and_the_defaults_generate(java_c
     assert len(keys) == len(set(keys))
     for n in nums:
         assert n["min"] <= n["def"] <= n["max"], n
-        assert n["section"] in ("part", "approach", "gripper", "motion")
+        assert n["section"] in ("part", "approach")  # the two tabs: nothing about speeds or the gripper
+    assert set(keys) == {
+        "partLengthMm",
+        "partWidthMm",
+        "partHeightMm",
+        "partTolPct",
+        "approachMm",
+        "gripBelowTopMm",
+    }
     assert pick(java_client)["problem"] is None
     d = {n["key"]: n["def"] for n in nums}
     assert d["approachMm"] == 25  # Nick: fingertips 25 mm over the top, fully open
@@ -225,7 +284,7 @@ def test_every_default_is_within_its_own_limits_and_the_defaults_generate(java_c
         ("partLengthMm", 49.6, 50),
         ("partLengthMm", 9999, 500),
         ("partLengthMm", -3, 5),
-        ("settleS", 0.33, 0.33),
+        ("gripBelowTopMm", 12.4, 12),
         ("approachMm", float("nan"), 25),
     ],
 )
@@ -343,6 +402,9 @@ def test_the_screen_parses_what_the_cockpit_sends(java_client):  # noqa: F811
     )
     got = java_client("scene", json.dumps(out))
     assert got["orders"] == [1, 2, 3] and got["whys"] == ["too long"]
+    assert (
+        got["drawn"] == ["too long"] and got["summary"] == "3 parts to pick · 1 not (outlined on the picture)"
+    )
     assert got["surface"] == "fitted" and got["base"] is True and got["width"] == out["width"]
     assert java_client("scene", json.dumps({"ok": False, "error": "x"}))["orders"] == []
 
@@ -369,7 +431,7 @@ def _reads(script: str) -> dict[str, set[int]]:
 
 
 @pytest.mark.parametrize("polyscope", [None, [5, 4, 3], [5, 9, 4], [5, 26, 1]])
-@pytest.mark.parametrize("gripper", ["robotiq", "digital", "children"])
+@pytest.mark.parametrize("gripper", ["robotiq", "digital"])
 def test_every_list_keeps_one_size(java_client, polyscope, gripper):  # noqa: F811
     """PolyScope 5.9.4-5.14.6 stopped the node with "Resizing of 'List' is not supported" when rs_r
     took the close look's 10 numbers after the 16 of FIND: every variable a read lands in
@@ -400,7 +462,7 @@ def test_the_ik_check_only_where_the_controller_has_it(java_client, polyscope, c
     out = pick(java_client, **spec)
     assert out["problem"] is None and balanced(out["script"])
     assert ("get_inverse_kin_has_solution" in "\n".join(body(out["script"]))) is checked
-    # the close look and the approach still happen either way
+    # the closer look and the approach still happen either way
     assert out["script"].count("movej(get_inverse_kin(rs_look, get_actual_joint_positions())") == 1
     assert "rs_go = True" in out["script"] and "movel(rs_hover" in out["script"]
     if not checked:
@@ -408,6 +470,82 @@ def test_the_ik_check_only_where_the_controller_has_it(java_client, polyscope, c
             f"# PolyScope {polyscope[0]}.{polyscope[1]}.{polyscope[2]}: no get_inverse_kin_has_solution"
             in (out["script"])
         )
-        assert (
-            "no IK for approach" not in out["script"] and "out of reach - looking again" not in out["script"]
-        )
+        assert "no IK for approach" not in out["script"]
+
+
+# -- the screens (0.7.0): nothing scrolls, two option tabs, only near misses on the picture -------
+
+PANELS = [(1000, 560), (1280, 720)]  # the README's framing and the pendant's whole screen
+
+
+@pytest.mark.parametrize("size", PANELS)
+@pytest.mark.parametrize("points", [0, 1, 12])
+@pytest.mark.parametrize("view", ["main", "part", "approach"])
+@pytest.mark.parametrize("shape", ["box", "cyl"])
+def test_everything_on_the_nodes_screen_fits_without_scrolling(java_client, size, points, view, shape):  # noqa: F811
+    """Nick, 2026-09-30: "Do NOT use scrolling". No scroll pane exists, and no control is laid
+    out past the panel's edge or with no room — at twelve picture points as at none."""
+    got = java_client("screen", str(size[0]), str(size[1]), shape, str(points), view)
+    assert got["scrollers"] == []
+    assert got["clipped"] == [], got["clipped"]
+
+
+def test_the_options_are_two_tabs_part_and_approach_and_nothing_else(java_client):  # noqa: F811
+    part = set(java_client("screen", "1000", "560", "box", "1", "part")["texts"])
+    assert {"Length", "Width", "Height", "Tolerance", "Grip check"} <= part
+    approach = set(java_client("screen", "1000", "560", "box", "1", "approach")["texts"])
+    assert {"Approach", "Grip depth", "Closer look"} <= approach
+    assert "Length" not in approach and "Grip depth" not in part  # one tab at a time
+    for gone in (
+        "Gripper",
+        "Grip force",
+        "Finger speed",
+        "Speed",
+        "Settle",
+        "Lift",
+        "Open width",
+        "Digital output",
+    ):
+        assert gone not in part | approach
+    cyl = set(java_client("screen", "1000", "560", "cyl", "1", "part")["texts"])
+    assert "Diameter" in cyl and "Length" not in cyl
+    main = set(java_client("screen", "1000", "560", "box", "3", "main")["texts"])
+    assert {"3D Pick", "Picture points", "Pick order", "Options", "Check approach"} <= main
+
+
+def test_the_picture_draws_only_the_near_misses(java_client):  # noqa: F811
+    """A picked part gets no graphic; a candidate nothing like the part gets none either."""
+
+    def part(u, why=None, near=True, order=0):
+        corners = [[u - 40, 200], [u + 40, 200], [u + 40, 260], [u - 40, 260]]
+        return {
+            "order": order,
+            "pixel": [u, 230],
+            "corners_px": corners,
+            "size_mm": [50, 30],
+            "height_mm": 30,
+            "why": why,
+            "near": near,
+        }
+
+    def scene(parts, rejected):
+        return json.dumps({"ok": True, "width": 848, "height": 480, "parts": parts, "rejected": rejected})
+
+    picked = java_client("liveview", "depth", scene([part(200, order=1), part(400, order=2)], []))
+    assert picked["changed"] == 0
+    junk = java_client("liveview", "depth", scene([], [part(300, "too long", near=False)]))
+    assert junk["changed"] == 0
+    near = java_client(
+        "liveview", "depth", scene([part(200, order=1)], [part(500, "out of reach (no joint solution)")])
+    )
+    assert near["changed"] > 200
+
+
+@pytest.mark.parametrize(("tap", "depth"), [("depth", True), ("picture", False)])
+def test_the_toggle_in_the_pictures_corner_switches_picture_and_depth(java_client, tap, depth):  # noqa: F811
+    empty = json.dumps({"ok": True, "width": 848, "height": 480, "parts": [], "rejected": []})
+    got = java_client("liveview", tap, empty)
+    assert got["view"] is depth
+    assert got["heard"] is True and got["depth"] is depth
+    x, y, w, h = java_client("toggle", "640")
+    assert x + w <= 640 - 8 and y >= 8 and h >= 36 and w >= 150  # top right, inside the frame, a finger wide

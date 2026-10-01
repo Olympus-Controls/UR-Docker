@@ -121,12 +121,14 @@ public class PilotContribution implements InstallationNodeContribution, Location
         @Override
         public void waiting(String why) {
             view.setLive(false, null);
+            view.setNoCamera(why);
             view.setStatus(why, PilotView.Kind.WARN);
         }
 
         @Override
         public void failed(String why) {
             view.setLive(false, null);
+            view.setNoCamera(why);
             view.setStatus(why, PilotView.Kind.ERR);
         }
     };
@@ -137,6 +139,11 @@ public class PilotContribution implements InstallationNodeContribution, Location
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** The picture / depth toggle in the feed's corner. */
+    void setDepthView(boolean on) {
+        poller.setDepthView(on);
     }
 
     // -- pixels ------------------------------------------------------------------------------
@@ -371,8 +378,6 @@ public class PilotContribution implements InstallationNodeContribution, Location
     static final String KEY_AREAS = "areas";
     static final String KEY_AREA_SELECTED = "areaSelected";
     static final String KEY_TIP_MM = "tipMm";
-    static final String KEY_REACH_INNER = "reachInnerMm";
-    static final String KEY_REACH_OUTER = "reachOuterMm";
     static final int MAX_AREAS = 8;
     static final double DEFAULT_TIP_MM = 163; // Hand-E 157 mm + the 6 mm adapter (the UR3e cell)
 
@@ -419,15 +424,6 @@ public class PilotContribution implements InstallationNodeContribution, Location
         }
     }
 
-    /** {min, max} radial reach (m) for the program, or null when the robot model is unknown. */
-    double[] reachLimits() {
-        double[] m = robotReach();
-        if (m == null) return null;
-        double min = m[0] + model.get(KEY_REACH_INNER, 150.0) / 1000.0;
-        double max = Math.max(0, m[1] - model.get(KEY_REACH_OUTER, 150.0) / 1000.0);
-        return max > min ? new double[] {min, max} : new double[] {min, 0};
-    }
-
     private void showAreas() {
         List<LocationsScreen.Area> out = new ArrayList<LocationsScreen.Area>();
         for (int i = 0; i < areaCount(); i++) {
@@ -437,8 +433,7 @@ public class PilotContribution implements InstallationNodeContribution, Location
         }
         double[] m = robotReach();
         view.areas().show(out, model.get(KEY_AREA_SELECTED, 0), modelName(), m == null ? 0.064 : m[0],
-                m == null ? 0 : m[1], model.get(KEY_REACH_INNER, 150.0), model.get(KEY_REACH_OUTER, 150.0),
-                model.get(KEY_TIP_MM, DEFAULT_TIP_MM));
+                m == null ? 0 : m[1], model.get(KEY_TIP_MM, DEFAULT_TIP_MM));
     }
 
     @Override
@@ -521,31 +516,28 @@ public class PilotContribution implements InstallationNodeContribution, Location
     }
 
     @Override
-    public void setReach(String key, double delta) {
-        double def = KEY_TIP_MM.equals(key) ? DEFAULT_TIP_MM : 150.0;
-        double v = clampReach(key, model.get(key, def) + delta);
-        model.set(key, v);
+    public void stepTip(double byMm) {
+        model.set(KEY_TIP_MM, clampTip(model.get(KEY_TIP_MM, DEFAULT_TIP_MM) + byMm));
         showAreas();
     }
 
     @Override
-    public void askReach(final String key, JLabel anchor) {
+    public void askTip(JLabel anchor) {
         KeyboardNumberInput<Double> kb = api.getUserInterfaceAPI().getUserInteraction().getKeyboardInputFactory()
                 .createPositiveDoubleKeypadInput();
-        kb.setInitialValue(model.get(key, KEY_TIP_MM.equals(key) ? DEFAULT_TIP_MM : 150.0));
+        kb.setInitialValue(model.get(KEY_TIP_MM, DEFAULT_TIP_MM));
         kb.show(anchor, new KeyboardInputCallback<Double>() {
             @Override
             public void onOk(Double value) {
                 if (value == null) return;
-                model.set(key, clampReach(key, value));
+                model.set(KEY_TIP_MM, clampTip(value));
                 showAreas();
             }
         });
     }
 
-    static double clampReach(String key, double v) {
-        if (KEY_TIP_MM.equals(key)) return Math.max(0, Math.min(500, Math.round(v)));
-        return Math.max(0, Math.min(1000, Math.round(v)));
+    static double clampTip(double v) {
+        return Math.max(0, Math.min(500, Math.round(v)));
     }
 
     private static String orElse(Object v, String fallback) {

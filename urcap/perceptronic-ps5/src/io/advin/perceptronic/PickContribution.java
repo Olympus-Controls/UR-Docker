@@ -4,10 +4,6 @@ import com.ur.urcap.api.contribution.ProgramNodeContribution;
 import com.ur.urcap.api.contribution.program.CreationContext;
 import com.ur.urcap.api.contribution.program.ProgramAPIProvider;
 import com.ur.urcap.api.domain.data.DataModel;
-import com.ur.urcap.api.domain.program.nodes.ProgramNodeFactory;
-import com.ur.urcap.api.domain.program.nodes.builtin.CommentNode;
-import com.ur.urcap.api.domain.program.nodes.contributable.URCapProgramNode;
-import com.ur.urcap.api.domain.program.structure.TreeNode;
 import com.ur.urcap.api.domain.script.ScriptWriter;
 import com.ur.urcap.api.domain.undoredo.UndoableChanges;
 import com.ur.urcap.api.domain.userinteraction.keyboard.KeyboardInputCallback;
@@ -34,12 +30,12 @@ import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
 
 /**
- * One Perceptronic Pick node in a program (0.5.0). Teach time — the node's screen open — the
- * live picture with the parts numbered in pick order ({@code GET /api/pick/scene}, asked with
- * exactly the options the program will send), the picture points, the pick order, and the
- * Options view. Run time: {@link PickScript}. Everything is in the node's data model;
- * the camera computer's address, the pick areas and the reach come from the Installation
- * node, one per robot.
+ * One 3D Pick node in a program (0.7.0): a single move sequence with no children. Teach time —
+ * the node's screen open — the live picture (or the depth), what is found in it
+ * ({@code GET /api/pick/scene}, asked with exactly the options the program will send), the
+ * picture points, the pick order, and the Options view. Run time: {@link PickScript}.
+ * Everything is in the node's data model; the camera computer's address and the pick areas
+ * come from the Installation node, one per robot.
  */
 public class PickContribution implements ProgramNodeContribution, PickScreen.Actions {
     static final String KEY_NODE_ID = "nodeId";
@@ -48,17 +44,16 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
     static final String KEY_SELECTED = "selectedPoint";
     static final String KEY_ORDER_FIRST = "orderFirst";
     static final String KEY_ORDER_ROWS = "orderRows";
-    static final String KEY_GRIPPER = "gripper";
+    static final String KEY_SHAPE = "partShape";
+    static final String KEY_GRIP_CHECK = "gripCheck";
+    static final String KEY_CLOSE_LOOK = "closeLook";
     static final String KEY_POPUP = "popupOnFail";
-    static final String KEY_PER_POINT = "perPointRoutine";
     static final String KEY_PORT = "pickPort";
     static final String KEY_VARIABLE = "foundVariable";
     static final String KEY_LOC_VARIABLE = "locVariable";
     static final String KEY_SURVEY_040 = "surveyJoints"; // 0.4.0's single survey position
     static final String FOUND_NAME = "rs_pick_found";
     static final String LOC_NAME = "rs_pick_loc";
-    static final String AFTER_PICK = "After the pick: insert what happens to the part (place it, …)";
-    static final String GRIP_HERE = "Close the gripper here: insert your gripper's Close node";
     private static final int POLL_TIMEOUT_MS = 1500;
     private static final long SCENE_EVERY_MS = 700;
 
@@ -75,6 +70,7 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
     private volatile Thread poller;
     private volatile long seq;
     private volatile long sceneAt;
+    private volatile boolean depthView;
     private volatile Scene scene = Scene.empty();
 
     PickContribution(ProgramAPIProvider api, PickView view, DataModel model, CreationContext context) {
@@ -145,16 +141,14 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         for (PickScript.Num n : PickScript.NUMBERS) s.values.put(n.key, model.get(n.key, n.def));
         s.orderFirst = model.get(KEY_ORDER_FIRST, "LR");
         s.orderRows = model.get(KEY_ORDER_ROWS, "FB");
-        s.gripper = model.get(KEY_GRIPPER, "robotiq");
+        s.shape = model.get(KEY_SHAPE, "box");
+        s.gripCheck = model.get(KEY_GRIP_CHECK, false);
+        s.closeLook = model.get(KEY_CLOSE_LOOK, true);
         s.popupOnFail = model.get(KEY_POPUP, true);
         s.polyscope = polyscopeVersion();
-        if (inst != null) {
-            double[] reach = inst.reachLimits();
-            if (reach != null) {
-                s.reachMinM = reach[0];
-                s.reachMaxM = reach[1];
-            }
-        }
+        // the arm by name: the pick server asks its kinematics which parts are in reach
+        String arm = robotType();
+        s.arm = arm.matches("[A-Za-z0-9]{1,8}") ? arm : "";
         for (int i = 0; i < pointCount(); i++) {
             double[] q = joints(i);
             double[] plane = inst == null ? null : inst.areaPlane(areaOf(i));
@@ -174,10 +168,6 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
             out.add(new PickScreen.PointRow(taught ? name : "live table", taught));
         }
         return out;
-    }
-
-    private TreeNode tree() {
-        return api.getProgramAPI().getProgramModel().getRootTreeNode(this);
     }
 
     // -- program node --------------------------------------------------------------------------
@@ -202,8 +192,8 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
     public String getTitle() {
         PickScript s = script();
         int n = pointCount();
-        return "Perceptronic Pick (" + PickScript.num(Math.max(s.n("partLengthMm"), s.n("partWidthMm"))) + "×"
-                + PickScript.num(Math.min(s.n("partLengthMm"), s.n("partWidthMm"))) + "×"
+        return "3D Pick (" + (s.round() ? "Ø" + PickScript.num(s.longSide())
+                : PickScript.num(s.longSide()) + "×" + PickScript.num(s.shortSide())) + "×"
                 + PickScript.num(s.n("partHeightMm")) + " mm, " + n + " picture" + (n == 1 ? "" : "s") + ")";
     }
 
@@ -219,46 +209,20 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         if (v != null) s.foundVariable = writer.getResolvedVariableName(v);
         Variable l = model.get(KEY_LOC_VARIABLE, (Variable) null);
         if (l != null) s.locVariable = writer.getResolvedVariableName(l);
-        for (String line : s.beforeChildren()) writer.appendLine(line);
-        if (s.ownGripperNodes()) writer.writeChildren();
-        for (String line : s.afterChildren()) writer.appendLine(line);
-        if (!s.ownGripperNodes()) {
-            writer.appendLine(s.afterPickOpen());
-            writer.writeChildren();
-            writer.appendLine("end");
-        }
+        for (String line : s.lines()) writer.appendLine(line);
     }
 
     /** What still stops the node from running, for the screen; null when ready. */
     String problem() {
-        PickScript s = script();
-        String p = s.problem();
-        if (p != null) return p;
-        if (s.ownGripperNodes() && !hasNonComment()) {
-            return "insert your gripper's Close node inside this node (it runs at the grip)";
-        }
-        return null;
+        return script().problem();
     }
 
-    private boolean hasNonComment() {
-        try {
-            for (TreeNode child : tree().getChildren()) {
-                if (!(child.getProgramNode() instanceof CommentNode)) return true;
-            }
-        } catch (RuntimeException e) {
-            return false;
-        }
-        return false;
-    }
-
-    // -- first open: identity, variables, the child template, 0.4.0's settings ------------------
+    // -- first open: identity, variables, 0.4.0's survey position --------------------------------
 
     private void ensureTemplate() {
         if (!model.get(KEY_NODE_ID, "").isEmpty() && model.get(KEY_TEMPLATED, false)) return;
         change(() -> {
             if (model.get(KEY_NODE_ID, "").isEmpty()) model.set(KEY_NODE_ID, newId());
-            boolean upgraded = model.get(KEY_TEMPLATED, false); // a 0.4.0 node opened in 0.5.0
-            if (upgraded && !model.isSet(KEY_GRIPPER)) model.set(KEY_GRIPPER, "children"); // its children grip
             JointPositions survey = model.get(KEY_SURVEY_040, (JointPositions) null);
             if (survey != null && pointCount() == 0) {
                 model.set("point.0.q", survey);
@@ -266,16 +230,6 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
                 model.remove(KEY_SURVEY_040);
             }
             model.set(KEY_TEMPLATED, true);
-            try {
-                TreeNode root = tree();
-                if (root.getChildren().isEmpty()) {
-                    CommentNode c = factory().createCommentNode();
-                    c.setComment("children".equals(model.get(KEY_GRIPPER, "robotiq")) ? GRIP_HERE : AFTER_PICK);
-                    root.addChild(c);
-                }
-            } catch (Exception e) {
-                // an empty node is still usable: the screen says what to insert
-            }
             variable(KEY_VARIABLE, FOUND_NAME);
             variable(KEY_LOC_VARIABLE, LOC_NAME);
         });
@@ -297,10 +251,6 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         return String.format("%02x%02x%02x", b[0] & 0xff, b[1] & 0xff, b[2] & 0xff);
     }
 
-    private ProgramNodeFactory factory() {
-        return api.getProgramAPI().getProgramModel().getProgramNodeFactory();
-    }
-
     private void change(final Runnable r) {
         api.getProgramAPI().getUndoRedoManager().recordChanges(new UndoableChanges() {
             @Override
@@ -311,8 +261,8 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
     }
 
     private void refresh() {
-        view.screen().show(script(), rows(), selected(), model.get(KEY_PER_POINT, false));
-        sceneAt = 0; // the picture's numbers follow at once
+        view.screen().show(script(), rows(), selected());
+        sceneAt = 0; // what the picture finds follows at once
     }
 
     // -- the picture points ---------------------------------------------------------------------
@@ -344,10 +294,9 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
                     }
                     model.set(KEY_SELECTED, i);
                 });
-                if (adding && model.get(KEY_PER_POINT, false)) ensurePointRoutines();
                 refresh();
                 view.screen().setStatus("picture " + (i + 1) + " taught — the camera must see the parts from here,"
-                        + " at least 0.25 m away", Ui.Kind.OK);
+                        + " at least 0.3 m away", Ui.Kind.OK);
             }
         });
     }
@@ -420,8 +369,7 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
             model.set(KEY_ORDER_ROWS, rows);
         });
         refresh();
-        view.screen().setStatus("pick order: " + PickScript.orderText(first, rows) + " — see the numbers",
-                Ui.Kind.OK);
+        view.screen().setStatus("pick order: " + PickScript.orderText(first, rows), Ui.Kind.OK);
     }
 
     @Override
@@ -448,66 +396,46 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
     }
 
     @Override
-    public void setGripper(final String mode) {
-        if (!PickScript.contains(PickScript.GRIPPERS, mode)) return;
-        change(() -> model.set(KEY_GRIPPER, mode));
+    public void setShape(final String shape) {
+        if (!PickScript.contains(PickScript.SHAPES, shape)) return;
+        change(() -> model.set(KEY_SHAPE, shape));
         refresh();
-        view.screen().setStatus("children".equals(mode)
-                ? "your gripper nodes go inside this node and run at the grip; what happens next follows the node"
-                : "the node drives the " + PickScreen.gripperWords(mode) + "; its children are the routine after the"
-                + " pick", Ui.Kind.OK);
+        view.screen().setStatus("cyl".equals(shape) ? "a cylinder standing on its end: its diameter and its height"
+                : "a box: length and width as it lies, and its height", Ui.Kind.OK);
     }
 
     @Override
     public void setFlag(final String key, final boolean on) {
-        if (PickScreen.FLAG_POPUP.equals(key)) {
-            change(() -> model.set(KEY_POPUP, on));
-        } else if (PickScreen.FLAG_PER_POINT.equals(key)) {
-            change(() -> model.set(KEY_PER_POINT, on));
-            if (on) ensurePointRoutines();
-            view.screen().setStatus(on ? "each picture point has its own routine inside this node (\"After picture N\")"
-                    : "the per-picture routines stay in the program until you delete them", Ui.Kind.INFO);
+        if (PickScreen.FLAG_GRIP_CHECK.equals(key)) {
+            change(() -> model.set(KEY_GRIP_CHECK, on));
+            view.screen().setStatus(on ? "grip check on: a part that measures too wide for the fingers, or has no"
+                    + " room beside it, is skipped" : "grip check off: the part's size is known, every part found is"
+                    + " picked", Ui.Kind.INFO);
+        } else if (PickScreen.FLAG_CLOSE_LOOK.equals(key)) {
+            change(() -> model.set(KEY_CLOSE_LOOK, on));
+            view.screen().setStatus(on ? "closer look on: the arm moves in to measure the part again before the"
+                    + " approach" : "closer look off: the approach uses the survey's measurement", Ui.Kind.INFO);
         }
         refresh();
+    }
+
+    @Override
+    public void setDepthView(boolean on) {
+        depthView = on;
+        seq = 0;
     }
 
     @Override
     public void resetDefaults() {
         change(() -> {
             for (PickScript.Num n : PickScript.NUMBERS) model.set(n.key, n.def);
-            model.set(KEY_POPUP, true);
+            model.set(KEY_SHAPE, "box");
+            model.set(KEY_GRIP_CHECK, false);
+            model.set(KEY_CLOSE_LOOK, true);
         });
         refresh();
         view.screen().setStatus("every option back at its default (the picture points and the order are kept)",
                 Ui.Kind.INFO);
-    }
-
-    /** One "After picture N" child per picture point that doesn't have one yet. */
-    private void ensurePointRoutines() {
-        change(() -> {
-            try {
-                TreeNode root = tree();
-                boolean[] have = new boolean[PickScript.MAX_POINTS + 1];
-                for (TreeNode c : root.getChildren()) {
-                    if (c.getProgramNode() instanceof URCapProgramNode) {
-                        URCapProgramNode u = (URCapProgramNode) c.getProgramNode();
-                        if (u.canGetAs(PickRoutineContribution.class)) {
-                            int k = u.getAs(PickRoutineContribution.class).point();
-                            if (k >= 1 && k <= PickScript.MAX_POINTS) have[k] = true;
-                        }
-                    }
-                }
-                Variable loc = model.get(KEY_LOC_VARIABLE, (Variable) null);
-                for (int k = 1; k <= pointCount(); k++) {
-                    if (have[k]) continue;
-                    URCapProgramNode node = factory().createURCapProgramNode(PickRoutineService.class);
-                    node.getAs(PickRoutineContribution.class).init(k, loc);
-                    root.addChild(node);
-                }
-            } catch (Exception e) {
-                view.screen().setStatus("could not add the per-picture routines: " + e.getMessage(), Ui.Kind.ERR);
-            }
-        });
     }
 
     // -- check the approach with PolyScope's move screen --------------------------------------------
@@ -517,7 +445,7 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
         final PickScript s = script();
         final Cockpit c = cockpit();
         final int i = selected();
-        view.screen().setStatus("asking the camera computer where part #1's approach is…", Ui.Kind.INFO);
+        view.screen().setStatus("asking the camera computer where the first part's approach is…", Ui.Kind.INFO);
         actions.submit(() -> {
             try {
                 Map<String, Object> res = c.get("/api/pick/scene?opts=" + URLEncoder.encode(s.tokens(i), "UTF-8")
@@ -538,10 +466,10 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
                 SwingUtilities.invokeLater(() -> {
                     Pose pose = api.getProgramAPI().getValueFactoryProvider().getPoseFactory()
                             .createPose(p[0], p[1], p[2], p[3], p[4], p[5], Length.Unit.M, Angle.Unit.RAD);
-                    view.screen().setStatus("PolyScope's move screen: hold Move to go over part #1 — fingertips "
+                    view.screen().setStatus("PolyScope's move screen: hold Move to go over the first part — fingertips "
                             + PickScript.num(s.n("approachMm")) + " mm over its top", Ui.Kind.OK);
                     api.getUserInterfaceAPI().getUserInteraction().getRobotMovement().requestUserToMoveRobot(pose,
-                            done("approach over part #1"));
+                            done("approach over the first part"));
                 });
             } catch (IOException e) {
                 view.screen().setStatus(Cockpit.explain(e, c.base), Ui.Kind.ERR);
@@ -583,22 +511,30 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
 
     private void pollLoop() {
         boolean announced = false;
+        String told = "";
         while (open && !Thread.currentThread().isInterrupted()) {
             Cockpit c = cockpit();
             try {
-                Cockpit.Frame f = c.colorPng(seq, POLL_TIMEOUT_MS);
+                boolean heat = depthView;
+                Cockpit.Frame f = c.framePng(heat, seq, POLL_TIMEOUT_MS);
+                if (f.status == 404 && heat) {
+                    depthView = false; // a camera computer older than 0.7.0: no heatmap, the picture instead
+                    view.screen().setStatus("this camera computer has no depth view yet — update it", Ui.Kind.WARN);
+                    continue;
+                }
                 if (f.status != 200) {
                     announced = false;
-                    view.screen().setLive(false, null);
-                    view.screen().setStatus(f.status == 503 ? "the camera computer is up but has no picture yet"
-                            + " (camera opening?)" : "the camera computer at " + c.base + " answered HTTP " + f.status,
-                            Ui.Kind.WARN);
+                    String why = f.status == 503 ? Cockpit.noPicture(c.base, null)
+                            : "The camera computer answers, but not as expected (HTTP " + f.status + ").\n• Update the"
+                            + " camera computer's software and restart it";
+                    view.screen().setLive(false, why);
+                    view.screen().setStatus(why, Ui.Kind.WARN);
                     sleep(1000);
                     continue;
                 }
                 seq = f.seq;
                 view.screen().setFrame(f.image);
-                view.screen().setLive(true, f.fps);
+                view.screen().setLive(true, null);
                 if (System.currentTimeMillis() - sceneAt > SCENE_EVERY_MS) {
                     sceneAt = System.currentTimeMillis();
                     PickScript s = script();
@@ -608,26 +544,31 @@ public class PickContribution implements ProgramNodeContribution, PickScreen.Act
                     scene = Scene.parse(res);
                     view.screen().setScene(scene);
                     if (!Boolean.TRUE.equals(res.get("ok")) && res.get("error") != null) {
-                        view.screen().setStatus("the camera computer: " + res.get("error") + " (update it to 0.5.0?)",
-                                Ui.Kind.WARN);
+                        view.screen().setStatus("the camera computer: " + res.get("error"), Ui.Kind.WARN);
                         announced = false;
+                    } else if (announced && !scene.summary().equals(told)) {
+                        told = scene.summary();
+                        view.screen().setStatus(told, scene.parts.isEmpty() ? Ui.Kind.WARN : Ui.Kind.OK);
                     }
                 }
                 if (!announced) {
                     String p = problem();
-                    view.screen().setStatus(p == null ? "ready — live from " + c.base : "to do: " + p,
-                            p == null ? Ui.Kind.OK : Ui.Kind.INFO);
+                    told = scene.summary();
+                    view.screen().setStatus(p == null ? told : "to do: " + p, p != null ? Ui.Kind.INFO
+                            : scene.parts.isEmpty() ? Ui.Kind.WARN : Ui.Kind.OK);
                     announced = true;
                 }
             } catch (IOException e) {
                 announced = false;
-                view.screen().setLive(false, null);
-                view.screen().setStatus(Cockpit.explain(e, c.base), Ui.Kind.ERR);
+                String why = Cockpit.explain(e, c.base);
+                view.screen().setLive(false, why);
+                view.screen().setStatus(why, Ui.Kind.ERR);
                 sleep(1500);
             } catch (RuntimeException e) {
                 announced = false;
-                view.screen().setLive(false, null);
-                view.screen().setStatus(Cockpit.explain(e, c.base), Ui.Kind.ERR);
+                String why = Cockpit.explain(e, c.base);
+                view.screen().setLive(false, why);
+                view.screen().setStatus(why, Ui.Kind.ERR);
                 sleep(1500);
             }
         }

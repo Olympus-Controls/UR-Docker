@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Preview the PolyScope 5 URCap's screens in action, on a desktop — no robot, no pendant.
 
-Opens the Perceptronic Pick node's and the Installation node's real Swing screens in a
+Opens the 3D Pick node's and the Installation node's real Swing screens in a
 1280 x 800 window (the pendant's size) and feeds them from a camera computer:
 
 * by default a **simulated** one started here: the cockpit's HTTP API over a ray-cast box
@@ -156,7 +156,13 @@ def main(argv: list[str] | None = None) -> int:
         "--snapshot", help="render the window once to this PNG and exit (works without a display)"
     )
     ap.add_argument(
-        "--screens", help="write the README's three screen pictures (1000 x 560) into this directory and exit"
+        "--view",
+        choices=("main", "depth", "part", "approach", "areas"),
+        default="main",
+        help="which screen a --snapshot shows: the picture, the depth view, an Options tab, the pick areas",
+    )
+    ap.add_argument(
+        "--screens", help="write the README's screen pictures (1000 x 560) into this directory and exit"
     )
     args = ap.parse_args(argv)
 
@@ -172,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         cmd.append("-Djava.awt.headless=true")
     cmd += ["io.advin.perceptronic.Preview", base]
     if args.snapshot:
-        cmd += ["--snapshot", str(Path(args.snapshot).resolve())]
+        cmd += ["--snapshot", str(Path(args.snapshot).resolve()), "--view", args.view]
     elif args.screens:
         Path(args.screens).mkdir(parents=True, exist_ok=True)
         cmd += ["--screens", str(Path(args.screens).resolve())]

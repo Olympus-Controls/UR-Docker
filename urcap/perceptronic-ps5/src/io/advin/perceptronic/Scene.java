@@ -20,8 +20,10 @@ final class Scene {
         final int widthMm;
         final int heightMm;
         final String why; // null: pickable
+        final boolean near; // nearly the part (the right size but out of reach, a little off the size)
 
-        Part(int order, int[][] corners, int u, int v, int lengthMm, int widthMm, int heightMm, String why) {
+        Part(int order, int[][] corners, int u, int v, int lengthMm, int widthMm, int heightMm, String why,
+                boolean near) {
             this.order = order;
             this.corners = corners;
             this.u = u;
@@ -30,6 +32,7 @@ final class Scene {
             this.widthMm = widthMm;
             this.heightMm = heightMm;
             this.why = why;
+            this.near = near;
         }
 
         String size() {
@@ -46,6 +49,23 @@ final class Scene {
     final boolean baseFrame;
     final String reason;
     final List<String> notes;
+
+    /** What the picture draws: the candidates that are nearly the part and are not being picked. */
+    List<Part> nearMisses() {
+        List<Part> out = new ArrayList<Part>();
+        for (Part p : rejected) {
+            if (p.near) out.add(p);
+        }
+        return out;
+    }
+
+    /** One line for the screen's status: how many parts will be picked, how many nearly. */
+    String summary() {
+        int near = nearMisses().size();
+        if (parts.isEmpty() && near == 0) return "no part in view";
+        String s = parts.size() + (parts.size() == 1 ? " part" : " parts") + " to pick";
+        return near == 0 ? s : s + " · " + near + " not (outlined on the picture)";
+    }
 
     Scene(int width, int height, List<Part> parts, List<Part> rejected, String surface, double offsetMm,
             boolean baseFrame, String reason, List<String> notes) {
@@ -109,7 +129,8 @@ final class Scene {
             if (!ok || px == null) continue;
             Object why = m.get("why");
             out.add(new Part(integer(m.get("order")), c, px[0], px[1], size == null ? 0 : size[0],
-                    size == null ? 0 : size[1], integer(m.get("height_mm")), why instanceof String ? (String) why : null));
+                    size == null ? 0 : size[1], integer(m.get("height_mm")), why instanceof String ? (String) why : null,
+                    !Boolean.FALSE.equals(m.get("near")))); // a cockpit before 0.7.0 says nothing: draw it
         }
         return out;
     }
