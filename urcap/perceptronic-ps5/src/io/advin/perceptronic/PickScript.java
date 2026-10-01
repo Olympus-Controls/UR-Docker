@@ -211,7 +211,7 @@ final class PickScript {
         if (!host.matches("[A-Za-z0-9.:\\-]+")) return "the camera computer's host \"" + host + "\" is not an address";
         if (port < 1 || port > 65535) return "the pick port must be 1..65535";
         if (!nodeId.matches("[0-9a-f]{1,12}")) return "the node has no identity yet - open it once";
-        if (points.isEmpty()) return "add a picture point: move the arm where the camera sees the parts and tap Add";
+        if (points.isEmpty()) return "add a picture point: move the arm where the camera sees the parts and tap +";
         if (points.size() > MAX_POINTS) return "at most " + MAX_POINTS + " picture points";
         for (int i = 0; i < points.size(); i++) {
             Point p = points.get(i);

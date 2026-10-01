@@ -375,7 +375,7 @@ final class Diagrams {
             }
             g.setFont(Ui.font(11f, false));
             g.setColor(Ui.MUTED);
-            g.drawString(reachR > 0 ? "green: as far as the " + model + " reaches · red: too near its base"
+            g.drawString(reachR > 0 ? "green: the " + model + "'s reach · red: too near its base"
                     : "robot model unknown: no reach to draw", 8, h - 8);
             g.dispose();
         }

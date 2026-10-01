@@ -371,14 +371,14 @@ def open_toolbox(page) -> None:
 
 
 def program_node_checks(checks: Checks, page, shot) -> None:
-    """The Perceptronic Pick program node: from the toolbox into the tree, its row, the
+    """The 3D Pick program node: from the toolbox into the tree, its row, the
     dialog it opens (the feed live, a picture point taught from PolyScope's joint
     positions), and the row's verdict once the node can generate a program. The
     application node's cockpit URL was set by the checks before this."""
     page.get_by_text("Program", exact=True).first.click(timeout=30_000)
     page.wait_for_timeout(2000)
     open_toolbox(page)
-    page.get_by_text("Perceptronic Pick", exact=True).first.click(timeout=30_000)
+    page.get_by_text("3D Pick", exact=True).first.click(timeout=30_000)
     page.wait_for_selector(PICK_TAG, state="attached", timeout=60_000)
     row = page.locator(PICK_TAG)
     page.wait_for_function(
@@ -394,10 +394,40 @@ def program_node_checks(checks: Checks, page, shot) -> None:
     dlg = page.locator(DIALOG_TAG)
     try:
         page.wait_for_function(f"() => !!document.querySelector('{DIALOG_TAG} .dot.live')", timeout=45_000)
-        checks.ok("pick dialog feed live", dlg.locator('[data-pk="cap-bottom"]').inner_text()[:120])
+        checks.ok("pick dialog feed live", dlg.locator('[data-pk="status"]').inner_text()[:120])
     except Exception:
-        checks.fail("pick dialog feed live", dlg.locator('[data-pk="cap-top"]').inner_text()[:200])
+        checks.fail("pick dialog feed live", dlg.locator('[data-pk="nocam-text"]').inner_text()[:200])
     shot("pick-dialog")
+    # the Picture / Depth toggle in the picture's corner: the heatmap is a different, smaller image
+    colour_width = page.evaluate(f"() => document.querySelector('{DIALOG_TAG} [data-pk=img]').naturalWidth")
+    dlg.locator('[data-view="depth"]').click()
+    try:
+        page.wait_for_function(
+            f"(w) => {{ const i = document.querySelector('{DIALOG_TAG} [data-pk=img]');"
+            " return i.naturalWidth > 0 && i.naturalWidth < w; }",
+            arg=colour_width,
+            timeout=20_000,
+        )
+        checks.ok("pick dialog depth view", f"colour {colour_width} px wide, the heatmap narrower")
+    except Exception:
+        checks.fail("pick dialog depth view", "the picture did not change to the heatmap in 20 s")
+    shot("pick-dialog-depth")
+    dlg.locator('[data-view="picture"]').click()
+    # Options: two tabs, each fits the dialog (nothing scrolls)
+    dlg.locator('[data-pk="toggle"]').click()
+    for tab in ("part", "approach"):
+        dlg.locator(f'[data-tab="{tab}"]').click()
+        fits = page.evaluate(
+            f"() => {{ const e = document.querySelector('{DIALOG_TAG} .pk');"
+            " return e.scrollHeight <= e.clientHeight + 1 && e.scrollWidth <= e.clientWidth + 1; }"
+        )
+        checks.expect(
+            fits,
+            f"options tab {tab} fits without scrolling",
+            "fits" if fits else "its content overflows the dialog",
+        )
+        shot(f"pick-options-{tab}")
+    dlg.locator('[data-pk="back"]').click()
     dlg.locator('[data-pk="add"]').click()
     page.wait_for_function(
         # the verdict before the click says "add a picture point: …" — wait for the teach, or its error
@@ -533,6 +563,19 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
                 checks.ok("feed live", status.inner_text())
             except Exception:
                 checks.fail("feed live", status.inner_text())
+            # the second tab: the pick areas on a map of the arm's reach (the model read from PolyScope)
+            node.locator('[data-tab="areas"]').click()
+            try:
+                page.wait_for_function(
+                    f"() => /reach \\d+ mm|robot model unknown/.test("
+                    f"(document.querySelector('{TAG} [data-rsp=reach-map]') || {{}}).textContent || '')",
+                    timeout=20_000,
+                )
+                checks.ok("pick areas tab", node.locator('[data-rsp="reach-model"]').inner_text()[:80])
+            except Exception:
+                checks.fail("pick areas tab", "the reach map did not draw in 20 s")
+            shot("node-areas")
+            node.locator('[data-tab="camera"]').click()
             img = node.locator('[data-rsp="img"]')
             box = img.bounding_box()
             if not box:

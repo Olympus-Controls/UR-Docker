@@ -627,7 +627,7 @@ def test_api_surface_covers_every_call_the_urcap_makes():
         assert name in surface["ApplicationBehaviors"], name
     for prop in ("applicationNode", "applicationAPI", "robotSettings"):
         assert f"set {prop}(" in main_js and prop in surface["ApplicationPresenter"]
-    # the program nodes: pick.js against ProgramPresenterAPI, the two workers against ProgramBehaviors
+    # the program node: pick.js against ProgramPresenterAPI, its worker against ProgramBehaviors
     pick_js = (FRONTEND / "pick.js").read_text(encoding="utf-8")
     for m in re.finditer(r"\brps\.(\w+)", pick_js):
         assert m.group(1) in surface["RobotPositionService"], m.group(0)
@@ -639,7 +639,7 @@ def test_api_surface_covers_every_call_the_urcap_makes():
             assert member in surface[cls], m.group(0)
     for prop in surface["ProgramPresenter"]:
         assert f"set {prop}(" in pick_js, prop
-    for name in ("pick-node.worker.js", "after-node.worker.js"):
+    for name in ("pick-node.worker.js",):
         w = (FRONTEND / name).read_text(encoding="utf-8")
         behaviors = re.search(r"const behaviors = \{(.*?)\n\};", w, re.S).group(1)
         for member in re.findall(r"^\s{2}(\w+):", behaviors, re.M):
@@ -652,7 +652,7 @@ def test_api_surface_covers_every_call_the_urcap_makes():
 def test_read_yaml_reads_the_real_manifest():
     manifest = track.read_yaml((ROOT / "urcap/perceptronic/manifest.yaml").read_text(encoding="utf-8"))
     assert manifest["metadata"]["vendorID"] == "advin"
-    assert manifest["metadata"]["version"] == "0.4.0"
+    assert manifest["metadata"]["version"] == "0.5.0"
     assert manifest["artifacts"]["webArchives"] == [
         {"id": "perceptronic-frontend", "folder": "perceptronic-frontend"}
     ]
