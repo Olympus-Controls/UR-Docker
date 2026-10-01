@@ -745,7 +745,19 @@ def release_check(tag: str, src: str | Path, dist_dir: str | Path) -> dict:
         raise Urcap5Error(f"{path} was not built from the current sources — run `make urcap5-package`")
     if h.get("Bundle-Category", "").lower() != "urcap" or "META-INF/MANIFEST.MF" not in bundle["names"][:2]:
         raise Urcap5Error(f"{path} would be refused by PolyScope 5's installer (category / manifest order)")
-    return {"version": version, "path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    # the USB stick's auto-install file is released beside the jar: it must be the one for this jar
+    stick = dist_dir / MAGIC_NAME
+    if not stick.is_file():
+        raise Urcap5Error(f"{stick} is not committed — run `make urcap5-package` and commit it")
+    template = MAGIC_TEMPLATE.read_text(encoding="utf-8")
+    if stick.read_text(encoding="utf-8") != render_magic(template, path, props["Bundle-SymbolicName"]):
+        raise Urcap5Error(f"{stick} is not the one for {path.name} — run `make urcap5-package`")
+    return {
+        "version": version,
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "stick": str(stick),
+    }
 
 
 # -- install --------------------------------------------------------------------------------
