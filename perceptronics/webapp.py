@@ -119,6 +119,7 @@ DEFAULT_PORT = 7621
 DEFAULT_SNAPSHOT_DIR = "captures/snapshots"
 REOPEN_DELAY_S = 1.0
 REOPEN_MAX_DELAY_S = 30.0
+STALL_AFTER_S = 2.0  # no new frame for this long: the stream is stalled, its rate is 0
 EVENT_LOG_SIZE = 500
 
 
@@ -156,6 +157,14 @@ class EventLog:
     @property
     def seq(self) -> int:
         return self._seq
+
+
+def recent_rate(stamps: list[float]) -> float:
+    """Events per second among the monotonic ``stamps`` of the last :data:`STALL_AFTER_S`
+    seconds — 0 when they have stopped coming."""
+    now = time.monotonic()
+    w = [t for t in stamps if now - t <= STALL_AFTER_S]
+    return (len(w) - 1) / (w[-1] - w[0]) if len(w) > 1 and w[-1] > w[0] else 0.0
 
 
 def reopen_delay(failures: int) -> float:
@@ -256,8 +265,7 @@ class ViewPump:
                 self._cond.notify_all()
 
     def fps(self) -> float:
-        w = self._fps_window
-        return (len(w) - 1) / (w[-1] - w[0]) if len(w) > 1 and w[-1] > w[0] else 0.0
+        return recent_rate(self._fps_window)
 
     def latest(self) -> tuple[int, bytes | None]:
         with self._cond:
@@ -426,8 +434,20 @@ class ViewerApp:
     # -- frames ----------------------------------------------------------------------
 
     def fps(self) -> float:
-        w = self._fps_window
-        return (len(w) - 1) / (w[-1] - w[0]) if len(w) > 1 and w[-1] > w[0] else 0.0
+        """Frames per second over the last 2 s — 0 once the frames stop. The window is only
+        trimmed when a frame arrives, so a camera that dropped out would otherwise keep
+        its last rate for ever."""
+        return recent_rate(self._fps_window)
+
+    def frame_age_s(self) -> float | None:
+        """Seconds since the newest frame arrived (None before the first)."""
+        t = self._latest_t
+        return max(0.0, time.time() - t) if t else None
+
+    def stalled(self) -> bool:
+        """Frames were flowing and have stopped: the picture on screen is old."""
+        age = self.frame_age_s()
+        return self.frames_read > 0 and age is not None and age > STALL_AFTER_S
 
     def latest(self) -> tuple[int, RgbdFrame | None]:
         with self._cond:
@@ -1044,6 +1064,8 @@ class ViewerApp:
             "segment_backends": list(SEGMENT_BACKENDS),
             "seq": seq,
             "fps": round(self.fps(), 2),
+            "frame_age_s": None if self.frame_age_s() is None else round(self.frame_age_s(), 2),
+            "stalled": self.stalled(),
             "frames_read": self.frames_read,
             "uptime_s": round(time.time() - self.started_at, 1) if self.started_at else 0.0,
             "last_error": self.last_error,
@@ -1257,7 +1279,8 @@ class ViewerApp:
         )
         seq, frame = self.latest()
         fps = self.fps()
-        stalled = frame is None or (fps < 1.0 and self.frames_read > 0)
+        age = self.frame_age_s()
+        stalled = frame is None or self.stalled() or (fps < 1.0 and self.frames_read > 0)
         report.checks.insert(
             1,
             Check(
@@ -1265,6 +1288,7 @@ class ViewerApp:
                 not stalled and self.last_error is None,
                 f"{self.camera.describe().get('kind')} camera: {fps:.1f} fps, seq {seq}, "
                 f"{self.frames_read} frames read"
+                + (f"; no new frame for {age:.0f} s" if self.stalled() and age is not None else "")
                 + (f"; last error: {self.last_error}" if self.last_error else ""),
                 fix=self.last_error or "no frames yet — wait for the camera to open, or check the USB link",
             ),
