@@ -142,7 +142,8 @@ text says which.
 ## Releases
 
 Pushing a `urcap5-v<version>` tag (`git tag urcap5-v0.3.0 && git push fork urcap5-v0.3.0`)
-publishes the committed `../dist/perceptronic-ps5-<version>.urcap` and its sha256 as a
+publishes the committed `../dist/perceptronic-ps5-<version>.urcap`, its sha256 and the stick's
+`urmagic_perceptronic.sh` (checked to be the one written for that jar) as a
 GitHub Release (`.github/workflows/release-urcap5.yml`). The workflow does not rebuild the
 jar — the URCap API jars are UR's and live only in the URSim image — it runs
 `python3 urcap/urcap5.py release-check <tag>`: the tag's version is `Bundle-Version`, the

@@ -26,7 +26,6 @@
 
 ## Open questions for Nick
 
-- 2026-09-30 — The `urcap5-v*` release attaches only the jar. Attach `urmagic_perceptronic.sh` as well so a stick can be made from the release page? It is a deploy-chain edit (`release-urcap5.yml`), so it goes in a draft PR if yes.
 - 2026-09-30 — **"Closer look: sharper angle, a bit farther"** — I read it as: keep the part out from behind the gripper. On the UR3e's hand-eye the open fingertip sits 9° off the camera's axis, 0.15 m out, so a part aimed at the middle of the picture was half hidden. Now the part is held 12° off-axis on the side away from the gripper, from 0.30 m (was centred, 0.25 m). If you meant a more oblique view of the part itself, say so.
 - 2026-09-30 — **Parts "reading wide and low"**: not fixed at the root — the grip check being off only stops it vetoing a pick, and the grip depth still hangs from the *measured* top. Finding the bias needs frames of a part of known size from the cell (`POST /api/snapshot` at the picture point and at the closer look); suspects are depth smear at the top face's edges and the half-sample pad in `volume._measure`. With the size known, should the grip use the *nominal* height above the table instead?
 - 2026-09-30 — The P watermark is gone from the 3D Pick node's picture (it stays on the Installation's feed and the toolbar popup). OK?
