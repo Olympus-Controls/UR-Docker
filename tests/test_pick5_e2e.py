@@ -108,7 +108,9 @@ class Controller:
                 self.flange = lk[4:10]
         r = self.ask(f"REFINE {_pose(self.flange)} {c}{tok} lean=0")
         assert r[0] == 1, self.log
-        self.flange = pose_trans(r[4:10], [0.0, 0.0, 0.015, 0.0, 0.0, 0.0])  # down to the grip, and it ends there
+        self.flange = pose_trans(
+            r[4:10], [0.0, 0.0, 0.015, 0.0, 0.0, 0.0]
+        )  # down to the grip, and it ends there
         self.captured.append(f"rs_e2e/{marker}= True")
         if marker == "first":
             self.captured.append(f"rs_e2e/loc= {int(r[10])}")
