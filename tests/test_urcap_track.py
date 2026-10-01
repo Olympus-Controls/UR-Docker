@@ -899,3 +899,33 @@ def test_the_urcap_is_installed_only_after_the_simulator_is_ready(monkeypatch, t
         e2e.install_checks(checks, tmp_path / "x.urcapx", 8000, 30, ready=ready)
     assert events.index("install") > events.index("ready?3"), events
     assert any(c["check"] == "simulator ready" and c["ok"] for c in checks.items)
+
+
+def test_e2e_waits_for_the_whole_web_archive_not_for_one_file():
+    """After an install urservice writes an nginx conf and sends SIGHUP: for a moment new
+    workers serve the archive while old ones still answer 404, so one file answering 200
+    proves nothing (measured 2026-10-01: pickscript.js 200 and contribution.json 404 in the
+    same pass; CI runs 36808722794 and 36858054704 failed on a 404 right after a 200).
+    Ready = every file served exactly as packaged."""
+    import e2e
+
+    packed = {"contribution.json": b"{}", "main.js": b"m", "pickscript.js": b"p"}
+    files = list(packed)
+    old_worker_hits = {"contribution.json": [False, True], "main.js": [True], "pickscript.js": [False, False]}
+
+    def fetch(url):
+        rel = url.rsplit("/", 1)[1]
+        stale = old_worker_hits[rel]
+        if stale and stale.pop(0):
+            return 404, b"<html>404 Not Found</html>"
+        return 200, packed[rel]
+
+    assert e2e.archive_mismatches(fetch, "http://sim/a/b/c/", packed, files) == ["main.js: HTTP 404"]
+    # the first pass above used up main.js's old worker; contribution.json's is next
+    assert e2e.archive_mismatches(fetch, "http://sim/a/b/c/", packed, files) == [
+        "contribution.json: HTTP 404"
+    ]
+    assert e2e.archive_mismatches(fetch, "http://sim/a/b/c/", packed, files) == []
+    # a file that is served, but not the packaged bytes, is a mismatch too - and is named
+    wrong = e2e.archive_mismatches(lambda url: (200, b"other"), "http://sim/a/b/c/", packed, ["main.js"])
+    assert wrong == ["main.js: 5 bytes, not the 1 packaged"]

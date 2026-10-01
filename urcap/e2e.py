@@ -278,8 +278,8 @@ def install_checks(
         "listed",
         f"{VENDOR}/{URCAP_ID} {listed[0].get('version') if listed else '—'}",
     )
-    # nginx picks the web archive up a few seconds after the 201; then it must
-    # serve exactly the bytes that were packaged.
+    # nginx picks the web archive up after the 201 (a config reload, see archive_mismatches);
+    # then it must serve exactly the bytes that were packaged.
     with tarfile.open(package, "r:gz") as tar:
         packed = {
             m.name.removeprefix(f"{ARCHIVE}/"): tar.extractfile(m).read()
@@ -299,12 +299,37 @@ def install_checks(
         files += [prog["presenterURI"], prog["behaviorURI"], prog["iconURI"]]
     files = list(dict.fromkeys(files))
     url = f"{base}/{VENDOR}/{URCAP_ID}/{ARCHIVE}/"
-    wait_for("the web archive to be served", lambda: http(url + files[0])[0] == 200, 120, 2)
-    for rel in files:
-        status, body = http(url + rel)
-        checks.expect(
-            status == 200 and body == packed.get(rel), f"serves {rel}", f"HTTP {status}, as packaged"
+    try:
+        wait_for(
+            "the whole web archive to be served as packaged",
+            lambda: not archive_mismatches(http, url, packed, files),
+            120,
+            0.5,
         )
+    except E2EError:
+        pass  # the pass below names the files that never came up
+    wrong = dict(m.split(": ", 1) for m in archive_mismatches(http, url, packed, files))
+    for rel in files:
+        checks.expect(rel not in wrong, f"serves {rel}", wrong.get(rel, "as packaged"))
+
+
+def archive_mismatches(fetch, url: str, packed: dict[str, bytes], files: list[str]) -> list[str]:
+    """One pass over the web archive: ``"<file>: <what is wrong>"`` for every file not served
+    exactly as packaged (empty = the archive is up).
+
+    This, not "one file answers 200", is the simulator's ready signal for an install: urservice
+    writes an nginx conf for the archive and sends nginx SIGHUP, and until the old workers have
+    gone a request lands on either generation — the new one serves the file, the old one still
+    answers 404 (measured 2026-10-01: ``pickscript.js`` 200 and ``contribution.json`` 404 in the
+    same pass; CI failed on a 404 right after a 200, runs 36808722794 and 36858054704)."""
+    out = []
+    for rel in files:
+        status, body = fetch(url + rel)
+        if status != 200:
+            out.append(f"{rel}: HTTP {status}")
+        elif body != packed.get(rel):
+            out.append(f"{rel}: {len(body)} bytes, not the {len(packed.get(rel, b''))} packaged")
+    return out
 
 
 RUNTIME_PROBE = """async (tag) => {

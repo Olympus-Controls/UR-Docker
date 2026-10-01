@@ -23,7 +23,6 @@
 
 - 2026-09-26 — `perceptronics calibrate` (orbit hand-eye) is built and tested on the fake cell; **run it once on the UR3e** (`--dry-run` first), then delete `scripts/pilot/orbit_cal*.py` + `wiggle.py`. `record.py`/`show.py`/`assemble.py` stay as the timelapse tooling. `place.py`'s lesson carries: a place spot needs the same clearance check as a pick.
 - 2026-09-28 — **Pick node teach screen: redesign to ≤ 3 simple stages** with minimal clicks and input and plenty of visual feedback (Nick's operator-UI rule: minimal clicks and input, at most 3 simple stages, plenty of visual feedback). 0.4.0's seven-button part-size row is the opposite; don't ship it as is.
-- 2026-10-01 — **URCap e2e flake, second kind** (`urcap/e2e.py` `install_checks`): after the install is accepted and listed, `contribution.json` answers 200 (the wait passes) and then **404** on the very next fetch — "serves contribution.json — HTTP 404, as packaged". Seen twice in a day on untouched URCap code: PolyScope X 10.9.0 matrix leg 2026-09-30 (run 36808722794, green on re-run) and `e2e` on PR #34 (run 36858054704). The bootstrapper had finished both times, so the simulator's nginx drops the archive briefly after first serving it. Find what urservice reports when a web archive is fully deployed and wait on that (no timer, no retry).
 
 ## Open questions for Nick
 
