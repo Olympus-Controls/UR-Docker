@@ -1,39 +1,23 @@
-# PI.md — bringing up the Raspberry Pi 4 pick PC
+# PI.md — bringing up the Raspberry Pi 5 test board
 
-The Pi arrives **Thursday 2026-10-01**. Part 1 is for Nick (hands on the board, ~20 min).
-Part 2 is for the Claude session (Fable) that finishes the job over SSH from the Mac
-Studio. The reference for what the installer does is `deploy/pi/README.md`; the procedure
-is the `deploy-pick-pc` skill. This page is the first-run plan on top of them.
+The Pi 5 arrives **Thursday 2026-10-01**. It is the **test board** for the pick PC
+(`deploy/pi/`); the kit board stays the Pi 4 in `hardware/BOM.md`, with an industrial Pi 4
+a possibility later. Part 1 is for Nick (hands on the board, ~15 min). Part 2 is for the
+Claude session (Fable) that does the rest over SSH from the Mac Studio.
 
-**Nothing in `deploy/pi/` has run on a board yet** (written 2026-09-28, CI-checked only).
-Thursday is the first run: expect to find things, and write them down (Part 2, step 7).
+The reference for what the installer does is `deploy/pi/README.md`; the procedure is the
+`deploy-pick-pc` skill. **Nothing in `deploy/pi/` has run on a board yet** (written
+2026-09-28, CI-checked only) — Thursday is the first run, so the job is as much to record
+what happens as to get it working.
 
-## What the box is (Nick, 2026-09-30)
+Keeping it simple (Nick, 2026-09-30): a typical Raspberry Pi OS install, the existing
+deploy script, a static address set by hand. No custom image, no setup hotspot — those are
+under *Later*.
 
-- **Debian**, not Raspberry Pi OS: open and non-proprietary as far as a Pi allows.
-- **Offline and hardwired.** In service the only link is one Ethernet cable to the robot.
-  No Wi-Fi client, no internet, ever.
-- **The wired address is the commissioner's choice** — DHCP or static — set from a **web
-  page reached over a hotspot the box raises during commissioning only**. No SSH, no
-  keyboard, no editing files.
-
-Three things follow, and they shape Thursday:
-
-1. **The commissioning hotspot + setup page does not exist yet.** It is specified below
-   (*The commissioning interface*) and built in Part 2, on the board, because an access
-   point cannot be tested anywhere else.
-2. **The first install still needs internet once** (apt, and the librealsense build
-   fetches from GitHub and sqlite.org). On Thursday that is the Ethernet port on the office
-   LAN (`10.0.0.0/24`, DHCP); afterwards the cable moves to the robot and stays there. A
-   shipped unit gets a pre-built image instead — an open item, not Thursday's job.
-3. **"Open" has a floor on a Pi.** No Pi boots without Broadcom's closed boot firmware
-   (`raspi-firmware`, Debian `non-free-firmware`), and the on-board Wi-Fi the hotspot uses
-   needs the `firmware-brcm80211` blob. Everything above the firmware is Debian main.
-
-| | Thursday bench | In service |
+| | Thursday (bench) | On the cell |
 | --- | --- | --- |
-| Ethernet (`eth0`) | office LAN, DHCP, internet for the build, SSH from the Mac Studio (`10.0.0.16`) | robot / cell switch, the address the commissioner set (suggested `192.168.3.20/24`) |
-| Wi-Fi (`wlan0`) | off, except while testing the hotspot | **off** (radio blocked) unless commissioning is re-armed |
+| Ethernet | office LAN `10.0.0.0/24`, DHCP: internet for the build, SSH from the Mac Studio (`10.0.0.16`) | cell switch, static `192.168.3.20/24`, offline |
+| Wi-Fi | not configured | not configured |
 | D435 | blue USB 3 port | same |
 | UR3e (`192.168.3.3`) | unplugged since 2026-09-29: the doctor's `robot.*` lines fail, expected | on |
 
@@ -44,147 +28,105 @@ Studio's cell address.
 
 ## Part 1 — Nick, by hand
 
-### What you need on the bench
+### On the bench
 
-- The Pi 4 (4 GB), case/heatsinks, a microSD (≥ 16 GB) and a card reader.
-- A **5.1 V / 3 A USB-C supply**. The D435 draws from the Pi's USB budget (1.2 A total on
-  a 3 A supply); a phone charger is the first suspect if the camera drops out.
+- The Pi 5, its **active cooler** (the librealsense compile runs all cores for a long
+  time), a microSD ≥ 32 GB and a reader.
+- **The 27 W (5.1 V / 5 A) USB-C supply.** On a lesser supply a Pi 5 caps all USB ports at
+  600 mA total, and the D435 is powered from that budget.
 - The D435 and a short **USB 3** C-to-A cable, no hub.
-- An Ethernet cable to the **office** switch/router (the one the Mac Studio's `10.0.0.16`
-  is on).
+- An Ethernet cable to the **office** network.
 - No monitor or keyboard.
 
-### 1. Flash Debian
+### 1. Flash
 
-Image: Debian's own Raspberry Pi build, **bookworm for the Pi 4** —
-<https://raspi.debian.net/tested/20231109_raspi_4_bookworm.img.xz> (checksum file beside
-it on <https://raspi.debian.net/tested-images/>).
+Raspberry Pi Imager → device **Raspberry Pi 5** → **Raspberry Pi OS (other) → Raspberry Pi
+OS Lite (64-bit)** → the card. In the customisation step:
 
-Why bookworm: Debian's Pi images stopped being rebuilt in 2023–24. The bookworm one was a
-stable release when built, so bringing it current is an ordinary `apt full-upgrade`
-(Part 2 does it). The trixie image on the same page is a 2023 snapshot of *testing*; don't
-use it. (Checked 2026-09-30.)
+| Setting | Value |
+| --- | --- |
+| Hostname | `pickpc` |
+| Username / password | `nick` / anything (console login only) |
+| Wireless LAN | leave empty |
+| SSH | enabled, **public-key only**, key = the Mac Studio's |
 
-Either write it with Raspberry Pi Imager (**Use custom** → the `.img.xz`; its OS
-customisation does not apply to a custom image, skip it), or from a terminal on the Mac:
+The key is the Mac Studio's, because the deploy runs from there:
 
-    diskutil list                                   # find the card: /dev/diskN, check the size
-    diskutil unmountDisk /dev/diskN
-    xzcat 20231109_raspi_4_bookworm.img.xz | sudo dd of=/dev/rdiskN bs=4m
-    
-`dd` to the wrong disk erases it. Check `N` twice.
+    cat ~/.ssh/id_ed25519.pub        # on the Mac Studio; fingerprint SHA256:Xz1K1SaS…nzzDI
 
-### 2. Put the SSH key on the card
+### 2. Assemble and boot
 
-Re-insert the card. macOS mounts its small FAT partition; open **`sysconf.txt`** on it and
-set two lines:
+1. Cooler on, card in, **D435 into a blue (USB 3) port**, **Ethernet to the office
+   network**.
+2. Power on. First boot resizes the card and reboots: give it two minutes.
 
-    root_authorized_key=<the whole line printed by: cat ~/.ssh/id_ed25519.pub on the Mac Studio>
-    hostname=pickpc
+### 3. Check you can get in (from the Mac Studio)
 
-The key must be the **Mac Studio's** (fingerprint `SHA256:Xz1K1SaS…nzzDI`): the deploy runs
-from there. Leave `root_pw` unset — root then has no password and can log in only with
-that key over SSH (or at a physical console). Eject.
+    ssh nick@pickpc.local 'hostname -I; uname -m; sudo -n true && echo sudo-ok'
 
-### 3. Assemble and boot
+Expect a `10.0.0.x` address, `aarch64`, `sudo-ok`.
 
-1. Card in, heatsinks/case on, **D435 into a blue (USB 3) port**.
-2. **Ethernet to the office network.**
-3. Power on; give it two minutes (the first boot grows the filesystem).
+- Name doesn't resolve: the router's lease list, or
+  `ping -c1 10.0.0.255 >/dev/null; arp -a | grep -i -E '2c:cf:67|d8:3a:dd|88:a2:9e|dc:a6:32|e4:5f:01'`.
+- No `sudo-ok` (sudo wants a password): once, on the Pi —
+  `echo "nick ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/010-nick-nopasswd && sudo chmod 0440 /etc/sudoers.d/010-nick-nopasswd && sudo visudo -c`
+- Host-key warning after a re-flash: `ssh-keygen -R pickpc.local` and `-R <ip>`.
 
-### 4. Check you can get in (from the Mac Studio)
-
-The image takes a DHCP address on Ethernet. Find it on the router's lease list (`pickpc`),
-or:
-
-    ping -c1 10.0.0.255 >/dev/null; arp -a | grep -i -E 'dc:a6:32|e4:5f:01|d8:3a:dd|2c:cf:67|28:cd:c1'
-
-then
-
-    ssh root@10.0.0.___ 'uname -m; . /etc/os-release; echo $VERSION_CODENAME'
-
-Expect `aarch64` and `bookworm`. A host-key warning after a re-flash:
-`ssh-keygen -R 10.0.0.___`.
-
-### 5. Hand over
+### 4. Hand over
 
     Pi address on the office LAN: 10.0.0.___
 
-Prompt for Fable: *"The Pi is up at root@10.0.0.___ — follow PI.md part 2."*
+Prompt for Fable: *"The Pi 5 is up at nick@10.0.0.___ — follow PI.md part 2."*
 
-That is all of Part 1. Don't upgrade, install or configure anything on it — Part 2 does
-that and records what it saw. You come back at Part 2 step 5, with a phone.
+Don't upgrade, install or configure anything on it first.
 
 ---
 
 ## Part 2 — Fable, over SSH
 
-You are on the Mac Studio in this checkout. Load the **`deploy-pick-pc`** skill; the steps
-below are the first-run specifics it doesn't know. Use the Pi's **IP address**, never a
-`.local` name.
-
-Order matters: **get the existing deploy green first (steps 1–3), then build the
-commissioning interface (step 4).** Don't start the new feature on a box whose baseline
-you haven't seen work.
+You are on the Mac Studio in this checkout. Load the **`deploy-pick-pc`** skill and follow
+it; the steps below are the first-run specifics it doesn't know. Use the Pi's **IP
+address**, never `pickpc.local`: the installer's firewall drops inbound mDNS, so the name
+stops resolving when the deploy finishes.
 
 ### 0. Before touching the Pi
 
-- Session-start audit (`git status`, branch, worktrees, reflog). Fresh branch off
-  `fork/dev`; fixes to `deploy/pi/` are expected, and step 4 is a feature branch of its own.
+- Session-start audit. Nick edits `TODO.md` by hand in this tree — an `M TODO.md` you
+  didn't make is his; leave it, stage by path.
+- Fresh branch off `fork/dev`; fixes to `deploy/pi/` are expected.
 - `env -u UR_CELL uv run pytest tests/test_deploy_pi.py -q` green before you start.
 
-### 1. Prepare the base system (as root)
+### 1. Preflight
 
-The Debian image is minimal: root only, probably no `sudo`, and two years stale.
-`scripts/deploy-pi.sh` calls `sudo -n` on the PC, so it needs an admin user first.
+The skill's table, plus:
 
-    ssh root@<ip> 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y full-upgrade && apt-get -y install sudo'
-    ssh root@<ip> 'adduser --disabled-password --gecos "" nick && adduser nick sudo \
-        && install -d -m 700 -o nick -g nick /home/nick/.ssh \
-        && install -m 600 -o nick -g nick /root/.ssh/authorized_keys /home/nick/.ssh/authorized_keys \
-        && echo "nick ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/010-nick-nopasswd \
-        && chmod 0440 /etc/sudoers.d/010-nick-nopasswd && visudo -c'
-    ssh root@<ip> reboot          # onto the upgraded kernel/firmware; wait, then:
-    ssh nick@<ip> 'sudo -n true && echo sudo-ok'
+    ssh nick@<ip> '. /etc/os-release; echo $ID $VERSION_CODENAME; uname -r; python3 -V; systemctl --version | head -1'
+    ssh nick@<ip> 'cat /proc/device-tree/model; free -m; df -h / /var/tmp; nproc'
+    ssh nick@<ip> 'vcgencmd get_throttled; vcgencmd measure_temp; vcgencmd get_config usb_max_current_enable'
+    ssh nick@<ip> 'nmcli -t -f NAME,TYPE,DEVICE con show; ip -br addr; ip route'
 
-Check where the image put root's key before copying it (`/root/.ssh/authorized_keys` is the
-expectation, not a verified fact). From here on use `nick@<ip>`.
-
-Then look, don't assume — the image's documentation does not say what manages the network:
-
-    ssh nick@<ip> '. /etc/os-release; echo $VERSION_CODENAME; python3 -V; systemctl --version | head -1'
-    ssh nick@<ip> 'ls /etc/network/interfaces.d /etc/systemd/network 2>/dev/null; systemctl is-active networking systemd-networkd NetworkManager'
-    ssh nick@<ip> 'ip -br link; ls /sys/class/net; dpkg -l | grep -E "firmware-brcm|raspi-firmware|wpasupplicant|hostapd|rfkill"'
-    ssh nick@<ip> 'cat /proc/device-tree/model; free -m; df -h / /var/tmp'
-    ssh nick@<ip> 'cat /sys/class/thermal/thermal_zone0/temp; dmesg | grep -i -E "voltage|thrott" | tail'
-
-- Which of ifupdown / systemd-networkd owns `eth0` decides step 4's backend.
-- `wlan0` present means the Wi-Fi blob is installed; absent means `firmware-brcm80211`
-  (`non-free-firmware`) is needed for the hotspot.
-- `vcgencmd` is a Raspberry Pi OS tool and won't be there; under-voltage shows in `dmesg`.
-  Any under-voltage line: stop and tell Nick before the long compile.
-- bookworm's systemd 252 logs `Unknown key` for the unit's `RestartSteps=` /
-  `RestartMaxDelaySec=` and restarts every 5 s. Known, harmless; note it.
-
-Then the skill's preflight table (D435 present, USB 3 link `5000`, internet, disk).
+- Record the codename and systemd version. The image published 2026-09-15 is trixie; on
+  trixie (systemd ≥ 254) the unit's restart back-off works.
+- `get_throttled` must be `0x0`. `usb_max_current_enable=0` means the supply did not
+  negotiate 5 A and USB is capped at 600 mA: tell Nick before blaming the camera.
+- D435 link speed (the skill's sysfs one-liner): `5000` = USB 3; `480` = wrong port or
+  cable.
 
 ### 2. Deploy
 
     scripts/deploy-pi.sh nick@<ip> --cell ur3 --robot-host 192.168.3.3
 
-- **Run it in the background** with the 2 h limit and poll; the librealsense build has
-  never been timed on a Pi 4. `install.sh` sizes jobs as RAM / 1536 MiB (expect `-j2`).
-  Watch: `ssh nick@<ip> 'tail -n 3 /var/tmp/perceptronics-build/cmake-build.log'`.
+- **Background, 2 h limit, poll.** The build has never been timed on a board. `install.sh`
+  sizes jobs as RAM / 1536 MiB. Watch:
+  `ssh nick@<ip> 'tail -n 3 /var/tmp/perceptronics-build/cmake-build.log; vcgencmd measure_temp'`.
 - A killed run is safe to repeat but **starts the build from scratch** (`install.sh`
-  removes the build tree before cloning). If it won't fit in 2 h, run the installer on the
-  Pi under `systemd-run` so it survives the SSH session. Two failed attempts → stop and
-  describe.
+  removes the build tree before cloning). Two failed attempts → stop and describe.
 - `--robot-host 192.168.3.3` makes the firewall admit :7621/:7622 from `192.168.3.0/24`
   only, so on the office LAN the cockpit is reached through a tunnel (step 3). SSH stays
-  open from anywhere.
+  open.
 - Note the wall-clock build time from the `[install HH:MM:SS]` lines.
 
-### 3. Verify the baseline
+### 3. Verify
 
     scripts/deploy-pi.sh nick@<ip> --doctor-only
     ssh nick@<ip> 'systemctl is-active perceptronics-cockpit; journalctl -u perceptronics-cockpit -b -n 40 --no-pager'
@@ -196,7 +138,7 @@ cockpit on the Mac holds :7621.)
 
 Good, with the robot unplugged: `sdk` ok at `/opt/librealsense/lib/librealsense2.so`;
 `camera … usb 3.x`; `cockpit … fps ~30` with `seq` advancing between two reads. The
-`robot.*` lines **fail** — report them verbatim as expected. `handeye` reads `env:` (the
+`robot.*` lines **fail** — expected, report them verbatim. `handeye` reads `env:` (the
 2026-09-27 solve from `ur3.env`); leave it.
 
 Each of the README's *Open items* gets a yes/no from this run:
@@ -204,99 +146,69 @@ Each of the README's *Open items* gets a yes/no from this run:
 | Open item | How to answer it |
 | --- | --- |
 | librealsense builds on arm64 Debian outside Docker | the deploy finished; note the minutes |
-| `nft -c` accepts the rendered firewall | `install.sh` runs it; `nft list table` shows the table |
+| `nft -c` accepts the rendered firewall | `nft list table` shows the table |
 | the unit is valid | `systemd-analyze verify /etc/systemd/system/perceptronics-cockpit.service` |
 | the **hardened, non-root** unit opens the D435 | frames advancing. If access fails while `sudo perceptronics-doctor --stream` (service stopped) works, look at `DeviceAllow=` / `DevicePolicy=` |
 | hardening score | `systemd-analyze security perceptronics-cockpit` |
-| the D435 holds on the Pi 4's USB budget | 10 min streaming: `seq` advancing, no under-voltage in `dmesg`, no `Frame didn't arrive` in the journal |
-| per-frame cost on a Pi 4 (`hardware/BOM.md`: unmeasured) | `curl -s -o /dev/null -w '%{time_total}\n' http://127.0.0.1:7621/api/color.png` ×10; `top` for the cockpit process |
+| the D435 holds on the Pi 5's USB budget | 10 min streaming: `seq` advancing, `get_throttled` still `0x0`, no `Frame didn't arrive` in the journal |
+| per-frame cost | `curl -s -o /dev/null -w '%{time_total}\n' http://127.0.0.1:7621/api/color.png` ×10; `top` for the cockpit process |
 
-### 4. Build the commissioning interface
+### 4. The cell address (when Nick is ready to move the cable)
 
-New work, its own branch and PR (draft: it touches `deploy/`, the firewall and a
-root-privileged path). Spec in the next section. Rules for building it:
+Set it last: this cuts the office-LAN session, and the Pi is only reachable again once
+its cable is on the cell switch and the Mac Studio's cell interface (`192.168.3.10`) is up.
 
-- Tests first for everything that is pure logic (address validation, rendering the network
-  file, the state machine) — adversarial inputs, since this is a web form that writes
-  system configuration as root.
-- New packages on the PC (an access-point daemon) go through the dependency review in the
-  PR description: what, why, alternatives, footprint.
-- You are connected over **Ethernet**, and the feature reconfigures Ethernet. Until Nick is
-  at the bench, exercise the apply path against a **dry-run / rendered file**, not the live
-  interface. The first live apply is step 5, with Nick's phone on the hotspot as the way
-  back in.
+    ssh nick@<ip> 'nmcli -t -f NAME,TYPE,DEVICE con show'      # the ethernet connection's name
+    ssh nick@<ip> 'sudo nmcli con mod "<name>" ipv4.method manual ipv4.addresses 192.168.3.20/24 && sudo reboot'
 
-### 5. Commission it for real (Nick, with a phone)
+No gateway: the cell network has no route out, and in service the box is offline. Then
+Nick moves the cable, and:
 
-1. Fable arms commissioning; Nick joins the hotspot and opens the setup page.
-2. Nick sets **Static `192.168.3.20/24`, no gateway**, robot `192.168.3.3`, and applies.
-   The office-LAN SSH session dies here — that is the feature working.
-3. Nick moves the Ethernet cable to the cell switch. From the Mac Studio (its cell
-   interface up, `192.168.3.10`): `ssh nick@192.168.3.20 'ip -br addr; sudo perceptronics-doctor'`.
-4. Nick presses **Finish**; confirm the hotspot is gone (`rfkill list`, no SSID in the
-   air) and stays gone across a reboot.
-5. Also try the unhappy paths once: a garbage address in the form, DHCP with no server on
-   the wire, power cut mid-apply.
+    ssh nick@192.168.3.20 'ip -br addr; sudo perceptronics-doctor'
 
-If step 4 isn't ready when Nick wants the box on the cell, set the address by hand in
-whatever step 1 found owning `eth0`, and say plainly that the hotspot is still owed.
+Check the address survived the reboot. If the Pi doesn't come back on `.20`, it is a
+10-minute re-flash, or a monitor and keyboard and `nmcli con mod "<name>" ipv4.method auto`.
+To bring it back to the office LAN for an update that needs internet, the same command
+over SSH from the cell side.
 
-### 6. If something breaks
+### 5. If something breaks
 
-- Fix it **in the repo**, regression test first, commit, redeploy. Never hand-edit the
-  unit or the firewall on the Pi.
+- Fix it **in the repo** (`deploy/pi/`, `scripts/deploy-pi.sh`), regression test first in
+  `tests/test_deploy_pi.py`, commit, redeploy. Never hand-edit the unit or the firewall on
+  the Pi.
 - Build failed: `/var/tmp/perceptronics-build/cmake-{configure,build}.log`. `Killed` /
-  `internal compiler error` = memory.
-- Locked out (bad network apply, no hotspot): the Pi is expendable — pull the card and
-  re-flash, 10 minutes of Part 1. Nothing in this runbook sends robot motion, and nothing
-  should.
+  `internal compiler error` = memory; a thermal crawl shows in `measure_temp`.
+- The Pi is expendable. The UR3e's controller is not — nothing in this runbook sends
+  motion, and nothing should.
 
-### 7. Write it down, then PR
+### 6. Write it down, then PR
 
-- `deploy/pi/README.md`: Debian image + `sysconf.txt` first boot replaces the Imager
-  paragraph; each verified *Open item* moves out with its date and number; the
-  commissioning section; `192.168.3.10` examples → `.20`.
-- `.claude/skills/deploy-pick-pc/SKILL.md`: the root-first bootstrap, commissioning.
-- `SETUP.md` §2 and §4: the Pi's real address, OS, "first run 2026-10-0x".
-- `hardware/BOM.md`: the Pi 4 timing line under "not verified".
-- `TODO.md` → *Open questions for Nick*: the ones under *Open* below, plus anything new.
+- `deploy/pi/README.md`: each verified *Open item* moves out with its date and number
+  (build minutes, OS codename, USB link, frame timings); the `192.168.3.10` examples →
+  `.20`; drop the gateway from the static-address example.
+- `SETUP.md` §2 and §4: the Pi 5 test board, its address, "first run 2026-10-0x".
+- `TODO.md`: close the pick-PC OS question with the codename you saw.
 - Memory: one entry for the Pi (address, user, what was verified).
+- Draft PR into `dev` if anything under `deploy/` or `scripts/` changed; docs-only can
+  auto-merge.
 
 ---
 
-## The commissioning interface (spec — to build in Part 2 step 4)
+## Later (not Thursday, not designed yet)
 
-**What the commissioner sees.** Power the box on next to the robot. A Wi-Fi network
-`perceptronics-setup-XXXX` appears; join it with a phone, open `http://10.42.0.1`. One
-page: the wired link's state, **DHCP / Static** (address, prefix, optional gateway), the
-robot's address, the camera's status, **Apply**, **Finish**. Finish turns the radio off.
+Nick's direction for the shipped product, 2026-09-30. Recorded so it isn't lost; none of it
+is built, and it is far off.
 
-| | Decision | Why |
-| --- | --- | --- |
-| When the hotspot is up | Only while the box is **uncommissioned** (fresh install) or **re-armed**. Finish, or a timeout (30 min with no client), ends it and blocks the radio (`rfkill`), persisted across reboots. | "During commissioning only." A box in service has no radio on. |
-| Re-arming | `sudo perceptronics-setup arm` over the wired link, and a button in the cockpit page (wired side). A recovery path with **no** working wired link is needed too — see *Open*. | The usual reason to re-commission is that the wired address is wrong, which is exactly when SSH is gone. |
-| Wi-Fi security | WPA2, passphrase unique per unit (generated at install, printed by the installer and `perceptronics-setup show` for the label). Never an open network. | The page changes system network config; an open AP would hand that to anyone in the building. |
-| What the page can change | `eth0` DHCP/static, and `UR_HOST` (which also sets the firewall's cell subnet). Nothing else. | Smallest root-privileged surface. Tool length, hand-eye etc. stay in the cockpit / `cell.env`. |
-| Privilege split | The web process runs unprivileged; a small root helper takes a validated request (strict IPv4/prefix parsing with `ipaddress`, no shell interpolation) and writes the network file. | A web form must not be a root shell. |
-| Apply is safe by construction | Changes are made to `eth0` while the phone is on `wlan0`, so a wrong address never cuts off the page. The page shows the result (link, address, robot ping, Dashboard banner) before Finish is offered. | No lock-out during commissioning. |
-| Network backend | Whatever owns `eth0` on the Debian image (step 1 finds out); one backend, not both. | Don't add NetworkManager to a minimal box to set one address. |
-| Access point | `hostapd` + a DHCP server for the phone. Prefer systemd-networkd's built-in `DHCPServer=` over adding `dnsmasq` if networkd is what the image uses. Verify on the board; don't ship guessed configs. | Fewest new packages. |
-| Firewall | `nftables.conf` gains: DHCP + the setup port, **on `wlan0` only**. No forwarding between `wlan0` and `eth0` (the forward chain already drops). | The hotspot is a door to the setup page, not to the robot network. |
-| Code | Stdlib only (`http.server`), like the cockpit. A `perceptronics setup` subcommand + a `perceptronics-setup.service`, installed by `install.sh`. | Zero-dependency runtime stays zero. |
-| Tests | Form parsing and file rendering under `hypothesis`; auth-free endpoints reject everything but the two fields; the helper refuses anything it didn't validate itself; log lines carry no passphrase and no raw form input. | Repo testing rules. |
-
-**Open** (Nick's calls; defaults above are what gets built otherwise):
-
-1. **Re-arming with no wired access** — power-cycle three times within a minute? A jumper
-   across two GPIO pins at boot? A file on a USB stick? Pick one; the jumper is the least
-   likely to trigger by accident.
-2. **Before commissioning, what does `eth0` do?** Proposed: DHCP, falling back to nothing —
-   the hotspot is the way in.
-3. **Shipped units and "always offline":** the first install needs internet once. A
-   pre-built SD image (flash and go) or an offline bundle (`.deb`s + a built
-   `/opt/librealsense-2.58.4`) — which? Extends the 2026-09-28 question in `TODO.md`.
-4. **bookworm → trixie:** stay on bookworm (LTS, restart back-off ignored), or upgrade in
-   place once the baseline works?
+- **Offline at runtime, hardwired to the robot.** Internet only during setup.
+- **A pre-built SD image**: flash, boot, commission. Nothing compiles or downloads on a
+  shipped unit.
+- **SSH off** on shipped units.
+- **Commissioning over a hotspot**: the box raises a Wi-Fi network during commissioning
+  only, with a web page to set the wired address (DHCP or static). Stuck → power-cycle
+  brings it back.
+- **Board**: possibly an industrial Pi 4.
+- **librealsense**: whichever build reduces dependencies and increases portability
+  (`TODO.md`).
 
 ### Not in this session (needs the robot and Nick at the pendant)
 
