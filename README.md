@@ -8,7 +8,7 @@ way: `--host` is the only difference.
 ## Quick start
 
 ```bash
-git clone https://github.com/Olympus-Controls/UR-utils && cd UR-utils
+git clone https://github.com/JimothyJohn/perceptronics && cd perceptronics
 docker compose up -d          # the simulator; pendant at http://localhost:6080/vnc.html
 python3 -m urctl bring-up     # power on + release brakes (Python 3.10+; nothing to install)
 python3 -m urctl state        # robot state as JSON
