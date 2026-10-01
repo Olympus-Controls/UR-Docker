@@ -1,6 +1,6 @@
 services:
   ursim:
-    image: universalrobots/ursim_e-series:5.26.0
+    image: universalrobots/ursim_e-series:5.26.1
     stdin_open: true
     tty: true
     ports:
