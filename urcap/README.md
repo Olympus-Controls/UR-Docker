@@ -131,7 +131,7 @@ a base-frame point. The robot silently ignores the pose query, and the node show
 Get this repository and its environment:
 
 ```bash
-git clone https://github.com/Olympus-Controls/UR-utils.git && cd UR-utils
+git clone https://github.com/JimothyJohn/perceptronics.git && cd perceptronics
 python3 -m pip install -e ".[vision]"   # optional: numpy/OpenCV for the classic-CV backend; the cockpit itself needs nothing installed
 ```
 
