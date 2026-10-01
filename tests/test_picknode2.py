@@ -394,3 +394,159 @@ def test_check_approach_gets_the_approach_in_polyscopes_active_tcp():
     tcp = first["polyscope_approach_pose"]
     assert tcp[2] == pytest.approx(first["centre"][2] + TIP - 0.10 + 0.025, abs=1e-3)
     assert tcp[:2] == pytest.approx(first["centre"][:2], abs=1e-3)
+
+
+# -- 0.7.0 (2026-09-30): the arm's kinematics decide reach, the grip check can be off, cylinders --
+
+FAR = [0.55, 0.0, 0.12, math.pi, 0.0, 0.0]  # a picture point over the far end of the table
+ONE = [Box(0.35, -0.03, 0.05, 0.035, 0.03)]
+
+
+def test_a_part_the_arm_has_no_joint_solution_for_is_out_of_reach_and_a_bigger_arm_picks_it():
+    part = [Box(0.70, 0.0, 0.05, 0.035, 0.03)]
+    ur3 = ask(planner(Frames(part, FAR)), "FIND", f"node=k loc=1 locs=1 {OPTS} arm=UR3", flange=FAR)
+    assert ur3["status"] == -10
+    ur10 = ask(planner(Frames(part, FAR)), "FIND", f"node=k loc=1 locs=1 {OPTS} arm=UR10", flange=FAR)
+    assert ur10["status"] == 1 and ur10["centre"][0] == pytest.approx(0.70, abs=0.004)
+
+
+def test_no_ring_is_drawn_round_a_part_the_arm_reaches():
+    """0.6.0 sent reach=<base + 150 mm>,<rated reach - 150 mm>: 0.35 m for a UR3e, which left
+    out every part past it. The same part, the arm named instead: its kinematics say yes."""
+    part = [Box(0.42, -0.03, 0.05, 0.035, 0.03)]
+    ring = ask(planner(Frames(part)), "FIND", f"node=r loc=1 locs=1 {OPTS} reach=0.214,0.350")
+    assert ring["status"] == -10
+    arm = ask(planner(Frames(part)), "FIND", f"node=r loc=1 locs=1 {OPTS} arm=UR3")
+    assert arm["status"] == 1
+
+
+def test_the_base_keeps_its_keep_out_radius():
+    near = [0.20, 0.0, 0.12, math.pi, 0.0, 0.0]
+    part = [Box(0.18, 0.0, 0.05, 0.035, 0.03)]  # 180 mm out: inside the UR3e's 64 + 150 mm
+    assert ask(planner(Frames(part, near)), "FIND", f"node=b loc=1 locs=1 {OPTS} arm=UR3e", flange=near)[
+        "status"
+    ] == (-2)
+
+
+@pytest.mark.parametrize("arm", ["UR7e", "UR30", "Fanuc"])
+def test_an_arm_nobody_here_has_kinematics_for_is_left_to_the_controller(arm):
+    part = [Box(0.70, 0.0, 0.05, 0.035, 0.03)]
+    got = ask(planner(Frames(part, FAR)), "FIND", f"node=u loc=1 locs=1 {OPTS} arm={arm}", flange=FAR)
+    assert got["status"] == 1
+
+
+def test_without_the_grip_check_a_part_that_measures_too_wide_for_the_fingers_is_still_picked():
+    """Nick, 2026-09-30: the camera reads the part wide, which made it look ungrippable — the
+    part's size is known, so the measured width must not veto it."""
+    wide = [Box(0.35, -0.03, 0.055, 0.047, 0.03)]
+    opts = "part=55x47x30 tol=25 order=LR,FB proto=2"
+    assert ask(planner(Frames(wide)), "FIND", f"node=g loc=1 locs=1 {opts}")["status"] == -1
+    assert ask(planner(Frames(wide)), "FIND", f"node=g loc=1 locs=1 {opts} gripcheck=1")["status"] == -1
+    assert ask(planner(Frames(wide)), "FIND", f"node=g loc=1 locs=1 {opts} gripcheck=0")["status"] == 1
+
+
+def test_without_the_grip_check_a_crowded_part_is_still_picked():
+    crowd = [Box(0.35, -0.03, 0.05, 0.035, 0.03), Box(0.35, 0.015, 0.05, 0.035, 0.03)]  # 10 mm apart
+    assert ask(planner(Frames(crowd)), "FIND", f"node=c loc=1 locs=1 {OPTS}")["status"] == -11
+    got = ask(planner(Frames(crowd)), "FIND", f"node=c loc=1 locs=1 {OPTS} gripcheck=0")
+    assert got["status"] == 1 and got["remaining"] == 1
+
+
+def test_a_cylinder_is_found_by_its_diameter_and_gripped_without_turning_the_wrist():
+    can = [Box(0.35, -0.03, 0.04, 0.04, 0.03, round=True)]
+    cyl = "part=40x40x30 tol=25 shape=cyl order=LR,FB proto=2"
+    got = ask(planner(Frames(can)), "FIND", f"node=y loc=1 locs=1 {cyl}")
+    assert got["status"] == 1 and got["dims"][:2] == pytest.approx([40, 40], abs=5)
+    assert got["centre"][:2] == pytest.approx([0.35, -0.03], abs=0.004)
+    # the flange heading is the one the arm had: a disc has no short side to turn to
+    assert got["pose"][3:] == pytest.approx(FLANGE[3:], abs=1e-6)
+    # ... where the same blob taken for a box turns the fingers to whatever side the rectangle fitted
+    turned = [Box(0.35, -0.03, 0.05, 0.035, 0.03, 0.6)]
+    box = ask(planner(Frames(turned)), "FIND", f"node=y2 loc=1 locs=1 {OPTS}")
+    assert box["pose"][3:] != pytest.approx(FLANGE[3:], abs=1e-2)
+    # a box is not the cylinder: its long side gives it away
+    long_box = [Box(0.35, -0.03, 0.07, 0.035, 0.03)]
+    assert ask(planner(Frames(long_box)), "FIND", f"node=y3 loc=1 locs=1 {cyl}")["status"] == -7
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["gripcheck=2", "gripcheck=yes", "arm=", "arm=UR3;stop", "shape=hex", "shape=", "approach=900"],
+)
+def test_the_new_options_are_refused_when_malformed(bad):
+    with pytest.raises(RequestError):
+        parse_options(f"FIND p[0,0,0,0,0,0] part=50x50x30 {bad}")
+
+
+def test_a_cylinder_with_two_different_sides_is_refused():
+    with pytest.raises(RequestError):
+        parse_options("FIND p[0,0,0,0,0,0] part=50x40x30 shape=cyl")
+
+
+def test_the_new_options_parse_to_what_the_node_meant():
+    o = parse_options("part=40x40x30 tol=20 shape=cyl grip=12 approach=30 gripcheck=0 arm=UR3 proto=2")
+    assert o.part == PartSpec.from_mm(40, 40, 30, 20, shape="cyl") and o.part.is_round
+    assert (o.approach_m, o.grip_check, o.arm, o.reach) == (0.03, False, "UR3", None)
+    old = parse_options(OPTS)  # a 0.6.0 node says none of it: its behaviour is unchanged
+    assert (old.grip_check, old.arm, old.part.shape) == (True, "", "box")
+
+
+def test_the_teach_screen_is_told_which_rejects_are_nearly_the_part():
+    """The pendant draws only these: a part a little off its size or out of reach — not the
+    clamp, the cable and everything else on the table."""
+    scene = ROW + [
+        Box(0.35, 0.05, 0.068, 0.035, 0.03),  # a little too long
+        Box(0.17, 0.08, 0.05, 0.035, 0.09),  # nothing like the part: three times as tall
+    ]
+    out = scene_report(planner(Frames(scene)), FLANGE, parse_options(OPTS))
+    assert {q["why"]: q["near"] for q in out["rejected"]} == {"too long": True, "too tall": False}
+    assert all(q["near"] for q in out["parts"])
+    # out of reach is always worth showing: it is the part
+    far = scene_report(
+        planner(Frames([Box(0.70, 0.0, 0.05, 0.035, 0.03)], FAR)), FAR, parse_options(f"{OPTS} arm=UR3")
+    )
+    assert [(q["why"], q["near"]) for q in far["rejected"]] == [("out of reach (no joint solution)", True)]
+
+
+def test_the_cockpit_serves_the_depth_as_a_heatmap_png_the_same_way_as_the_colour(tmp_path):
+    import time
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from perceptronics.config import PerceptionConfig
+    from perceptronics.pngio import load_png
+    from perceptronics.synthscene import BoxSceneCamera
+    from perceptronics.webapp import ViewerApp, ViewerHandler
+
+    app = ViewerApp(BoxSceneCamera(ROW, Transform.from_pose(FLANGE), w=W, h=H), config=PerceptionConfig())
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), ViewerHandler)
+    srv.daemon_threads = True
+    srv.app = app  # type: ignore[attr-defined]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}/api/depth.png"
+    try:
+        with pytest.raises(urllib.error.HTTPError) as none_yet:
+            urllib.request.urlopen(base, timeout=10)
+        assert none_yet.value.code == 503  # no frame: the same answer the colour route gives
+        app.start()
+        deadline = time.monotonic() + 5
+        while app.latest()[1] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        with urllib.request.urlopen(base + "?after=0&timeout_ms=2000", timeout=10) as r:
+            seq, png = int(r.headers["X-Seq"]), r.read()
+        assert seq >= 1
+        (tmp_path / "heat.png").write_bytes(png)
+        w, h, ch, rgb = load_png(str(tmp_path / "heat.png"))
+        assert (w, h, ch) == (W // 2, H // 2, 3)
+        # the table (0.39 m) and the parts' tops (0.36 m) are different colours; nothing is black
+        table, top = rgb[0:3], rgb[3 * ((H // 4) * (W // 2) + W // 4) :][:3]
+        colours = {bytes(rgb[i : i + 3]) for i in range(0, len(rgb), 3)}
+        assert bytes(table) != b"\x00\x00\x00" and len(colours) >= 2 and bytes(top) in colours
+        with pytest.raises(urllib.error.HTTPError) as bad:
+            urllib.request.urlopen(base + "?after=x", timeout=10)
+        assert bad.value.code == 400
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        app.stop()
