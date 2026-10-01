@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import java.awt.BorderLayout;
 import java.awt.CardLayout;

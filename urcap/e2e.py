@@ -54,8 +54,8 @@ import track  # noqa: E402
 import urcapx  # noqa: E402
 
 REPO = HERE.parent
-VENDOR, URCAP_ID, ARCHIVE = "nickarmenta", "perceptronic", "perceptronic-frontend"
-TAG = "nickarmenta-perceptronic"
+VENDOR, URCAP_ID, ARCHIVE = "advin", "perceptronic", "perceptronic-frontend"
+TAG = "advin-perceptronic"
 
 
 class E2EError(RuntimeError):

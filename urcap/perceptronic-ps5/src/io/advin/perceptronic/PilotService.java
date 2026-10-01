@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import com.ur.urcap.api.contribution.ViewAPIProvider;
 import com.ur.urcap.api.contribution.installation.ContributionConfiguration;

@@ -11,7 +11,7 @@
 //                    {type:"error", uid, error:{__error_marker:"$$error", name, message, stack}}
 // (threads/dist/worker/index.js + dist/types/messages.js + dist/serializers.js).
 
-const NODE_TYPE = "nickarmenta-perceptronic";
+const NODE_TYPE = "advin-perceptronic";
 const NODE_VERSION = "1.1.0";
 
 // The node's saved state. `cockpitUrl` is where the RealSense cockpit

@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import com.ur.urcap.api.contribution.toolbar.ToolbarContext;
 import com.ur.urcap.api.contribution.toolbar.swing.SwingToolbarContribution;

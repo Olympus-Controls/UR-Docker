@@ -644,8 +644,8 @@ APP_CONTEXT = {
         "contributionList": [
             {"type": "ur-something-else", "parentType": "ur-something-else"},
             {
-                "type": "nickarmenta-perceptronic",
-                "parentType": "nickarmenta-perceptronic",
+                "type": "advin-perceptronic",
+                "parentType": "advin-perceptronic",
                 "version": "1.1.0",
                 "cockpitUrl": "http://192.168.3.10:7621",
                 "areas": [
@@ -669,7 +669,7 @@ APP_CONTEXT = {
 
 def pick_node(**parameters) -> dict:
     return {
-        "type": "nickarmenta-perceptronic-pick",
+        "type": "advin-perceptronic-pick",
         "version": "1.0.0",
         "allowsChildren": True,
         "parameters": {
@@ -777,7 +777,7 @@ def test_the_pick_worker_speaks_the_protocol_and_answers_script_builders():
         "upgradeNode",
     } <= set(methods)
     fresh = result(by, "factory")
-    assert fresh["type"] == "nickarmenta-perceptronic-pick" and fresh["allowsChildren"] is True
+    assert fresh["type"] == "advin-perceptronic-pick" and fresh["allowsChildren"] is True
     assert re.fullmatch(r"[0-9a-f]{6}", fresh["parameters"]["nodeId"]) and fresh["parameters"]["points"] == []
     assert (
         fresh["parameters"]["values"]["partLengthMm"] == 50 and fresh["parameters"]["foundVariable"] is None
@@ -824,7 +824,7 @@ def test_the_pick_worker_speaks_the_protocol_and_answers_script_builders():
 
 def test_the_after_worker_reads_the_enclosing_pick_node():
     after = {
-        "type": "nickarmenta-perceptronic-after",
+        "type": "advin-perceptronic-after",
         "version": "1.0.0",
         "allowsChildren": True,
         "parameters": {"point": 2},
@@ -858,7 +858,7 @@ def test_the_after_worker_reads_the_enclosing_pick_node():
         ],
     )
     assert result(by, "factory") == {
-        "type": "nickarmenta-perceptronic-after",
+        "type": "advin-perceptronic-after",
         "version": "1.0.0",
         "allowsChildren": True,
         "parameters": {"point": 1},

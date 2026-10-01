@@ -43,7 +43,7 @@ NODE = shutil.which("node")
 
 def test_manifest_contribution_and_sources_agree():
     meta = urcapx.read_manifest((URCAP / "manifest.yaml").read_text(encoding="utf-8"))
-    assert meta["vendorID"] == "nickarmenta" and meta["urcapID"] == "perceptronic"
+    assert meta["vendorID"] == "advin" and meta["urcapID"] == "perceptronic"
     assert meta["folders"] == ["perceptronic-frontend"]
     contribution = json.loads((FRONTEND / "contribution.json").read_text(encoding="utf-8"))
     (node,) = contribution["applicationNodes"]
@@ -88,7 +88,7 @@ def test_manifest_reader_rejects_bad_ids_and_missing_fields():
 
 def test_package_is_a_gzipped_tar_with_the_manifest_first(tmp_path):
     out = urcapx.package(URCAP, tmp_path)
-    assert out.name == "perceptronic-0.3.0.urcapx"
+    assert out.name == "perceptronic-0.4.0.urcapx"
     with tarfile.open(out, "r:gz") as tar:
         names = tar.getnames()
     assert names[0] == "manifest.yaml"
@@ -125,7 +125,7 @@ def test_package_is_reproducible_and_normalised(tmp_path):
     a = urcapx.package(URCAP, tmp_path / "a").read_bytes()
     b = urcapx.package(URCAP, tmp_path / "b").read_bytes()
     assert a == b
-    with tarfile.open(tmp_path / "a" / "perceptronic-0.3.0.urcapx", "r:gz") as tar:
+    with tarfile.open(tmp_path / "a" / "perceptronic-0.4.0.urcapx", "r:gz") as tar:
         infos = tar.getmembers()
     assert {(i.uid, i.gid, i.uname, i.gname) for i in infos} == {(0, 0, "", "")}
     assert len({i.mtime for i in infos}) == 1 and infos[0].mtime > 1_600_000_000
@@ -229,7 +229,7 @@ class UrserviceStub(BaseHTTPRequestHandler):
                 status=500,
             )
             return
-        ident = {"vendorID": "nickarmenta", "urcapID": "perceptronic"}
+        ident = {"vendorID": "advin", "urcapID": "perceptronic"}
         if any(it["id"] == ident for it in UrserviceStub.installed):
             self._reply(
                 {"errors": [{"code": "already_installed", "message": "urcap already installed"}]}, status=409
@@ -274,7 +274,7 @@ def test_install_posts_urcapxfile_then_409_then_replace_deletes_first(tmp_path, 
     upload = [r for r in UrserviceStub.requests if r["method"] == "POST"][-1]
     assert upload["path"] == urcapx.API_PATH
     assert upload["fields"] == [("urcapxFile", out.name)] and upload["size"] == out.stat().st_size
-    assert urcapx.is_installed(host, port, "nickarmenta", "perceptronic")
+    assert urcapx.is_installed(host, port, "advin", "perceptronic")
     # a second install is a 409 with the --replace hint, and nothing changed
     res = urcapx.install(out, host, port)
     assert not res["ok"] and res["status"] == 409 and "--replace" in res["hint"]
@@ -282,7 +282,7 @@ def test_install_posts_urcapxfile_then_409_then_replace_deletes_first(tmp_path, 
     res = urcapx.install(out, host, port, replace=True)
     assert res["ok"] and res["replaced"] is True
     assert [r["method"] for r in UrserviceStub.requests[-3:]] == ["GET", "DELETE", "POST"]
-    assert UrserviceStub.requests[-2]["path"].endswith("/nickarmenta/perceptronic")
+    assert UrserviceStub.requests[-2]["path"].endswith("/advin/perceptronic")
     assert len(UrserviceStub.installed) == 1
 
 
@@ -324,14 +324,14 @@ def test_cli_list_and_package(tmp_path, urservice, capsys):
     assert urcapx.main(["list", "--host", host, "--port", str(port)]) == 0
     assert "universal-robots/web-frontend-app  1.2.0" in capsys.readouterr().out
     assert urcapx.main(["package", str(URCAP), "--out", str(tmp_path)]) == 0
-    assert (tmp_path / "perceptronic-0.3.0.urcapx").is_file()
+    assert (tmp_path / "perceptronic-0.4.0.urcapx").is_file()
     assert (
         urcapx.main(
-            ["install", str(tmp_path / "perceptronic-0.3.0.urcapx"), "--host", host, "--port", str(port)]
+            ["install", str(tmp_path / "perceptronic-0.4.0.urcapx"), "--host", host, "--port", str(port)]
         )
         == 0
     )
-    assert urcapx.main(["delete", "nickarmenta", "perceptronic", "--host", host, "--port", str(port)]) == 0
+    assert urcapx.main(["delete", "advin", "perceptronic", "--host", host, "--port", str(port)]) == 0
     assert UrserviceStub.installed == [UrserviceStub.installed[0]] and len(UrserviceStub.installed) == 1
 
 
@@ -424,7 +424,7 @@ def test_worker_speaks_the_threads_protocol(tmp_path):
     assert [m["type"] for m in by_uid["u1"]] == ["running", "result"]
     assert by_uid["u1"][1]["complete"] is True
     fresh = {
-        "type": "nickarmenta-perceptronic",
+        "type": "advin-perceptronic",
         "version": "1.1.0",
         "cockpitUrl": "",
         "areas": [],

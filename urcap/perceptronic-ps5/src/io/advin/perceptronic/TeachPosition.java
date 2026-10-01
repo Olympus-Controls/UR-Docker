@@ -1,4 +1,4 @@
-package com.nickarmenta.perceptronic;
+package io.advin.perceptronic;
 
 import com.ur.urcap.api.domain.userinteraction.UserInteraction;
 import com.ur.urcap.api.domain.value.Pose;
@@ -33,7 +33,7 @@ final class TeachPosition {
 
     /** PolyScope 5.8+: the callback that carries the TCP offset. */
     static final String CALLBACK2 = "com.ur.urcap.api.domain.userinteraction.RobotPositionCallback2";
-    static final String MODERN = "com.nickarmenta.perceptronic.TeachPosition2";
+    static final String MODERN = "io.advin.perceptronic.TeachPosition2";
 
     /** The best teacher this PolyScope runs; {@code robotType} names the arm for the old path. */
     static Teacher teacher(String robotType) {

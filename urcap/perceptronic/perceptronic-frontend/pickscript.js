@@ -17,10 +17,10 @@
 (function (root) {
   "use strict";
 
-  const APP_TYPE = "nickarmenta-perceptronic";
-  const PICK_TYPE = "nickarmenta-perceptronic-pick";
-  const AFTER_TYPE = "nickarmenta-perceptronic-after";
-  const VERSION = "0.3.0";
+  const APP_TYPE = "advin-perceptronic";
+  const PICK_TYPE = "advin-perceptronic-pick";
+  const AFTER_TYPE = "advin-perceptronic-after";
+  const VERSION = "0.4.0";
   const DEFAULT_PICK_PORT = 7622;
   const DEFAULT_COCKPIT_PORT = 7621;
   const DEFAULT_TIP_MM = 163; // Hand-E 157 mm + 6 mm adapter

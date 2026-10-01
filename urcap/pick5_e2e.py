@@ -88,7 +88,7 @@ def generate(spec: dict) -> str:
     if not javac:
         raise SystemExit("needs a JDK (javac) to build the node's PickScript")
     root = Path(tempfile.mkdtemp(prefix="pick5-e2e-"))
-    pkg = root / "src" / "com" / "nickarmenta" / "perceptronic"
+    pkg = root / "src" / "io" / "advin" / "perceptronic"
     pkg.mkdir(parents=True)
     (pkg / "Harness.java").write_text(HARNESS, encoding="utf-8")
     for name in PURE_JAVA:
@@ -113,7 +113,7 @@ def generate(spec: dict) -> str:
             "java",
             "-cp",
             str(root / "c"),
-            "com.nickarmenta.perceptronic.Harness",
+            "io.advin.perceptronic.Harness",
             "pick",
             json.dumps(spec),
         ],

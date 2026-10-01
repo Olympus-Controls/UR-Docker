@@ -19,9 +19,9 @@ urcap/
   urcapx.py                                package | install | list | delete (stdlib only)
   dist/perceptronic-<ver>.urcapx        the downloadable package (committed; see below)
   perceptronic/
-    manifest.yaml                          vendorID nickarmenta, urcapID perceptronic
+    manifest.yaml                          vendorID advin, urcapID perceptronic
     perceptronic-frontend/
-      contribution.json                    the applicationNode (tag nickarmenta-perceptronic) + two programNodes
+      contribution.json                    the applicationNode (tag advin-perceptronic) + two programNodes
       main.js                              the application node's presenter (a custom element): feed, click → locate, pick areas, reach
       perceptronic-node.worker.js       its behavior worker (node factory / upgrade)
       pickscript.js                        the Pick node's settings + URScript + pose math + the drawings as SVG (worker, page and tests share it)
@@ -111,7 +111,7 @@ out of PolyScope 10.13's own bundles (`web-app/main.js`, `web-program-nodes/*`),
   leading spaces; empty lines are dropped.
 - **The application context arrives serialized:** `{type: "$$ApplicationContext",
   contributions: {contributionList: [...]}, frames: {framesList}}` — our application node
-  is the entry whose `type` / `parentType` is `nickarmenta-perceptronic` (cockpit URL,
+  is the entry whose `type` / `parentType` is `advin-perceptronic` (cockpit URL,
   areas, tip, reach margins, robot model).
 - **Program variables** are declared from the presenter with
   `variableService.createVariable(name, "boolean" | "integer")`; the declaration
