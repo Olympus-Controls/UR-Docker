@@ -650,9 +650,13 @@ def _near(part: Part, spec: PartSpec | None) -> bool:
 def _fingers(part: Part, pts: list, fingers: dict) -> str | None:
     from .pickplan import clearance
 
-    r = part.length_m + 0.08
+    fingers = dict(fingers)
+    long_way = fingers.pop("across", "short") == "long"  # the fingers close across the long side
+    r = part.length_m + 0.08 + (fingers.get("room_m") or 0.0)
     near = [p for p in pts if p is not None and math.dist(p[:2], part.centre[:2]) < r]
     rect = {"centre": list(part.centre), "theta": part.theta, "minor_m": part.width_m}
+    if long_way:
+        rect = {**rect, "theta": part.theta + math.pi / 2, "minor_m": part.length_m}
     got = clearance(rect, near, **fingers)
     if got["clear"]:
         return None

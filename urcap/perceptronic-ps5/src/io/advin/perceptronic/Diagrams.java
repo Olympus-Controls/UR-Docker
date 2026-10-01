@@ -205,12 +205,15 @@ final class Diagrams {
         private double grip = 15;
         private double height = 30;
         private double width = 30;
+        private double room = 20;
 
-        void set(double approachMm, double gripMm, double heightMm, double widthMm) {
+        /** {@code widthMm}: the side the fingers close across; {@code roomMm}: the clear space checked beside it (0: none). */
+        void set(double approachMm, double gripMm, double heightMm, double widthMm, double roomMm) {
             approach = approachMm;
             grip = gripMm;
             height = heightMm;
             width = widthMm;
+            room = roomMm;
             repaint();
         }
 
@@ -223,9 +226,9 @@ final class Diagrams {
         protected void paintComponent(Graphics g0) {
             Graphics2D g = Ui.smooth(g0);
             int w = getWidth(), h = getHeight();
-            double open = Math.max(PickScript.STROKE_MM, width + 8);
+            double open = width + 2 * Math.max(4, room * 0.5); // the fingers, somewhere inside the room
             double total = height + approach + 45; // mm shown top to bottom
-            double k = Math.min(Math.min((h - 26) / total, (w - 190) / (open + 20)), 3.0);
+            double k = Math.min(Math.min((h - 26) / total, (w - 190) / (Math.max(open, width + 2 * room) + 20)), 3.0);
             int table = h - 14;
             int cx = w / 2 - 50;
             g.setColor(new Color(0xe6eaf0));
@@ -257,6 +260,15 @@ final class Diagrams {
             int dx = cx + half + 16;
             dim(g, dx, tipY, topY, "approach " + PickScript.num(approach), Ui.ACCENT);
             dim(g, dx, topY, gripY, "grip " + PickScript.num(grip), new Color(0x9a6a00));
+            if (room > 0) {
+                // the finger room: the clear space wanted on each side of the part
+                int rw = (int) (room * k);
+                g.setColor(new Color(61, 220, 132, 60));
+                g.fillRect(cx - pw / 2 - rw, topY, rw, ph);
+                g.fillRect(cx + pw / 2, topY, rw, ph);
+                g.setColor(Ui.OK);
+                g.drawString("room " + PickScript.num(room), cx + pw / 2 + 4, table - 4);
+            }
             g.dispose();
         }
 

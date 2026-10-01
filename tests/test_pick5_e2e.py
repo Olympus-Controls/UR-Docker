@@ -29,7 +29,6 @@ SPEC = {
     "port": 7623,
     "node": "e2e001",
     "points": [{"q": pick5_e2e.READY}],
-    "gripper": "digital",
     "popup": False,
 }
 needs_javac = pytest.mark.skipif(shutil.which("javac") is None, reason="javac is not installed")
@@ -41,10 +40,10 @@ def test_the_e2e_builds_every_script_it_runs(polyscope):
     spec = {**SPEC, "polyscope": polyscope}
     once = pick5_e2e.generate(spec)
     no_look = pick5_e2e.generate({**spec, "closeLook": False})
-    probe = pick5_e2e.generate({**spec, "gripper": "robotiq", "popup": True})
+    probe = pick5_e2e.generate({**spec, "popup": True})
     assert once.startswith("# 3D Pick ") and '"LOOK "' in once and '"LOOK "' not in no_look
-    assert "set_standard_digital_out(0, True)" in once and "63352" not in once  # the sim has no Robotiq
-    assert "63352" in probe and "popup(" in probe and "popup(" not in once
+    assert "set_standard_digital_out" not in once and "63352" not in probe  # the node drives no gripper
+    assert "popup(" in probe and "popup(" not in once
     for script in (once, no_look):  # each is a whole program on its own: the e2e runs them back to back
         assert script.count("\n") > 100 and script.rstrip().endswith("set_tcp(rs_tcp0)")
 

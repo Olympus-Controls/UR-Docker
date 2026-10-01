@@ -377,6 +377,20 @@ the same URScript — `test_the_script_is_the_polyscope_5_nodes_line_for_line` (
 `preview5.py --screens DIR` re-renders the README's pictures. **Not run on a robot**; the PolyScope X
 dialog was clicked through in the 10.13 sim (`urcap/e2e.py`: depth view, both option tabs fit).
 
+**3D Pick drives no gripper (URCap 0.8.0 / PolyScope X 0.6.0; Nick 2026-10-01 — this corrects the
+paragraph above where it says the node clamps).** "The node should not control the gripper
+whatsoever because the user will open the gripper before the node and close it after": the script has
+no Robotiq socket, no digital output, no held check — it ends with the fingertips at the grip
+(`rs_pick_found = True` there) and `test_the_node_does_not_touch_the_gripper` holds both nodes to it.
+With no gripper there is no stroke: the grip check is **on by default** and is the operator's number,
+**Finger room** (Approach tab, default 20 mm) → `gripcheck=1 room=20`: that much clear space on each
+of the two sides the fingers come down on, from the part's edge (`pickplan.clearance(room_m=)`), and
+no "wider than the open gripper" test. **Grip across the long side** (Approach tab, boxes only) →
+`across=long`: the wrist turns 90° and the room is checked on those sides. Cylinders stand on a flat
+end (decided; a lying one rolls). **The picture: pickable parts green with their pick-order number,
+near misses yellow with why** (still nothing for what is nothing like the part). The closer look
+assumes fingers open 50 mm (`LOOK_STROKE_MM`) when it keeps the part clear of them.
+
 **Monocular scan** (`perceptronics scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
 that commit if the idea comes back.

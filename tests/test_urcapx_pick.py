@@ -1,6 +1,6 @@
-"""The PolyScope X 3D Pick program node's contract (0.5.0), under node: the URScript
+"""The PolyScope X 3D Pick program node's contract (0.6.0), under node: the URScript
 pickscript.js writes (the same script as the PolyScope 5 node's PickScript.java — one move
-sequence from the survey to the gripper clamped on a part, no children), the request
+sequence from the survey to the tool at the grip, no children, no gripper), the request
 options it sends (read back by the Python pick server's own parser), the plane, reach and
 pose math agreeing with the Python they stand for, what the screens say when the camera
 computer is gone, and the behavior worker answering PolyScope's worker protocol with the
@@ -61,9 +61,9 @@ if (req.cmd === "pick") {
     values,
     orderFirst: req.order ? req.order[0] : "LR",
     orderRows: req.order ? req.order[1] : "FB",
-    gripper: req.gripper || "robotiq",
     shape: req.shape || "box",
-    gripCheck: req.gripCheck === true,
+    gripCheck: req.gripCheck !== false,
+    gripLongSide: req.gripLong === true,
     closeLook: req.closeLook !== false,
     arm: req.arm || "",
     popupOnFail: req.popup !== false,
@@ -99,7 +99,7 @@ if (req.cmd === "pick") {
     tile: P.svgOrderTile(req.first || "LR", req.rows || "FB", !!req.selected),
     part: P.svgPart(req.l, req.w, req.h, false),
     cylinder: P.svgPart(req.l, req.l, req.h, true),
-    approach: P.svgApproach(req.approach, req.grip, req.h, Math.min(req.l, req.w)),
+    approach: P.svgApproach(req.approach, req.grip, req.h, Math.min(req.l, req.w), 20),
     map: P.svgReachMap(req.model || "", req.baseR, req.minR, req.maxR,
       (req.areas || []).map((a) => ({ name: a.name, corners: P.areaCorners(a.plane) })), 0),
   };
@@ -167,12 +167,12 @@ def balanced(text: str) -> bool:
 # -- the script ---------------------------------------------------------------------------------
 
 
-def test_the_script_is_one_move_sequence_from_the_survey_to_the_clamp():
+def test_the_script_is_one_move_sequence_from_the_survey_to_the_grip():
     out = pick()
     assert out["problem"] is None
     text = out["script"]
     assert text.isascii() and balanced(text)
-    assert text.startswith("# 3D Pick 0.5.0 ")
+    assert text.startswith("# 3D Pick 0.6.0 ")
     order = [
         "global rs_pick_found = False",
         "set_tcp(p[0, 0, 0, 0, 0, 0])",
@@ -185,23 +185,30 @@ def test_the_script_is_one_move_sequence_from_the_survey_to_the_clamp():
         '"REFINE "',
         "movel(rs_hover",
         "movel(rs_grip, a=0.3, v=0.05)",
-        '"SET POS 255"',  # the clamp
         "global rs_pick_found = True",
         "global rs_pick_loc = rs_loc",
         'socket_close("rs_pick")',
-        'socket_close("rs_rq")',
         "set_tcp(rs_tcp0)",
         "popup(",
     ]
     at = [text.index(marker) for marker in order]
     assert at == sorted(at), "the stages are out of order"
-    # it ends at the clamp: a held part is never lifted by the node, and it has no children
-    held = text.index("global rs_pick_found = True")
-    assert "movel(" not in text[held : text.index("else:", held)]
+    # it ends at the grip: the last motion is the descent; no children
+    assert text.rindex("movel(") == text.index("movel(rs_grip")
     assert "rs_lift" not in text and "if rs_pick_found:" not in text
     assert out["childDepth"] == 0 and out["after"] == [] and "\n".join(out["before"]) + "\n" == text
     # no request line the program builds can exceed the server's 1 kB
     assert all(len(line) < 900 for line in text.splitlines())
+
+
+def test_the_node_does_not_touch_the_gripper():
+    """Nick, 2026-10-01: the program opens the gripper before the node and closes it after."""
+    for kw in ({}, {"closeLook": False}, {"shape": "cyl", "values": {"partLengthMm": 40}}):
+        text = pick(**kw)["script"]
+        for gripper in ("63352", "rs_rq", "SET POS", "SET GTO", "GET OBJ", "SET ACT", "rs_held", "rs_obj"):
+            assert gripper not in text, gripper
+        assert "set_standard_digital_out" not in text and "closed on nothing" not in text
+        assert text.count("socket_open(") == 1  # the pick server, nothing else
 
 
 def test_the_script_is_the_polyscope_5_nodes_line_for_line():
@@ -224,7 +231,8 @@ def test_the_script_is_the_polyscope_5_nodes_line_for_line():
     for extra in (
         {},
         {"closeLook": False},
-        {"shape": "cyl", "gripCheck": True, "values": {"partLengthMm": 40}},
+        {"shape": "cyl", "gripCheck": False, "values": {"partLengthMm": 40}},
+        {"gripLong": True, "values": {"fingerRoomMm": 35}},
     ):
         java = _java_pick(ps5, {**spec, **extra})
 
@@ -294,8 +302,9 @@ def test_the_options_it_sends_are_what_the_pick_server_reads():
         assert o.order == ("RL", "BF")
         # no ring: the arm is named, and the server asks its kinematics
         assert o.reach is None and o.arm == "UR3e" and "reach=" not in tok
-        assert (o.grip_below_m, o.stroke_m, o.approach_m) == (0.012, 0.05, 0.035)
-        assert o.grip_check is False  # the default: the part's size is known
+        assert (o.grip_below_m, o.approach_m) == (0.012, 0.035)
+        # the grip check is on, with 20 mm of room on each side; no stroke: the node knows no gripper
+        assert (o.grip_check, o.room_m, o.across) == (True, 0.02, "short") and "stroke=" not in tok
         assert (o.node, o.locs, o.proto) == ("a1b2c3", 2, 2)
         assert o.loc == i  # tokens(-1) (the teach screen with no point yet) carries no loc
     plane = parse_options(out["tokens"][2]).surface
@@ -304,12 +313,23 @@ def test_the_options_it_sends_are_what_the_pick_server_reads():
     assert parse_options(out["tokens"][1]).surface is None  # point 1 finds the table live
 
 
-def test_the_grip_check_is_a_switch_and_off_unless_asked_for():
-    assert parse_options(pick()["tokens"][1]).grip_check is False
-    assert parse_options(pick(gripCheck=True)["tokens"][1]).grip_check is True
-    wide = {"partWidthMm": 48}
-    assert pick(values=wide)["problem"] is None
-    assert "switch the grip check off" in pick(values=wide, gripCheck=True)["problem"]
+def test_the_grip_check_is_on_with_20_mm_of_finger_room_and_both_are_adjustable():
+    o = parse_options(pick()["tokens"][1])
+    assert (o.grip_check, o.room_m) == (True, 0.02)
+    o = parse_options(pick(values={"fingerRoomMm": 35})["tokens"][1])
+    assert (o.grip_check, o.room_m) == (True, 0.035)
+    assert parse_options(pick(gripCheck=False)["tokens"][1]).grip_check is False
+    assert (
+        pick(values={"partWidthMm": 300, "partLengthMm": 400})["problem"] is None
+    )  # no stroke to refuse it with
+
+
+def test_a_box_is_gripped_across_its_short_side_unless_the_long_side_is_ticked():
+    assert parse_options(pick()["tokens"][1]).across == "short"
+    out = pick(gripLong=True)
+    assert parse_options(out["tokens"][1]).across == "long" and "across the long side" in out["script"]
+    cyl = pick(gripLong=True, shape="cyl", values={"partLengthMm": 40})
+    assert "across=" not in cyl["tokens"][1] and "long side" not in cyl["script"]
 
 
 def test_a_cylinder_is_sent_by_its_diameter():
@@ -322,7 +342,7 @@ def test_a_cylinder_is_sent_by_its_diameter():
 
 
 def test_every_request_line_it_can_send_parses():
-    text = pick(arm="UR10e", shape="cyl", gripCheck=True, values={"partLengthMm": 40})["script"]
+    text = pick(arm="UR10e", shape="cyl", values={"partLengthMm": 40})["script"]
     pose = "p[0.3, -0.1, 0.12, 3.14159, 0, 0]"
     toks = re.findall(r'rs_tok = "( [^"]+)"', text)
     look_tail = re.search(r'to_str\(rs_c\), "( [^"]+)"\)\)\)\), "rs_pick"', text).group(1)
@@ -356,8 +376,6 @@ def test_the_popup_names_every_status_the_server_can_send():
         ({"points": [{"q": Q1, "plane": PLANE, "area": [2, 200]}]}, "pick area is broken"),
         ({"values": {"gripBelowTopMm": 40, "partHeightMm": 30}}, "fingertips on the table"),
         ({"order": ["LR", "RL"]}, "pick order"),
-        ({"gripper": "suction"}, "unknown gripper"),
-        ({"gripper": "children"}, "unknown gripper"),  # 0.4.0's "my own nodes": the node has no children now
         ({"arm": 'UR3" stop'}, "robot model"),
         ({"found": "1bad"}, "variable names"),
     ],
@@ -368,20 +386,10 @@ def test_it_refuses_what_it_cannot_generate_safely(kw, problem):
     assert "script" not in out
 
 
-def test_the_simulators_digital_output_gripper():
-    text = pick(gripper="digital")["script"]
-    assert "set_standard_digital_out(0, False)" in text and "set_standard_digital_out(0, True)" in text
-    assert "sleep(0.50)" in text
-    assert "63352" not in text and "rs_rq" not in text
-
-
-def test_a_close_on_nothing_opens_backs_up_and_tries_the_next_part():
+def test_a_part_the_arm_cannot_get_to_sends_it_on_to_the_next_one():
     text = pick()["script"]
-    miss = text.index('rs_why = "the gripper closed on nothing"')
-    opened = text.index('"SET POS 0"', miss)
-    backed = text.index("movel(rs_hover", miss)  # straight back up before it travels to the next part
-    assert opened < backed < text.index("socket_close", miss)
     assert "while (rs_ok) and (rs_try < 6) and (rs_pick_found == False):" in text  # 2 points + 3 attempts + 1
+    assert "no joint solution for the approach" in text
 
 
 def test_without_the_popup_a_failed_run_just_leaves_the_result_false():
@@ -406,7 +414,7 @@ def test_without_the_closer_look_every_part_is_measured_from_its_picture_point()
     assert (
         nxt < movej and len(lines[movej]) - len(lines[movej].lstrip()) == 6
     )  # while > if rs_loc == 1 > movej
-    order = ['"FIND "', '"REFINE "', "movel(rs_hover", "movel(rs_grip", '"SET POS 255"']
+    order = ['"FIND "', '"REFINE "', "movel(rs_hover", "movel(rs_grip", "global rs_pick_found = True"]
     at = [text.index(marker) for marker in order]
     assert at == sorted(at) and "- no closer look" in lines[0]
     with_look = pick()["script"]
@@ -424,7 +432,9 @@ def test_every_default_is_within_its_own_limits_and_the_defaults_generate():
         "partTolPct",
         "approachMm",
         "gripBelowTopMm",
+        "fingerRoomMm",
     ]
+    assert {n["key"]: n["def"] for n in numbers}["fingerRoomMm"] == 20  # Nick: 20 mm on both pick sides
     for n in numbers:
         assert n["min"] <= n["def"] <= n["max"], n["key"]
         assert n["step"] > 0
@@ -453,7 +463,14 @@ def test_orders_are_one_horizontal_and_one_vertical_direction():
 
 def test_the_after_picture_node_and_the_gripper_settings_are_gone():
     exports = set(ask(cmd="misc")["exports"])
-    assert not exports & {"AFTER_TYPE", "afterPictureScript", "GRIPPER_FIELDS", "reachLimits"}
+    assert not exports & {
+        "AFTER_TYPE",
+        "afterPictureScript",
+        "GRIPPER_FIELDS",
+        "reachLimits",
+        "GRIPPERS",
+        "RQ_SOCKET",
+    }
     assert not (FRONTEND / "after-node.worker.js").exists()
 
 
@@ -517,9 +534,9 @@ def test_the_picture_draws_only_the_near_misses():
     assert [o["drawn"] for o in out] == [[], ["too long"], [], ["out of reach (no joint solution)"], []]
     assert [o["summary"] for o in out] == [
         "2 parts to pick",
-        "1 part to pick · 1 not (outlined on the picture)",
+        "1 part to pick · 1 not (yellow, with why)",
         "no part in view",
-        "0 parts to pick · 1 not (outlined on the picture)",
+        "0 parts to pick · 1 not (yellow, with why)",
         "no part in view",
     ]
 
@@ -622,22 +639,22 @@ def test_settings_read_the_application_node_the_way_the_pick_node_does():
     st_ = out["settings"]
     assert out["problem"] is None
     assert (st_["host"], st_["port"], st_["nodeId"]) == ("192.168.3.10", 7622, "0badf00d")
-    assert (st_["arm"], st_["shape"], st_["gripCheck"], st_["closeLook"]) == ("UR3e", "box", False, True)
+    assert (st_["arm"], st_["shape"], st_["gripCheck"], st_["closeLook"]) == ("UR3e", "box", True, True)
     assert st_["points"][0]["plane"] is None and st_["points"][1]["areaXmm"] == pytest.approx(300)
     o = parse_options(out["tokens"][1])
     assert o.surface is not None and o.surface.origin == pytest.approx([0.2, -0.1, -0.27], abs=1e-5)
     assert o.part == PartSpec.from_mm(50, 20, 30, 25) and o.reach is None and o.arm == "UR3e"
     # the node's own switches
     out = ask(
-        cmd="settings", params={**params, "shape": "cyl", "gripCheck": True, "closeLook": False}, app=app
+        cmd="settings", params={**params, "shape": "cyl", "gripCheck": False, "closeLook": False}, app=app
     )
     st_ = out["settings"]
-    assert (st_["shape"], st_["gripCheck"], st_["closeLook"]) == ("cyl", True, False)
+    assert (st_["shape"], st_["gripCheck"], st_["closeLook"]) == ("cyl", False, False)
     o = parse_options(out["tokens"][0])
-    assert o.part.is_round and o.grip_check is True
-    # a node saved by 0.4.0 with "my own nodes": the gripper it names is gone, the node drives the Robotiq
+    assert o.part.is_round and o.grip_check is False
+    # a node saved by 0.4.0 / 0.5.0 names a gripper: nothing reads it, the node drives none
     out = ask(cmd="settings", params={**params, "gripper": "children"}, app=app)
-    assert out["settings"]["gripper"] == "robotiq" and out["problem"] is None
+    assert "gripper" not in out["settings"] and out["problem"] is None
     # a point that names an untaught area, a robot model that is not a name, no cockpit
     out = ask(cmd="settings", params={**params, "points": [{"q": Q1, "area": 1}]}, app=app)
     assert "not taught" in out["problem"]
@@ -737,7 +754,7 @@ def test_every_drawing_is_well_formed_svg(kw):
     assert {str(max(kw["l"], kw["w"])), str(min(kw["l"], kw["w"])), str(kw["h"])} <= set(texts("part"))
     assert {f"Ø {kw['l']}", str(kw["h"])} <= set(texts("cylinder"))  # a cylinder: its diameter and height
     assert {f"approach {kw['approach']}", f"grip {kw['grip']}"} <= set(texts("approach"))
-    assert not any("lift" in t for t in texts("approach"))  # the node ends at the clamp
+    assert not any("lift" in t for t in texts("approach"))  # the node ends at the grip
     # the arm's reach, named on the map — or said to be unknown
     if kw["maxR"] > 0:
         assert f"reach {round(kw['maxR'] * 1000)} mm" in texts("map")
@@ -954,7 +971,7 @@ def test_the_pick_worker_speaks_the_protocol_and_answers_script_builders():
         fresh["parameters"]["values"]["partLengthMm"] == 50 and fresh["parameters"]["foundVariable"] is None
     )
     p = fresh["parameters"]
-    assert (p["shape"], p["gripCheck"], p["closeLook"]) == ("box", False, True)
+    assert (p["shape"], p["gripCheck"], p["gripLongSide"], p["closeLook"]) == ("box", True, False, True)
     assert "gripper" not in p and "perPointRoutine" not in p
     label = result(by, "label")
     assert (
@@ -970,7 +987,7 @@ def test_the_pick_worker_speaks_the_protocol_and_answers_script_builders():
     assert "camera computer's address" in result(by, "noapp")["errorMessageKey"]
     before = result(by, "before")
     assert before["type"] == "$$ScriptBuilder" and before["currentIndent"] == 0
-    assert before["script"].startswith("# 3D Pick 0.5.0") and before["script"].rstrip().endswith("end")
+    assert before["script"].startswith("# 3D Pick 0.6.0") and before["script"].rstrip().endswith("end")
     assert balanced(before["script"])  # the whole program is here: nothing is left for after the children
     assert 'socket_open("192.168.3.10", 7622, "rs_pick")' in before["script"]
     assert "arm=UR3e" in before["script"] and "reach=" not in before["script"]

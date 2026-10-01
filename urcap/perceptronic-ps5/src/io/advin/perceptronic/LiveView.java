@@ -14,11 +14,11 @@ import javax.swing.JComponent;
 
 /**
  * The live picture, as big as the screen allows — the camera's picture or, with the toggle
- * at its top right, the depth as a heatmap. Nothing is drawn over it but what the operator
- * needs in order to understand a part that is <i>not</i> going to be picked: each candidate
- * that is nearly the part — a little off its size, or the right size and out of reach —
- * outlined, with why (0.7.0, Nick 2026-09-30: "the only graphics should be parts that are
- * just outside of requirements or reach").
+ * at its top right, the depth as a heatmap. Two things are drawn over it (0.8.0, Nick
+ * 2026-10-01): every part that will be picked in <b>green with its number</b> in the pick
+ * order, and every candidate that is nearly the part and will not be — a little off its size,
+ * out of reach, no finger room — in <b>yellow with why</b>. Nothing else: not the jaws, not
+ * what is nothing like the part.
  */
 // Swing components are never serialized here; javac's serial lint does not apply to them
 @SuppressWarnings("serial")
@@ -105,6 +105,7 @@ final class LiveView extends JComponent {
         // the scene's pixels are the colour picture's; the image drawn may be scaled (the depth is half-size)
         double sk = s.width > 0 ? (double) iw / s.width : k;
         for (Scene.Part p : s.nearMisses()) drawNearMiss(g, p, ox, oy, sk);
+        for (Scene.Part p : s.parts) drawPart(g, p, ox, oy, sk);
         Ui.ViewToggle.paint(g, w, 0, depth);
         g.dispose();
     }
@@ -159,6 +160,25 @@ final class LiveView extends JComponent {
         return poly;
     }
 
+    /** A part that will be picked: green, with its number in the pick order. */
+    private static void drawPart(Graphics2D g, Scene.Part p, int ox, int oy, double k) {
+        Polygon poly = poly(p, ox, oy, k);
+        g.setColor(new Color(61, 220, 132, 60));
+        g.fillPolygon(poly);
+        g.setColor(Ui.PART);
+        g.setStroke(new BasicStroke(2.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.drawPolygon(poly);
+        int x = ox + (int) Math.round(p.u * k), y = oy + (int) Math.round(p.v * k), r = 14;
+        g.setColor(new Color(0x12824a));
+        g.fillOval(x - r, y - r, 2 * r, 2 * r);
+        g.setColor(Color.WHITE);
+        g.setStroke(new BasicStroke(2f));
+        g.drawOval(x - r, y - r, 2 * r, 2 * r);
+        g.setFont(Ui.font(14f, true));
+        Ui.centre(g, String.valueOf(p.order), x, y);
+    }
+
+    /** A candidate that will not be picked: yellow, with why. */
     private static void drawNearMiss(Graphics2D g, Scene.Part p, int ox, int oy, double k) {
         Polygon poly = poly(p, ox, oy, k);
         g.setColor(new Color(0, 0, 0, 110));
