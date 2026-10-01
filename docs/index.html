@@ -412,12 +412,12 @@
           <li>Still not finished? Go to <a href="#fix-help">Getting help</a>.</li>
         </ol></div>
 
-      <div class="fix" id="fix-uv"><h4><span>H</span>Start says setup is missing</h4>
+      <div class="fix" id="fix-python"><h4><span>H</span>Start says setup is missing</h4>
         <ol>
           <li><em>"Setup has not been run yet"</em>: do step 3, then come back.</li>
-          <li><em>"uv … is not recognized"</em>: Windows has not noticed the new software yet.
-            Restart the computer and double-click <span class="file">Windows-Start</span> again.</li>
-          <li>Same message after a restart: run <span class="file">Windows-Setup</span> once more.</li>
+          <li>The same message although setup said SETUP FINISHED: Windows has not noticed the new
+            software yet. Restart the computer and double-click <span class="file">Windows-Start</span> again.</li>
+          <li>Still the same after a restart: run <span class="file">Windows-Setup</span> once more.</li>
         </ol></div>
 
       <div class="fix" id="fix-browser"><h4><span>I</span>The page doesn't appear</h4>
@@ -493,19 +493,18 @@
     <p>You need Docker and Python ≥ 3.10.</p>
     <div class="term"><pre><span class="p">&gt; </span>git clone https://github.com/Olympus-Controls/UR-utils &amp;&amp; cd UR-utils
 <span class="p">&gt; </span>docker compose up -d       <span class="c"># pendant: http://localhost:6080/vnc.html</span>
-<span class="p">&gt; </span>uv sync
-<span class="p">&gt; </span>uv run urctl bring-up      <span class="c"># power on + release brakes</span>
-<span class="p">&gt; </span>uv run urctl state</pre></div>
+<span class="p">&gt; </span>python3 -m urctl bring-up      <span class="c"># power on + release brakes</span>
+<span class="p">&gt; </span>python3 -m urctl state</pre></div>
     <p class="aside">On Apple Silicon, run the PolyScope X sim instead: <code>HOST_ARCH=arm64 make simx-up</code>.</p>
   </section>
 
   <section class="panel corners" id="use">
     <div class="tag"><b>04</b><span>USE IT</span></div>
     <h2>Move it</h2>
-    <div class="term"><pre><span class="p">&gt; </span>urctl move-joints 0 -1.57 0 -1.57 0 0      <span class="c"># joint move (radians)</span>
-<span class="p">&gt; </span>urctl move-tcp 0 0.05 0 0 0 0 --relative   <span class="c"># tool +50 mm in base Y</span>
-<span class="p">&gt; </span>urctl --host 10.0.0.5 state                <span class="c"># a real robot</span>
-<span class="p">&gt; </span>urctl-mcp --host 10.0.0.5                  <span class="c"># the same commands as MCP tools</span></pre></div>
+    <div class="term"><pre><span class="p">&gt; </span>python3 -m urctl move-joints 0 -1.57 0 -1.57 0 0      <span class="c"># joint move (radians)</span>
+<span class="p">&gt; </span>python3 -m urctl move-tcp 0 0.05 0 0 0 0 --relative   <span class="c"># tool +50 mm in base Y</span>
+<span class="p">&gt; </span>python3 -m urctl --host 10.0.0.5 state                <span class="c"># a real robot</span>
+<span class="p">&gt; </span>python3 -m urctl.mcp_server --host 10.0.0.5                  <span class="c"># the same commands as MCP tools</span></pre></div>
     <p>Every move is checked by a safety envelope before it is sent and is written to an audit log.
       On a real robot, set the pendant to <strong>Remote</strong> first.</p>
   </section>
@@ -514,7 +513,7 @@
     <div class="tag"><b>05</b><span>CAMERA</span><span class="r">OPTIONAL</span></div>
     <h2>Click to pick</h2>
     <p>A RealSense D435 on the tool flange turns a click on the camera image into a robot move.</p>
-    <div class="term"><pre><span class="p">&gt; </span>uv run perceptronics --fake gui    <span class="c"># no camera needed</span></pre></div>
+    <div class="term"><pre><span class="p">&gt; </span>python3 -m perceptronics gui --fake    <span class="c"># no camera needed</span></pre></div>
   </section>
 
   <section class="panel corners" id="more">
@@ -571,8 +570,8 @@
       [['Nothing is happening; an installer', 'window is open somewhere'], ['Find it on the taskbar. Next, accept,', 'Install, Finish'], 'fix-sdk'],
       [['SETUP DID NOT FINISH and none', 'of the above'], ['Restart the computer, run Windows-Setup', 'again. Then: Getting help'], 'fix-again'] ] },
     { step: 'STEP 4', q: ['Does your browser show the', 'green picture of the table?'], b: [
-      [['"Setup has not been run yet"'], ['Do step 3 first'], 'fix-uv'],
-      [['"uv … is not recognized"'], ['Restart the computer, then double-click', 'Windows-Start again'], 'fix-uv'],
+      [['"Setup has not been run yet"'], ['Do step 3 first'], 'fix-python'],
+      [['The same, but setup did finish'], ['Restart the computer, then double-click', 'Windows-Start again'], 'fix-python'],
       [['No browser opened, or "can\'t', 'reach this page"'], ['Keep the black window open. In the browser', 'address bar type localhost:7621, Enter'], 'fix-browser'],
       [['"Only one usage of each socket', 'address" / "already in use"'], ['It is running twice. Close every black', 'window, then start once'], 'fix-port'],
       [['"unknown cell"'], ['Start again. Press Enter alone, or type', 'the cell name exactly'], 'fix-cell'],

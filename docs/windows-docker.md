@@ -2,7 +2,7 @@
 
 One script takes a Windows 11 laptop with Docker Desktop from a fresh clone to the
 RGB-D cockpit in the browser, RealSense included. Nothing else is installed on
-Windows: no Python, no uv, no RealSense SDK. The image is the Jetson's
+Windows: no Python, no RealSense SDK. The image is the Jetson's
 (`Dockerfile.perceptronics`: librealsense v2.58.4, libusb backend); what is
 Windows-specific is getting the camera into it and the ports out.
 

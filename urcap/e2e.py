@@ -18,13 +18,13 @@ files that were packaged, then drives PolyScope's own UI headlessly:
   it opens the hold-to-move screen);
 * the cockpit URL saved through ``applicationNodeService.updateNode`` survives a reload.
 
-The browser half needs Playwright (``uv run --with playwright==1.63.0 python
-urcap/e2e.py``; ``playwright install chromium`` once) and the ``perceptronics``
+The browser half needs Playwright (``python3 -m pip install playwright==1.63.0``, then
+``python3 -m playwright install chromium`` once) and the ``perceptronics``
 package; ``--no-browser`` stops after the install checks. Needs Docker, and the
 simulator needs ``--privileged``.
 
-    uv run --with playwright==1.63.0 python urcap/e2e.py                   # the pinned image
-    uv run --with playwright==1.63.0 python urcap/e2e.py --image universalrobots/ursim_polyscopex:10.14.0
+    python3 urcap/e2e.py                   # the pinned image
+    python3 urcap/e2e.py --image universalrobots/ursim_polyscopex:10.14.0
     python3 urcap/e2e.py --no-browser --keep                               # leave the sim running
 """
 
@@ -475,7 +475,7 @@ def browser_checks(checks: Checks, port: int, cockpit_port: int, shots: Path | N
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        checks.fail("playwright", "not importable — run under `uv run --with playwright==1.63.0`")
+        checks.fail("playwright", "not importable — `python3 -m pip install playwright==1.63.0`")
         return
     origin = f"http://localhost:{port}"
     with fake_cockpit(cockpit_port, origin) as cockpit, sync_playwright() as p:

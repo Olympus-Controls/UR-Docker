@@ -1,6 +1,6 @@
 @echo off
 rem Double-click setup for Windows: no command line needed. Runs scripts\setup-windows.ps1
-rem (uv + Python, optionally the Intel RealSense SDK, the project environment) and keeps
+rem (Python if it is missing, optionally the Intel RealSense SDK) and keeps
 rem the window open so the result can be read. docs\index.html is the walk-through.
 title Perceptronics - Setup
 cd /d "%~dp0"
@@ -13,8 +13,8 @@ set SKIPSDK=
 choice /c YN /m "Will an Intel RealSense camera be plugged into THIS computer"
 if errorlevel 2 set SKIPSDK=-SkipSdk
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-windows.ps1" %SKIPSDK% %*
+if not errorlevel 1 goto done
 echo.
-if exist ".venv\Scripts\python.exe" goto done
 echo  ==========================================================
 echo   SETUP DID NOT FINISH.
 echo   Read the red text above, then see the Troubleshooting
@@ -24,6 +24,7 @@ echo  ==========================================================
 pause
 exit /b 1
 :done
+echo.
 echo  ==========================================================
 echo   SETUP FINISHED.
 echo   "NOT READY" and [FAIL] lines about the robot or cockpit

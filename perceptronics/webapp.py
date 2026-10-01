@@ -5,9 +5,9 @@ capture into the RealSenseTrainer dataset layout.
 Zero-dependency (stdlib ``http.server``), same shape as ``urctl gui``: a
 single-file page in ``perceptronics/webui/index.html`` over a small API.
 
-    uv run perceptronics gui --fake                 # no camera: synthetic scene
-    sudo uv run perceptronics gui                   # the D435 (macOS needs root)
-    uv run perceptronics gui --bind 0.0.0.0         # serve off-box (Jetson → laptop)
+    python3 -m perceptronics gui --fake                 # no camera: synthetic scene
+    sudo python3 -m perceptronics gui                   # the D435 (macOS needs root)
+    python3 -m perceptronics gui --bind 0.0.0.0         # serve off-box (Jetson → laptop)
 
 API:
 

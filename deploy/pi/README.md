@@ -48,11 +48,11 @@ with a D435 in this repo**. If the camera drops out under load, check the supply
 
 ## 2. Deploy (one command, from your laptop)
 
-From a checkout of this repo on the laptop (it needs `uv` and `ssh`):
+From a checkout of this repo on the laptop (it needs `python3` with `pip`, and `ssh`):
 
     scripts/deploy-pi.sh pi@192.168.3.10 --cell ur3 --robot-host 192.168.3.3
 
-This builds the wheel (`uv build`, the repo's locked tooling), copies it and `deploy/pi/`
+This builds the wheel (`python3 -m pip wheel`), copies it and `deploy/pi/`
 to the PC, runs `install.sh` there under `sudo`, and prints `perceptronics doctor` from the
 PC. The first run compiles librealsense, which takes tens of minutes on a Pi 5 and longer on a Pi 4 (not yet timed). Later runs
 reuse it. Run from a terminal, and sudo on the PC prompts for your password. Run from an

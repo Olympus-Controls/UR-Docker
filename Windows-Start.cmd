@@ -4,7 +4,6 @@ rem Enter alone = practice mode (the sim cell: synthetic camera, no robot needed
 title Perceptronics - running (close this window to stop)
 cd /d "%~dp0"
 if not exist "scripts\cockpit.ps1" goto notunzipped
-if not exist ".venv\Scripts\python.exe" goto nosetup
 echo.
 echo  PERCEPTRONICS
 echo  Practice mode needs no robot and no camera: just press Enter.
@@ -25,13 +24,6 @@ echo   instructions page.
 echo  ==========================================================
 pause
 exit /b 0
-:nosetup
-echo.
-echo  Setup has not been run yet (or did not finish).
-echo  Close this window and double-click Windows-Setup first.
-echo.
-pause
-exit /b 1
 :notunzipped
 echo.
 echo  This file is still inside the ZIP, or was moved out of its folder.

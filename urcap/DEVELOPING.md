@@ -153,7 +153,7 @@ the Move buttons need a cockpit with a robot link (below).
 For the real camera: restart your cockpit with CORS, e.g.
 
 ```bash
-sudo .venv/bin/perceptronics --cell ur3 gui --rs-lean --cors http://localhost:8000
+sudo python3 -m perceptronics --cell ur3 gui --rs-lean --cors http://localhost:8000
 ```
 
 (same port as the fake one, so the node's URL doesn't change; stop `make
@@ -193,7 +193,7 @@ with the versions its JavaScript template uses (`contribution-api`, `urcap-utils
 | `python3 urcap/track.py update` | re-resolve and rewrite `target.json` + the `urcap-target` lines in README.md and this page |
 | `python3 urcap/track.py compat` (`make urcap-compat`) | every PolyScope member the node calls or implements (`track.API_SURFACE`, held to `main.js` + the worker by a test) is still in the pinned `contribution-api` typings (UR's npm feed); `manifest.yaml` validates against the SDK's manifest spec; the template still uses the `threads` the worker's hand-written protocol was verified against; the SDK's simulator is the notes' robot image by digest |
 | `python3 urcap/psx_matrix.py run --version all --rmi` (`make urcapx-matrix`) | the same e2e against the newest PolyScope X releases on Docker Hub from the URCap's floor, 10.8 (`RELEASES` / `FLOOR`; `check-tags` flags a newer one), one summary; `.github/workflows/urcapx-matrix.yml` runs it per release on changes to the URCap and weekly (not a required check) |
-| `uv run --with playwright==1.63.0 python urcap/e2e.py` (`make urcap-e2e`) | boots the pinned simulator, installs a fresh build over urservice, checks nginx serves the packaged bytes, then headlessly: node renders, goes live on a `--fake` cockpit, hover depth, click → `/api/segment`, PolyScope's `getKinematicInfo` / `getJointPositions` / FK → IK round trip, the saved cockpit URL survives a reload. About 2 min on the Mac (arm64 image); `--keep` leaves the sim up |
+| `python3 urcap/e2e.py` (`make urcap-e2e`) | boots the pinned simulator, installs a fresh build over urservice, checks nginx serves the packaged bytes, then headlessly: node renders, goes live on a `--fake` cockpit, hover depth, click → `/api/segment`, PolyScope's `getKinematicInfo` / `getJointPositions` / FK → IK round trip, the saved cockpit URL survives a reload. About 2 min on the Mac (arm64 image); `--keep` leaves the sim up |
 
 Nothing needs a login: the notes, the SDK (`UniversalRobots/PolyScopeX_URCap_SDK`),
 Docker Hub and UR's npm feed (`pkgs.dev.azure.com/polyscopex`) are public.
