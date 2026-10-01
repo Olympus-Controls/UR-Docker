@@ -8,45 +8,59 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * The URScript a Perceptronic Pick node contributes — generated here with no UR API, so it is
- * tested on any JDK — and the node's settings (one table, {@link #NUMBERS}: key, default,
- * limits, label; the Options screen and the data model both read it).
+ * The URScript a 3D Pick node contributes — generated here with no UR API, so it is tested on
+ * any JDK — and the node's settings (one table, {@link #NUMBERS}: key, default, limits,
+ * label; the Options screen and the data model both read it).
  *
- * <p>One run of the node picks <b>one part</b>. It runs inside the operator's program, so it
- * works in Local mode and needs no Primary client:
+ * <p>One run of the node is one move sequence: it starts with the survey and ends with the
+ * gripper clamped on <b>one part</b> (0.7.0, Nick 2026-09-30). The node has no children; what
+ * happens to the part is the program's next nodes, which can branch on the result variable.
+ * It runs inside the operator's program, so it works in Local mode and needs no Primary
+ * client:
  *
  * <ol>
  *   <li>force the TCP to the flange (the pick server answers in flange poses) and open the
  *       gripper fully — the fingers open while the arm travels;</li>
  *   <li>ask the pick server {@code NEXT}: a part it already saw at a picture point (the arm
- *       then goes straight to the close look over it — no trip back for a picture) or the
+ *       then goes straight to the closer look over it — no trip back for a picture) or the
  *       picture point to look from;</li>
- *   <li>at a picture point: {@code movej} there, settle, {@code FIND} — the server finds the
- *       parts by their volume (the part's size above the taught plane), numbers them in the
- *       chosen order and answers the first; an empty picture point sends the arm on to the
- *       next one;</li>
- *   <li>the close look ({@code LOOK}: the camera halfway to the part, aimed at it) and
- *       {@code REFINE} — straight down, then leaned 12° and 24° while the controller's own IK
- *       can't solve approach + grip + lift;</li>
+ *   <li>the survey, at a picture point: {@code movej} there, settle, {@code FIND} — the
+ *       server finds the parts by their volume, keeps those the arm's kinematics reach,
+ *       numbers them in the chosen order and answers the first; an empty picture point sends
+ *       the arm on to the next one;</li>
+ *   <li>the closer look, unless switched off ({@code LOOK}: the camera halfway to the part,
+ *       the part clear of the gripper in the picture) and {@code REFINE} — straight down,
+ *       then leaned 12° and 24° while the controller's own IK can't solve approach + grip.
+ *       With the closer look off every part is measured from its picture point;</li>
  *   <li>the approach — fingertips {@code approachMm} over the part's top, fingers fully open —
- *       down to the grip, close, lift. A close on nothing opens, lifts and tries the next
+ *       down to the grip, close. A close on nothing opens, backs up and tries the next
  *       part;</li>
- *   <li>the result variable is True only after a held lift, the location variable says which
- *       picture point it came from, and the node's children — the routine after the pick —
- *       run with the operator's TCP back. Anything that stops short says why in a popup.</li>
+ *   <li>the result variable is True only when the gripper holds, the location variable says
+ *       which picture point the part came from, and the operator's TCP is back. Anything
+ *       that stops short says why in a popup.</li>
  * </ol>
  *
- * With the gripper set to "my nodes" the children instead run at the grip (0.4.0's contract)
- * and the routine after the pick is simply the program's next nodes.
+ * Speeds and the gripper are not the node's to configure: travel at {@link #SPEED} of its
+ * own limits, a Robotiq gripper through its URCap's socket at {@link #GRIP_FORCE_PCT}.
  */
 final class PickScript {
-    static final String VERSION = "0.6.0";
+    static final String VERSION = "0.7.0";
     static final int DEFAULT_PICK_PORT = 7622;
     static final String SOCKET = "rs_pick";
     static final String RQ_SOCKET = "rs_rq";
     static final int MAX_POINTS = 12;
     static final String[] ORDERS = {"LR", "RL", "FB", "BF"};
-    static final String[] GRIPPERS = {"robotiq", "digital", "children"};
+    /** "digital" has no screen: it is the simulator's stand-in (a URSim has no Robotiq). */
+    static final String[] GRIPPERS = {"robotiq", "digital"};
+    static final String[] SHAPES = {"box", "cyl"};
+    static final double SPEED = 0.6; // of the node's own joint / linear limits
+    static final double SETTLE_S = 0.2; // before each picture
+    static final int MAX_ATTEMPTS = 3; // grasps per run
+    static final double STROKE_MM = 50; // the fingers' full opening (Hand-E)
+    static final int GRIP_FORCE_PCT = 40;
+    static final int GRIP_SPEED_PCT = 100;
+    static final int DIGITAL_OUT = 0;
+    static final double DIGITAL_WAIT_S = 0.5;
 
     /** The pick server's status codes, as the operator should read them. */
     static final String[][] REASONS = {
@@ -59,7 +73,7 @@ final class PickScript {
         {"-7", "something is in view, but nothing the size of the part"},
         {"-8", "no answer from the camera computer within 10 s"},
         {"-9", "the camera computer did not understand the request (update it?)"},
-        {"-10", "the only parts in view are out of reach"},
+        {"-10", "the only parts in view are out of the arm's reach"},
         {"-11", "no room for the open fingers beside any part"},
         {"-12", "the parts in view are outside the pick area"},
         {"-13", "the only part in view is cut off by the edge of the picture"},
@@ -100,18 +114,6 @@ final class PickScript {
                 "fingertips over the top, fully open"),
         new Num("gripBelowTopMm", "approach", "Grip depth", "mm", 15, 0, 60, 1,
                 "fingertips below the top to grip"),
-        new Num("liftMm", "approach", "Lift", "mm", 60, 5, 300, 5, "straight up after the grip"),
-        new Num("lookMm", "approach", "Close look", "mm", 90, 40, 400, 10,
-                "camera over the top, if no better pose"),
-        new Num("strokeMm", "gripper", "Open width", "mm", 50, 10, 300, 1, "the fingers' full opening (Hand-E: 50)"),
-        new Num("gripperForcePct", "gripper", "Grip force", "%", 40, 0, 100, 5, "Robotiq force"),
-        new Num("gripperSpeedPct", "gripper", "Finger speed", "%", 100, 1, 100, 5, "Robotiq speed"),
-        new Num("gripperDo", "gripper", "Digital output", "", 0, 0, 7, 1, "the output that closes the gripper"),
-        new Num("gripperWaitS", "gripper", "Close time", "s", 0.5, 0, 5, 0.1, "how long a digital-output gripper takes"),
-        new Num("speedPct", "motion", "Speed", "%", 60, 10, 100, 10, "of the node's travel speed"),
-        new Num("settleS", "motion", "Settle", "s", 0.2, 0, 2, 0.05,
-                "before each picture: sharp vs fast"),
-        new Num("maxAttempts", "motion", "Grasps per run", "", 3, 1, 10, 1, "tries before the node gives up"),
     };
 
     static final Map<String, Num> BY_KEY = new LinkedHashMap<String, Num>();
@@ -143,8 +145,14 @@ final class PickScript {
     String orderFirst = "LR";
     String orderRows = "FB";
     String gripper = "robotiq";
-    double reachMinM = 0; // 0 and 0: no reach limit sent (the Installation screen sets it)
-    double reachMaxM = 0;
+    /** "box" (length × width × height) or "cyl": an upright cylinder, {@code partLengthMm} its diameter. */
+    String shape = "box";
+    /** Check the gripper against the part as measured (wider than the fingers open, no room beside it). */
+    boolean gripCheck = false;
+    /** Move in for a second, closer measurement before the approach. */
+    boolean closeLook = true;
+    /** PolyScope's name for the arm ("UR3"): the pick server asks its kinematics what is in reach. "": not sent. */
+    String arm = "";
     boolean popupOnFail = true;
     /** The PolyScope the script runs on ({major, minor, bugfix}), or null: the newest. */
     int[] polyscope = null;
@@ -203,7 +211,7 @@ final class PickScript {
         if (!host.matches("[A-Za-z0-9.:\\-]+")) return "the camera computer's host \"" + host + "\" is not an address";
         if (port < 1 || port > 65535) return "the pick port must be 1..65535";
         if (!nodeId.matches("[0-9a-f]{1,12}")) return "the node has no identity yet - open it once";
-        if (points.isEmpty()) return "add a picture point: move the arm where the camera sees the parts and tap Add";
+        if (points.isEmpty()) return "add a picture point: move the arm where the camera sees the parts and tap +";
         if (points.size() > MAX_POINTS) return "at most " + MAX_POINTS + " picture points";
         for (int i = 0; i < points.size(); i++) {
             Point p = points.get(i);
@@ -218,25 +226,36 @@ final class PickScript {
                 return k.label.toLowerCase(Locale.ROOT) + " must be " + num(k.min) + ".." + num(k.max) + " " + k.unit;
             }
         }
+        if (!contains(SHAPES, shape)) return "unknown part shape \"" + shape + "\"";
+        if (!arm.isEmpty() && !arm.matches("[A-Za-z0-9]{1,8}")) return "the robot model \"" + arm + "\" is not a name";
         if (n("gripBelowTopMm") > n("partHeightMm") - 2) {
             return "the grip (" + num(n("gripBelowTopMm")) + " mm below the top) would put the fingertips on the table:"
                     + " the part is " + num(n("partHeightMm")) + " mm tall";
         }
-        double shortSide = Math.min(n("partLengthMm"), n("partWidthMm"));
-        if (shortSide > n("strokeMm") - 6) {
-            return "the part's short side (" + num(shortSide) + " mm) needs fingers that open wider than "
-                    + num(n("strokeMm")) + " mm";
+        if (gripCheck && shortSide() > STROKE_MM - 6) {
+            return "the part's short side (" + num(shortSide()) + " mm) needs fingers that open wider than "
+                    + num(STROKE_MM) + " mm - or switch the grip check off";
         }
         if (!isOrder(orderFirst, orderRows)) return "the pick order must be one horizontal and one vertical direction";
         if (!contains(GRIPPERS, gripper)) return "unknown gripper \"" + gripper + "\"";
-        if (!(reachMinM >= 0 && reachMinM < 3 && reachMaxM >= 0 && reachMaxM <= 3
-                && (reachMaxM == 0 || reachMaxM > reachMinM))) {
-            return "the reach limits are not valid (Installation → Perceptronic → Reach)";
-        }
         if (!foundVariable.matches("[A-Za-z_][A-Za-z0-9_]*") || !locVariable.matches("[A-Za-z_][A-Za-z0-9_]*")) {
             return "the result variable names are not valid";
         }
         return null;
+    }
+
+    boolean round() {
+        return "cyl".equals(shape);
+    }
+
+    /** The footprint's long side (a cylinder: its diameter). */
+    double longSide() {
+        return round() ? n("partLengthMm") : Math.max(n("partLengthMm"), n("partWidthMm"));
+    }
+
+    /** The side the fingers close across (a cylinder: its diameter). */
+    double shortSide() {
+        return round() ? n("partLengthMm") : Math.min(n("partLengthMm"), n("partWidthMm"));
     }
 
     static boolean isOrder(String first, String rows) {
@@ -257,13 +276,15 @@ final class PickScript {
      */
     String tokens(int i) {
         StringBuilder b = new StringBuilder();
-        double l = Math.max(n("partLengthMm"), n("partWidthMm"));
-        double w = Math.min(n("partLengthMm"), n("partWidthMm"));
-        b.append(" part=").append(num(l)).append('x').append(num(w)).append('x').append(num(n("partHeightMm")));
+        b.append(" part=").append(num(longSide())).append('x').append(num(shortSide())).append('x')
+                .append(num(n("partHeightMm")));
         b.append(" tol=").append(num(n("partTolPct")));
+        if (round()) b.append(" shape=cyl");
         b.append(" order=").append(orderFirst).append(',').append(orderRows);
-        b.append(" grip=").append(num(n("gripBelowTopMm"))).append(" stroke=").append(num(n("strokeMm")));
-        if (reachMinM > 0 || reachMaxM > 0) b.append(String.format(Locale.ROOT, " reach=%.3f,%.3f", reachMinM, reachMaxM));
+        b.append(" grip=").append(num(n("gripBelowTopMm"))).append(" stroke=").append(num(STROKE_MM));
+        b.append(" approach=").append(num(n("approachMm")));
+        b.append(" gripcheck=").append(gripCheck ? 1 : 0);
+        if (!arm.isEmpty()) b.append(" arm=").append(arm);
         Point p = i >= 0 && i < points.size() ? points.get(i) : null;
         if (p != null && p.plane != null) {
             b.append(" plane=").append(pose(p.plane));
@@ -275,9 +296,10 @@ final class PickScript {
         return b.toString();
     }
 
+    /** ASCII (it goes into the script). */
     String partText() {
-        return num(Math.max(n("partLengthMm"), n("partWidthMm"))) + " x " + num(Math.min(n("partLengthMm"),
-                n("partWidthMm"))) + " x " + num(n("partHeightMm")) + " mm +-" + num(n("partTolPct")) + " %";
+        return (round() ? "cylinder D" + num(longSide()) : num(longSide()) + " x " + num(shortSide())) + " x "
+                + num(n("partHeightMm")) + " mm +-" + num(n("partTolPct")) + " %";
     }
 
     static String orderText(String first, String rows) {
@@ -287,10 +309,6 @@ final class PickScript {
     static String words(String o) {
         return "LR".equals(o) ? "left to right" : "RL".equals(o) ? "right to left"
                 : "FB".equals(o) ? "front to back" : "back to front";
-    }
-
-    boolean ownGripperNodes() {
-        return "children".equals(gripper);
     }
 
     /**
@@ -320,23 +338,24 @@ final class PickScript {
 
     // -- the script ----------------------------------------------------------------------
 
-    /** The lines before the child nodes. */
-    List<String> beforeChildren() {
+    /** The node's whole contribution, line by line. */
+    List<String> lines() {
         String why = problem();
         if (why != null) throw new IllegalStateException(why);
         List<String> s = new ArrayList<String>();
         int np = points.size();
-        int budget = np + (int) n("maxAttempts") + 1;
-        double k = n("speedPct") / 100.0;
-        String jv = f2(1.05 * k);
-        String ja = f2(1.4 * k);
-        String lv = f2(0.25 * k);
-        String la = f2(0.6 * k);
-        s.add("# Perceptronic Pick " + VERSION + " - camera computer " + host + ":" + port + " - part " + partText()
-                + " - " + orderText(orderFirst, orderRows) + " - " + np + " picture point" + (np == 1 ? "" : "s"));
+        int budget = np + MAX_ATTEMPTS + 1;
+        String jv = f2(1.05 * SPEED);
+        String ja = f2(1.4 * SPEED);
+        String lv = f2(0.25 * SPEED);
+        String la = f2(0.6 * SPEED);
+        String settle = f2(SETTLE_S);
+        s.add("# 3D Pick " + VERSION + " - camera computer " + host + ":" + port + " - part " + partText()
+                + " - " + orderText(orderFirst, orderRows) + " - " + np + " picture point" + (np == 1 ? "" : "s")
+                + (closeLook ? "" : " - no closer look") + (gripCheck ? " - grip check" : ""));
         if (!ikCheck()) {
             s.add("# PolyScope " + polyscope[0] + "." + polyscope[1] + "." + polyscope[2]
-                    + ": no get_inverse_kin_has_solution - the close look and the approach go unchecked");
+                    + ": no get_inverse_kin_has_solution - the closer look and the approach go unchecked");
         }
         s.add(foundVariable + " = False");
         s.add(locVariable + " = 0");
@@ -368,51 +387,47 @@ final class PickScript {
             s.add("      rs_tok = \"" + tokens(i) + "\"");
         }
         s.add("    end");
-        s.add("    if rs_st == 1:");
-        say(s, "      ", "next part already seen, #", "rs_r[12]", true);
-        s.add("    else:");
-        for (int i = 0; i < np; i++) {
-            s.add("      " + (i == 0 ? "if" : "elif") + " rs_loc == " + (i + 1) + ":");
-            s.add("        movej(" + joints(points.get(i).joints) + ", a=" + ja + ", v=" + jv + ")");
+        if (closeLook) {
+            s.add("    if rs_st == 1:");
+            say(s, "      ", "next part already seen, #", "rs_r[12]", true);
+            s.add("    else:");
+            survey(s, "      ", ja, jv, settle);
+            s.add("    end");
+        } else {
+            // every part is measured from its picture point: the parts queued at the last one
+            // were seen from there too, but the arm is no longer where it could look again
+            survey(s, "    ", ja, jv, settle);
         }
-        s.add("      end");
-        s.add("      sleep(" + f2(n("settleS")) + ")");
-        say(s, "      ", "picture at point ", "rs_loc", true);
-        s.add("      socket_send_line(str_cat(\"FIND \", str_cat(to_str(get_actual_tcp_pose()), rs_tok)), \""
-                + SOCKET + "\")");
-        read16(s, "      ");
-        say(s, "      ", "FIND status ", "rs_st", true);
-        s.add("      if rs_st != 1:");
-        reasons(s, "        ");
-        s.add("      end");
-        s.add("    end");
         s.add("    if rs_st == 1:");
         s.add("      rs_c = p[rs_r[2], rs_r[3], rs_r[4], 0, 0, 0]");
         s.add("      rs_top = p[rs_r[5], rs_r[6], rs_r[7], rs_r[8], rs_r[9], rs_r[10]]");
-        s.add("      rs_look = pose_trans(rs_top, p[0, 0, " + m(-n("lookMm")) + ", 0, 0, 0])");
-        s.add("      socket_send_line(str_cat(\"LOOK \", str_cat(to_str(get_actual_tcp_pose()), str_cat(\" \","
-                + " to_str(rs_c)))), \"" + SOCKET + "\")");
-        // its own list: up to PolyScope 5.14 a list keeps its first size ("Resizing of 'List' is
-        // not supported" when rs_r took 10 numbers after 16 — URControl.log of 5.9.4 .. 5.14.6 in
-        // the matrix, 2026-09-29; 5.15.2 on resize it)
-        s.add("      rs_lk = socket_read_ascii_float(10, \"" + SOCKET + "\", 10)");
-        s.add("      if rs_lk[0] == 10:");
-        s.add("        if rs_lk[1] == 1:");
-        s.add("          rs_look = p[rs_lk[5], rs_lk[6], rs_lk[7], rs_lk[8], rs_lk[9], rs_lk[10]]");
-        s.add("        end");
-        s.add("      end");
-        if (ikCheck()) {
-            s.add("      if get_inverse_kin_has_solution(rs_look, get_actual_joint_positions()):");
-            s.add("        movej(get_inverse_kin(rs_look, get_actual_joint_positions()), a=" + ja + ", v=" + jv + ")");
-            s.add("        sleep(" + f2(n("settleS")) + ")");
-            say(s, "        ", "close look ", "rs_look", true);
-            s.add("      else:");
-            say(s, "        ", "the close look is out of reach - looking again from here", null, true);
+        if (closeLook) {
+            s.add("      socket_send_line(str_cat(\"LOOK \", str_cat(to_str(get_actual_tcp_pose()), str_cat(\" \","
+                    + " str_cat(to_str(rs_c), \" stroke=" + num(STROKE_MM) + "\")))), \"" + SOCKET + "\")");
+            // its own list: up to PolyScope 5.14 a list keeps its first size ("Resizing of 'List' is
+            // not supported" when rs_r took 10 numbers after 16 — URControl.log of 5.9.4 .. 5.14.6 in
+            // the matrix, 2026-09-29; 5.15.2 on resize it)
+            s.add("      rs_lk = socket_read_ascii_float(10, \"" + SOCKET + "\", 10)");
+            s.add("      rs_see = False");
+            s.add("      rs_look = rs_top");
+            s.add("      if rs_lk[0] == 10:");
+            s.add("        if rs_lk[1] == 1:");
+            s.add("          rs_look = p[rs_lk[5], rs_lk[6], rs_lk[7], rs_lk[8], rs_lk[9], rs_lk[10]]");
+            s.add("          rs_see = True");
+            s.add("        end");
             s.add("      end");
-        } else {
-            s.add("      movej(get_inverse_kin(rs_look, get_actual_joint_positions()), a=" + ja + ", v=" + jv + ")");
-            s.add("      sleep(" + f2(n("settleS")) + ")");
-            say(s, "      ", "close look ", "rs_look", true);
+            if (ikCheck()) {
+                s.add("      if rs_see:");
+                s.add("        rs_see = get_inverse_kin_has_solution(rs_look, get_actual_joint_positions())");
+                s.add("      end");
+            }
+            s.add("      if rs_see:");
+            s.add("        movej(get_inverse_kin(rs_look, get_actual_joint_positions()), a=" + ja + ", v=" + jv + ")");
+            s.add("        sleep(" + settle + ")");
+            say(s, "        ", "closer look ", "rs_look", true);
+            s.add("      else:");
+            say(s, "        ", "no closer look from here - measuring again where the arm is", null, true);
+            s.add("      end");
         }
         s.add("      rs_leans = [0, 12, 24]");
         s.add("      rs_lean = 0");
@@ -433,14 +448,13 @@ final class PickScript {
         s.add("          rs_top = p[rs_r[5], rs_r[6], rs_r[7], rs_r[8], rs_r[9], rs_r[10]]");
         s.add("          rs_hover = pose_trans(rs_top, p[0, 0, " + m(-n("approachMm")) + ", 0, 0, 0])");
         s.add("          rs_grip = pose_trans(rs_top, p[0, 0, " + m(n("gripBelowTopMm")) + ", 0, 0, 0])");
-        s.add("          rs_lift = pose_trans(rs_top, p[0, 0, " + m(-n("liftMm")) + ", 0, 0, 0])");
         if (ikCheck()) {
             s.add("          rs_q = get_actual_joint_positions()");
             s.add("          if get_inverse_kin_has_solution(rs_hover, rs_q) and get_inverse_kin_has_solution(rs_grip,"
-                    + " rs_q) and get_inverse_kin_has_solution(rs_lift, rs_q):");
+                    + " rs_q):");
             s.add("            rs_go = True");
             s.add("          else:");
-            say(s, "            ", "no IK for approach + grip + lift at lean ", "rs_leans[rs_lean]", true);
+            say(s, "            ", "no IK for approach + grip at lean ", "rs_leans[rs_lean]", true);
             s.add("          end");
         } else {
             s.add("          rs_go = True");
@@ -457,81 +471,68 @@ final class PickScript {
         say(s, "        ", "down to the grip ", "rs_grip", true);
         s.add("        movel(rs_grip, a=0.3, v=0.05)");
         s.add("        rs_held = False");
-        if (ownGripperNodes()) {
-            s.add("        set_tcp(rs_tcp0)");
-            say(s, "        ", "your gripper nodes", null, true);
-        } else {
-            gripperClose(s, "        ");
-        }
-        return s;
-    }
-
-    /** The lines after the child nodes (with a gripper the node drives: before them — see {@link #render}). */
-    List<String> afterChildren() {
-        List<String> s = new ArrayList<String>();
-        boolean own = ownGripperNodes();
-        double k = n("speedPct") / 100.0;
-        if (own) {
-            s.add("        set_tcp(p[0, 0, 0, 0, 0, 0])");
-            s.add("        rs_held = True");
-        }
-        say(s, "        ", "lift", null, true);
-        s.add("        movel(rs_lift, a=0.5, v=" + f2(Math.max(0.05, 0.15 * k)) + ")");
+        gripperClose(s, "        ");
         s.add("        if rs_held:");
         s.add("          " + foundVariable + " = True");
         s.add("          " + locVariable + " = rs_loc");
-        say(s, "          ", "picked at point ", "rs_loc", true);
+        say(s, "          ", "holding a part from point ", "rs_loc", true);
         s.add("        else:");
         s.add("          rs_why = \"the gripper closed on nothing\"");
         say(s, "          ", "closed on nothing - trying the next part", null, true);
-        if (!own) gripperOpen(s, "          ");
+        gripperOpen(s, "          ");
+        s.add("          movel(rs_hover, a=0.5, v=" + f2(Math.max(0.05, 0.15 * SPEED)) + ")");
         s.add("        end");
         s.add("      elif rs_rs != 1:");
         s.add("        rs_st = rs_rs");
         reasons(s, "        ");
         s.add("      else:");
-        s.add("        rs_why = \"no approach the arm can reach (straight down or leaned to 24 deg)\"");
+        s.add("        rs_why = \"the controller has no joint solution for the approach (straight down or leaned to"
+                + " 24 deg)\"");
         s.add("      end");
         s.add("    end");
         s.add("  end");
         s.add("  if " + foundVariable + " == False:");
-        s.add("    textmsg(\"Perceptronic Pick: no pick - \", rs_why)");
+        s.add("    textmsg(\"3D Pick: no pick - \", rs_why)");
         s.add("    socket_send_line(str_cat(\"LOG no pick - \", rs_why), \"" + SOCKET + "\")");
         s.add("  end");
         s.add("  socket_close(\"" + SOCKET + "\")");
         s.add("else:");
         s.add("  rs_why = \"no camera computer at " + host + ":" + port
                 + " - is it on, and is the address in Installation > Perceptronic right?\"");
-        s.add("  textmsg(\"Perceptronic Pick: \", rs_why)");
+        s.add("  textmsg(\"3D Pick: \", rs_why)");
         s.add("end");
         if ("robotiq".equals(gripper)) s.add("socket_close(\"" + RQ_SOCKET + "\")");
         s.add("set_tcp(rs_tcp0)");
         if (popupOnFail) {
             s.add("if " + foundVariable + " == False:");
-            s.add("  popup(str_cat(\"Perceptronic Pick: no pick - \", rs_why), \"Perceptronic Pick\", False, True,"
-                    + " blocking=True)");
+            s.add("  popup(str_cat(\"3D Pick: no pick - \", rs_why), \"3D Pick\", False, True, blocking=True)");
             s.add("end");
         }
         return s;
     }
 
-    /** The line that opens the routine after the pick (the children), or null in "my nodes" mode. */
-    String afterPickOpen() {
-        return ownGripperNodes() ? null : "if " + foundVariable + ":";
+    /** The survey: to picture point {@code rs_loc}, settle, FIND. */
+    private void survey(List<String> s, String in, String ja, String jv, String settle) {
+        for (int i = 0; i < points.size(); i++) {
+            s.add(in + (i == 0 ? "if" : "elif") + " rs_loc == " + (i + 1) + ":");
+            s.add(in + "  movej(" + joints(points.get(i).joints) + ", a=" + ja + ", v=" + jv + ")");
+        }
+        s.add(in + "end");
+        s.add(in + "sleep(" + settle + ")");
+        say(s, in, "survey at point ", "rs_loc", true);
+        s.add(in + "socket_send_line(str_cat(\"FIND \", str_cat(to_str(get_actual_tcp_pose()), rs_tok)), \""
+                + SOCKET + "\")");
+        read16(s, in);
+        say(s, in, "FIND status ", "rs_st", true);
+        s.add(in + "if rs_st != 1:");
+        reasons(s, in + "  ");
+        s.add(in + "end");
     }
 
-    /** The whole contribution with {@code children} where the child nodes go — tests and previews. */
-    String render(String children) {
+    /** The whole contribution as one text — tests and previews. */
+    String render() {
         StringBuilder b = new StringBuilder();
-        for (String l : beforeChildren()) b.append(l).append('\n');
-        boolean own = ownGripperNodes();
-        if (own && children != null && !children.isEmpty()) b.append(children).append('\n');
-        for (String l : afterChildren()) b.append(l).append('\n');
-        if (!own) {
-            b.append(afterPickOpen()).append('\n');
-            if (children != null && !children.isEmpty()) b.append(children).append('\n');
-            b.append("end\n");
-        }
+        for (String l : lines()) b.append(l).append('\n');
         return b.toString();
     }
 
@@ -558,12 +559,11 @@ final class PickScript {
             s.add(in + "      end");
             s.add(in + "    end");
             s.add(in + "  end");
-            rq(s, in + "  ", "SPE", (int) Math.round(n("gripperSpeedPct") * 2.55));
-            rq(s, in + "  ", "FOR", (int) Math.round(n("gripperForcePct") * 2.55));
+            rq(s, in + "  ", "SPE", (int) Math.round(GRIP_SPEED_PCT * 2.55));
+            rq(s, in + "  ", "FOR", (int) Math.round(GRIP_FORCE_PCT * 2.55));
             gripperOpen(s, in + "  ");
             s.add(in + "else:");
-            s.add(in + "  rs_why = \"no Robotiq gripper on this controller (is its URCap installed?) - or choose"
-                    + " another gripper in the node's Options\"");
+            s.add(in + "  rs_why = \"no Robotiq gripper on this controller (is its URCap installed?)\"");
             s.add(in + "end");
         } else if ("digital".equals(gripper)) {
             gripperOpen(s, in);
@@ -576,7 +576,7 @@ final class PickScript {
             rq(s, in, "POS", 0);
             rq(s, in, "GTO", 1);
         } else if ("digital".equals(gripper)) {
-            s.add(in + "set_standard_digital_out(" + (int) n("gripperDo") + ", False)");
+            s.add(in + "set_standard_digital_out(" + DIGITAL_OUT + ", False)");
         }
     }
 
@@ -616,8 +616,8 @@ final class PickScript {
             s.add(in + "rs_held = (str_find(rs_obj, \"1\") >= 0) or (str_find(rs_obj, \"2\") >= 0)");
             say(s, in, "gripper ", "rs_obj", true);
         } else {
-            s.add(in + "set_standard_digital_out(" + (int) n("gripperDo") + ", True)");
-            s.add(in + "sleep(" + f2(n("gripperWaitS")) + ")");
+            s.add(in + "set_standard_digital_out(" + DIGITAL_OUT + ", True)");
+            s.add(in + "sleep(" + f2(DIGITAL_WAIT_S) + ")");
             s.add(in + "rs_held = True");
         }
     }
@@ -658,7 +658,7 @@ final class PickScript {
      */
     private static void say(List<String> s, String indent, String text, String value, boolean socket) {
         String v = value == null ? "\"\"" : value;
-        s.add(indent + "textmsg(\"Perceptronic Pick: " + text + "\", " + v + ")");
+        s.add(indent + "textmsg(\"3D Pick: " + text + "\", " + v + ")");
         if (socket) {
             String line = value == null ? "\"LOG " + text + "\"" : "str_cat(\"LOG " + text + "\", to_str(" + value + "))";
             s.add(indent + "socket_send_line(" + line + ", \"" + SOCKET + "\")");

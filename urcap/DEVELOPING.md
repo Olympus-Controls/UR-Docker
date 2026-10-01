@@ -21,13 +21,12 @@ urcap/
   perceptronic/
     manifest.yaml                          vendorID advin, urcapID perceptronic
     perceptronic-frontend/
-      contribution.json                    the applicationNode (tag advin-perceptronic) + two programNodes
-      main.js                              the application node's presenter (a custom element): feed, click → locate, pick areas, reach
+      contribution.json                    the applicationNode (tag advin-perceptronic) + one programNode (3D Pick)
+      main.js                              the application node's presenter (a custom element): two tabs — the feed (Picture / Depth toggle, click → locate) and the pick areas on the arm's reach
       perceptronic-node.worker.js       its behavior worker (node factory / upgrade)
       pickscript.js                        the Pick node's settings + URScript + pose math + the drawings as SVG (worker, page and tests share it)
-      pick.js                              the program nodes' presenters: the Pick row + its dialog, the After picture row
-      pick-node.worker.js                  the Pick node's behaviors (label, validator, code before/after children)
-      after-node.worker.js                 the After picture N node's behaviors
+      pick.js                              the program node's presenter: the 3D Pick row + its dialog (no scrolling; Options = Part / Approach tabs)
+      pick-node.worker.js                  the 3D Pick node's behaviors (label, validator, the whole script before "children" it does not have)
       assets/i18n/en.json                  node titles + supportive text (program.tree.nodes.<tag> for program nodes)
       assets/icons/perceptronic.svg      the P mark — a copy of ../perceptronic.svg (a test holds them equal)
       assets/icons/perceptronic-*.svg    the program nodes' toolbox icons
@@ -112,13 +111,13 @@ out of PolyScope 10.13's own bundles (`web-app/main.js`, `web-program-nodes/*`),
 - **The application context arrives serialized:** `{type: "$$ApplicationContext",
   contributions: {contributionList: [...]}, frames: {framesList}}` — our application node
   is the entry whose `type` / `parentType` is `advin-perceptronic` (cockpit URL,
-  areas, tip, reach margins, robot model).
+  areas, tip, robot model).
 - **Program variables** are declared from the presenter with
   `variableService.createVariable(name, "boolean" | "integer")`; the declaration
   (`{id, name, valueType, _IDENTIFIER}`) is stored in the node, the script writes
   `global <name> = …` (what UR's Assignment node emits for a declaration).
 - **The drawings are the PolyScope 5 node's** (`Diagrams.java`: the order tiles, the part
-  in isometric with the jaws, the approach from the side, the reach map) as SVG strings
+  as a box or a cylinder, the approach from the side, the map of the arm's reach) as SVG strings
   from `pickscript.js` — pure functions, so the tests hold `orderGrid` to the Python
   detector's numbering and every drawing to well-formed, escaped SVG.
 - **Older PolyScope X (the release matrix, 2026-09-30; the floor is 10.8):** `robotPositionService.convertJointPositionsToTcpPose`

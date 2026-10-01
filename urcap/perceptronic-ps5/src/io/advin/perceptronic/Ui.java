@@ -306,6 +306,7 @@ final class Ui {
      */
     static final class Stepper extends JPanel {
         private final JLabel value = new JLabel("", SwingConstants.CENTER);
+        private final JLabel name;
         private final JLabel help;
 
         Stepper(String label, String helpText, final Step step) {
@@ -313,7 +314,8 @@ final class Ui {
             setLayout(new BorderLayout(8, 0));
             setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel text = column();
-            text.add(left(label(label, 14f, true, INK)));
+            name = label(label, 14f, true, INK);
+            text.add(left(name));
             help = label(helpText == null ? "" : helpText, 11.5f, false, MUTED);
             if (helpText != null) text.add(left(help));
             add(text, BorderLayout.CENTER);
@@ -340,6 +342,12 @@ final class Ui {
 
         void setValue(String text) {
             value.setText(text);
+        }
+
+        /** Rename it (Length ↔ Diameter). */
+        void setLabel(String label, String helpText) {
+            name.setText(label);
+            help.setText(helpText == null ? "" : helpText);
         }
 
         @Override
@@ -439,6 +447,100 @@ final class Ui {
         @Override
         public Dimension getMaximumSize() {
             return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    }
+
+    // -- a checkbox --------------------------------------------------------------------------------
+
+    /** {@code [✓] label / help} — the whole row is the tap target. */
+    static final class Check extends JPanel {
+        private boolean on;
+        private final JComponent box;
+
+        Check(String label, String helpText, boolean initial, final Flip flip) {
+            this.on = initial;
+            setOpaque(false);
+            setLayout(new BorderLayout(10, 0));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            box = new JComponent() {
+                @Override
+                public Dimension getPreferredSize() {
+                    return new Dimension(34, TAP);
+                }
+
+                @Override
+                protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = smooth(g);
+                    int y = (getHeight() - 28) / 2;
+                    g2.setColor(Check.this.on ? ACCENT : CARD);
+                    g2.fillRoundRect(2, y, 28, 28, 8, 8);
+                    g2.setColor(Check.this.on ? ACCENT : FAINT);
+                    g2.setStroke(new BasicStroke(1.6f));
+                    g2.drawRoundRect(2, y, 28, 28, 8, 8);
+                    if (Check.this.on) {
+                        g2.setColor(Color.WHITE);
+                        g2.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                        g2.drawPolyline(new int[] {9, 14, 23}, new int[] {y + 14, y + 20, y + 9}, 3);
+                    }
+                    g2.dispose();
+                }
+            };
+            add(box, BorderLayout.WEST);
+            JPanel text = column();
+            text.add(left(label(label, 14f, true, INK)));
+            if (helpText != null) text.add(left(label(helpText, 11.5f, false, MUTED)));
+            add(text, BorderLayout.CENTER);
+            MouseAdapter toggle = new MouseAdapter() {
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    Check.this.on = !Check.this.on;
+                    box.repaint();
+                    flip.flipped(Check.this.on);
+                }
+            };
+            addMouseListener(toggle);
+            box.addMouseListener(toggle);
+            text.addMouseListener(toggle);
+        }
+
+        void setOn(boolean v) {
+            on = v;
+            box.repaint();
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    }
+
+    // -- the picture / depth toggle, painted inside a live picture's frame -----------------------
+
+    /** Paints a two-segment pill at the top right of a {@code w}-wide frame and says where it is. */
+    static final class ViewToggle {
+        static final int W = 168;
+        static final int H = 36;
+        static final int MARGIN = 10;
+
+        private ViewToggle() {
+        }
+
+        static java.awt.Rectangle bounds(int right, int top) {
+            return new java.awt.Rectangle(right - MARGIN - W, top + MARGIN, W, H);
+        }
+
+        static void paint(Graphics2D g, int right, int top, boolean depth) {
+            java.awt.Rectangle r = bounds(right, top);
+            g.setColor(new Color(13, 19, 26, 215));
+            g.fillRoundRect(r.x, r.y, r.width, r.height, r.height, r.height);
+            int half = r.width / 2;
+            g.setColor(ACCENT);
+            g.fillRoundRect(r.x + (depth ? half : 0) + 3, r.y + 3, half - 6, r.height - 6, r.height - 6, r.height - 6);
+            g.setFont(font(13f, true));
+            g.setColor(Color.WHITE);
+            centre(g, "Picture", r.x + half / 2, r.y + r.height / 2);
+            centre(g, "Depth", r.x + half + half / 2, r.y + r.height / 2);
         }
     }
 

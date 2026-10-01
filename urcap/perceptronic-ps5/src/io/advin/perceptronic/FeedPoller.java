@@ -31,6 +31,7 @@ final class FeedPoller implements Runnable {
     private final Listener listener;
     private volatile Cockpit cockpit;
     private volatile long seq;
+    private volatile boolean depth;
     private volatile Thread thread;
 
     FeedPoller(Cockpit cockpit, Listener listener) {
@@ -46,6 +47,15 @@ final class FeedPoller implements Runnable {
     void setCockpit(Cockpit c) {
         cockpit = c;
         seq = 0;
+    }
+
+    /** Poll the depth heatmap ({@code true}) or the colour picture from now on. */
+    void setDepthView(boolean on) {
+        depth = on;
+    }
+
+    boolean depthView() {
+        return depth;
     }
 
     /** Start polling on a daemon thread called {@code name}; a running poller is left alone. */
@@ -76,16 +86,24 @@ final class FeedPoller implements Runnable {
         while (thread == Thread.currentThread() && !Thread.currentThread().isInterrupted()) {
             Cockpit c = cockpit;
             try {
-                Cockpit.Frame f = c.colorPng(seq, POLL_TIMEOUT_MS);
+                boolean heat = depth;
+                Cockpit.Frame f = c.framePng(heat, seq, POLL_TIMEOUT_MS);
                 if (f.status == 503) {
-                    listener.waiting("the cockpit is up but has no frame yet (camera opening?)");
+                    listener.waiting(Cockpit.noPicture(c.base, null));
                     sleep(WAIT_MS);
+                    continue;
+                }
+                if (f.status == 404 && heat) {
+                    depth = false; // a camera computer older than 0.7.0 has no heatmap: the picture instead
+                    Log.detail(c.base + " answered 404 on /api/depth.png: it predates the depth view; update it");
                     continue;
                 }
                 if (f.status != 200) {
                     announced = false;
-                    listener.failed("the cockpit at " + c.base + " answered HTTP " + f.status + " on /api/color.png"
-                            + (f.status == 404 ? " — it predates the URCap routes; update it and restart." : "."));
+                    Log.detail(c.base + " answered HTTP " + f.status + " on /api/color.png");
+                    listener.failed("The camera computer answers, but its software is "
+                            + (f.status == 404 ? "older than this URCap" : "not answering as expected (HTTP " + f.status
+                            + ")") + ".\n• Update the camera computer's software and restart it");
                     sleep(RETRY_MS);
                     continue;
                 }

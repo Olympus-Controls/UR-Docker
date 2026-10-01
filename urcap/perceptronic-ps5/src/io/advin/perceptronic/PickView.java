@@ -8,8 +8,8 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 
 /**
- * The Perceptronic Pick node's screen: {@link PickScreen} (the live picture with the parts
- * numbered, the picture points, the pick order, the Options view) in PolyScope's panel. One
+ * The 3D Pick node's screen: {@link PickScreen} (the live picture, the picture points, the
+ * pick order, the Options view) in PolyScope's panel. One
  * view serves every Pick node in the program, so every action goes to
  * {@code provider.get()} — the node that is open.
  */
@@ -87,8 +87,13 @@ public class PickView implements SwingProgramNodeView<PickContribution> {
         }
 
         @Override
-        public void setGripper(String mode) {
-            node().setGripper(mode);
+        public void setShape(String shape) {
+            node().setShape(shape);
+        }
+
+        @Override
+        public void setDepthView(boolean on) {
+            node().setDepthView(on);
         }
 
         @Override

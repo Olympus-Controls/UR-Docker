@@ -23,8 +23,9 @@ import javax.swing.JPanel;
  * surface taught by touching it with the fingertips at three points (its corner, a point
  * along one edge, a point on the far side): the program's detector then measures parts'
  * heights from exactly that plane and ignores anything outside it. Beside the list, the cell
- * from above: the base, the ring the parts must be in (the reach limits, set here too), and
- * every area — one out of reach shows at a glance.
+ * from above: the base, how far this arm reaches, and every area in it — one past the arm's
+ * reach shows at a glance. There are no reach margins to set (0.7.0): whether a part can be
+ * picked is the arm's kinematics' answer, part by part.
  */
 // Swing components are never serialized here; javac's serial lint does not apply to them
 @SuppressWarnings("serial")
@@ -40,9 +41,9 @@ final class LocationsScreen extends JPanel {
 
         void select(int area);
 
-        void setReach(String key, double value);
+        void stepTip(double byMm);
 
-        void askReach(String key, JLabel anchor);
+        void askTip(JLabel anchor);
     }
 
     /** One pick area as the screen shows it. */
@@ -69,8 +70,6 @@ final class LocationsScreen extends JPanel {
     private final JPanel list = Ui.column();
     private final Diagrams.ReachMap map = new Diagrams.ReachMap();
     private final Ui.Note note = new Ui.Note();
-    private final Ui.Stepper inner;
-    private final Ui.Stepper outer;
     private final Ui.Stepper tip;
     private final JLabel model = Ui.label("", 12f, false, Ui.MUTED);
 
@@ -98,43 +97,38 @@ final class LocationsScreen extends JPanel {
         add(left, BorderLayout.CENTER);
 
         JPanel right = Ui.column();
-        right.setPreferredSize(new Dimension(300, 10));
-        right.add(Ui.left(Ui.label("Reach", 17f, true, Ui.INK)));
+        right.setPreferredSize(new Dimension(320, 10));
+        right.add(Ui.left(Ui.label("The arm's reach", 17f, true, Ui.INK)));
         right.add(Ui.left(model));
         right.add(Box.createVerticalStrut(4));
         map.setAlignmentX(Component.LEFT_ALIGNMENT);
-        map.setMaximumSize(new Dimension(300, 250));
+        map.setMaximumSize(new Dimension(320, 320));
         right.add(map);
         right.add(Box.createVerticalStrut(6));
-        inner = new Ui.Stepper("Inner margin", "past the base's outer radius", step("reachInnerMm", 10));
-        outer = new Ui.Stepper("Outer margin", "inside the arm's rated reach", step("reachOuterMm", 10));
-        tip = new Ui.Stepper("Fingertip length", "flange to fingertips, for the touches", step("tipMm", 1));
-        right.add(inner);
-        right.add(outer);
-        right.add(tip);
-        add(right, BorderLayout.EAST);
-    }
-
-    private Ui.Step step(final String key, final double by) {
-        return new Ui.Step() {
+        tip = new Ui.Stepper("Fingertip length", "flange to fingertips", new Ui.Step() {
             @Override
             public void step(int direction) {
-                actions.setReach(key, direction * by);
+                actions.stepTip(direction);
             }
 
             @Override
             public void type(JLabel anchor) {
-                actions.askReach(key, anchor);
+                actions.askTip(anchor);
             }
-        };
+        });
+        right.add(tip);
+        add(right, BorderLayout.EAST);
     }
 
+    /** The base's keep-out past its outer radius (m): {@code perceptronics.volume.REACH_MARGIN_M}. */
+    static final double KEEP_OUT_M = 0.150;
+
     /**
-     * Refresh: the areas, which is selected, the reach ring ({@code baseM} the base's outer
-     * radius, the margins in mm, {@code reachM} the rated reach; 0 when the model is unknown).
+     * Refresh: the areas, which is selected, the arm ({@code baseM} the base's outer radius,
+     * {@code reachM} its rated reach; 0 when the model is unknown).
      */
     void show(final List<Area> areas, final int selected, final String modelName, final double baseM,
-            final double reachM, final double innerMm, final double outerMm, final double tipMm) {
+            final double reachM, final double tipMm) {
         PickScreen.onEdt(() -> {
             list.removeAll();
             List<double[]> corners = new ArrayList<double[]>();
@@ -142,7 +136,7 @@ final class LocationsScreen extends JPanel {
             int hi = -1;
             for (int i = 0; i < areas.size(); i++) {
                 list.add(row(i, areas.get(i), i == selected));
-                list.add(Box.createVerticalStrut(6));
+                list.add(Box.createVerticalStrut(4));
                 if (areas.get(i).plane != null) {
                     if (i == selected) hi = corners.size();
                     corners.add(Diagrams.corners(areas.get(i).plane));
@@ -153,16 +147,19 @@ final class LocationsScreen extends JPanel {
                 list.add(Ui.left(Ui.label("no pick area yet: without one the table is found live in every picture",
                         12.5f, false, Ui.MUTED)));
             }
-            double min = baseM + innerMm / 1000.0;
-            double max = reachM > 0 ? Math.max(0, reachM - outerMm / 1000.0) : 0;
-            map.set(baseM, min, max, corners, names, hi);
+            map.set(modelName, baseM, baseM + KEEP_OUT_M, reachM, corners, names, hi);
             model.setText(reachM > 0
-                    ? String.format(Locale.ROOT, "%s: base Ø%.0f mm, reach %.0f mm", modelName, baseM * 2000, reachM * 1000)
-                    : "robot model unknown — set the margins by hand");
-            inner.setValue(Ui.value(innerMm, "mm"));
-            outer.setValue(Ui.value(outerMm, "mm"));
+                    ? String.format(Locale.ROOT, "%s: reaches %.0f mm from its base axis", modelName, reachM * 1000)
+                    : "robot model unknown — the controller decides what it reaches");
             tip.setValue(Ui.value(tipMm, "mm"));
             String warn = null;
+            for (int i = 0; i < corners.size() && reachM > 0; i++) {
+                double far = Diagrams.farthest(corners.get(i));
+                if (far > reachM) {
+                    warn = names.get(i) + " goes " + String.format(Locale.ROOT, "%.0f", (far - reachM) * 1000)
+                            + " mm past the arm's reach: parts out there are seen but not picked";
+                }
+            }
             for (Area a : areas) {
                 if (a.plane == null) continue;
                 double tilt = PoseMath.tiltDeg(a.plane);
@@ -172,13 +169,13 @@ final class LocationsScreen extends JPanel {
                 }
             }
             note.set(warn != null ? warn : "Parts are picked only inside an area a picture point looks at, and only"
-                    + " inside the reach ring.", warn != null ? Ui.Kind.WARN : Ui.Kind.INFO);
+                    + " where the arm has a joint solution for the grasp.", warn != null ? Ui.Kind.WARN : Ui.Kind.INFO);
             revalidate();
             repaint();
         });
     }
 
-    private JComponent row(final int i, Area a, boolean selected) {
+    private JComponent row(final int i, Area a, final boolean selected) {
         JPanel card = new JPanel(new BorderLayout(10, 4)) {
             @Override
             protected void paintComponent(Graphics g) {
@@ -193,15 +190,16 @@ final class LocationsScreen extends JPanel {
         card.setOpaque(false);
         card.setBackground(selected ? Ui.ACCENT_SOFT : Ui.CARD);
         card.setForeground(selected ? Ui.ACCENT : Ui.LINE);
-        card.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 8));
+        card.setBorder(BorderFactory.createEmptyBorder(selected ? 8 : 4, 10, selected ? 8 : 4, 8));
         JPanel head = new JPanel(new BorderLayout());
         head.setOpaque(false);
         JLabel name = Ui.label(a.name, 15f, true, Ui.INK);
-        name.setToolTipText("tap to rename");
+        name.setToolTipText(selected ? "tap to rename" : "tap to open");
         name.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseReleased(java.awt.event.MouseEvent e) {
-                actions.rename(i, name);
+                if (selected) actions.rename(i, name);
+                else actions.select(i);
             }
         });
         head.add(name, BorderLayout.WEST);
@@ -210,14 +208,17 @@ final class LocationsScreen extends JPanel {
                         Math.abs(a.plane[7]) * 1000, a.plane[2] * 1000, PoseMath.tiltDeg(a.plane));
         head.add(Ui.label(facts, 12f, false, a.plane == null ? Ui.WARN : Ui.MUTED), BorderLayout.CENTER);
         ((JLabel) head.getComponent(1)).setHorizontalAlignment(JLabel.CENTER);
-        JButton del = Ui.button("Delete", Ui.Style.GHOST);
-        del.addActionListener(e -> actions.remove(i));
-        head.add(del, BorderLayout.EAST);
         card.add(head, BorderLayout.NORTH);
-        JPanel pts = new JPanel(new GridLayout(1, 3, 6, 0));
-        pts.setOpaque(false);
-        for (int k = 0; k < 3; k++) pts.add(pointButton(i, k, a.taught[k]));
-        card.add(pts, BorderLayout.CENTER);
+        if (selected) {
+            // only the selected area opens: eight areas fit the screen with none of them scrolling
+            JButton del = Ui.button("Delete", Ui.Style.GHOST);
+            del.addActionListener(e -> actions.remove(i));
+            head.add(del, BorderLayout.EAST);
+            JPanel pts = new JPanel(new GridLayout(1, 3, 6, 0));
+            pts.setOpaque(false);
+            for (int k = 0; k < 3; k++) pts.add(pointButton(i, k, a.taught[k]));
+            card.add(pts, BorderLayout.CENTER);
+        }
         card.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseReleased(java.awt.event.MouseEvent e) {
@@ -225,7 +226,7 @@ final class LocationsScreen extends JPanel {
             }
         });
         card.setAlignmentX(Component.LEFT_ALIGNMENT);
-        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
+        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, selected ? 110 : 40));
         return card;
     }
 

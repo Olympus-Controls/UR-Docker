@@ -37,8 +37,10 @@ import javax.swing.SwingUtilities;
  * The PolyScope X node's page, in Swing: title + live dot + fps, the Cockpit field with
  * Save, the colour feed (hover for depth, tap a point, the yellow mark), a status line,
  * the located target, and Move (PolyScope) / Move (cockpit) / Bring up / STOP / Clear.
- * "Open cockpit" is gone — the pendant has no browser to open it in. A second tab holds the
- * pick areas the Perceptronic Pick node looks at, and the reach ({@link LocationsScreen}).
+ * "Open cockpit" is gone — the pendant has no browser to open it in. The feed has the
+ * Picture / Depth toggle in its top right corner; with no camera its place says what to check
+ * (cables, the IP address, the firewall). A second tab holds the pick areas the 3D Pick node
+ * looks at, on a map of the arm's reach ({@link LocationsScreen}).
  */
 // Swing components are never serialized here; javac's serial lint does not apply to them
 @SuppressWarnings("serial")
@@ -115,7 +117,7 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
         title.add(dot);
         title.add(fps);
         top.add(title, BorderLayout.WEST);
-        Ui.Segmented tabs = new Ui.Segmented(new String[] {"Camera", "Pick areas + reach"}, 0,
+        Ui.Segmented tabs = new Ui.Segmented(new String[] {"Camera", "Pick areas"}, 0,
                 i -> cards.show(deck, i == 0 ? "camera" : "areas"));
         tabs.setPreferredSize(new Dimension(340, 40));
         top.add(tabs, BorderLayout.EAST);
@@ -265,6 +267,18 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
             @Override
             public void run() {
                 feed.image = image;
+                if (!feed.depth && image != null) feed.colourWidth = image.getWidth();
+                feed.repaint();
+            }
+        });
+    }
+
+    /** What to check, shown where the picture would be while there is none. */
+    void setNoCamera(final String text) {
+        onEdt(new Runnable() {
+            @Override
+            public void run() {
+                feed.noCamera = text == null ? "" : text;
                 feed.repaint();
             }
         });
@@ -362,6 +376,9 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
         transient volatile BufferedImage image;
         volatile String hover = "hover for depth · tap a point";
         volatile boolean live;
+        volatile boolean depth;
+        volatile String noCamera = "Check the camera computer's address above, and its cables.";
+        int colourWidth; // the colour picture's width: a tap on the (half-size) depth view means the same pixel
         int markX = -1;
         int markY = -1;
 
@@ -378,6 +395,13 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
 
                 @Override
                 public void mouseClicked(MouseEvent e) {
+                    Rectangle shown = drawn();
+                    if (live && shown != null && Ui.ViewToggle.bounds(shown.width, 0).contains(e.getPoint())) {
+                        depth = e.getX() >= Ui.ViewToggle.bounds(shown.width, 0).getCenterX();
+                        repaint();
+                        if (node != null) node.setDepthView(depth);
+                        return;
+                    }
                     int[] px = pixelOf(e);
                     if (px == null || node == null) return;
                     markX = e.getX();
@@ -403,9 +427,12 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
             BufferedImage img = image;
             Rectangle r = drawn();
             if (img == null || r == null || r.width == 0 || !r.contains(e.getPoint())) return null;
-            int x = (int) Math.round(e.getX() * (img.getWidth() / (double) r.width));
-            int y = (int) Math.round(e.getY() * (img.getHeight() / (double) r.height));
-            return new int[] {Math.max(0, Math.min(img.getWidth() - 1, x)), Math.max(0, Math.min(img.getHeight() - 1, y))};
+            // in the colour picture's pixels, whichever view is shown
+            int cw = colourWidth > 0 ? colourWidth : img.getWidth();
+            int ch = (int) Math.round(cw * (img.getHeight() / (double) img.getWidth()));
+            int x = (int) Math.round(e.getX() * (cw / (double) r.width));
+            int y = (int) Math.round(e.getY() * (ch / (double) r.height));
+            return new int[] {Math.max(0, Math.min(cw - 1, x)), Math.max(0, Math.min(ch - 1, y))};
         }
 
         @Override
@@ -418,14 +445,14 @@ public class PilotView implements SwingInstallationNodeView<PilotContribution> {
             BufferedImage img = image;
             Rectangle r = drawn();
             if (img == null || !live) {
-                LiveView.paintNoCamera(g, getWidth(), getHeight(),
-                        "Check the camera computer's address above, and its camera's USB 3 cable.");
+                LiveView.paintNoCamera(g, getWidth(), getHeight(), noCamera);
                 g.dispose();
                 return;
             }
             if (r != null) {
                 g.drawImage(img, r.x, r.y, r.width, r.height, null);
                 Logo.watermark(g, r.x + r.width, r.y + r.height);
+                Ui.ViewToggle.paint(g, r.x + r.width, r.y, depth);
             }
             if (markX >= 0) {
                 g.setColor(new Color(0, 0, 0, 128));

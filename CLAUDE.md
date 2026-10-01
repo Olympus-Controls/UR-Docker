@@ -348,6 +348,35 @@ job rebuilds the committed jar against 5.4's jars with JDK 21 and `urcap5.py com
 (entries, non-class bytes, class members — JDK-independent; the committed jar is JDK 25's).
 `check-tags` also compares each image's `VERSION` with `IMAGE_VERSIONS` (bare tags re-pushed).
 
+**3D Pick (URCap 0.7.0 on PolyScope 5, 0.5.0 on PolyScope X; Nick's feedback 2026-09-30).** The program
+node is **"3D Pick"** (service id `PerceptronicPick` / tag `advin-perceptronic-pick` kept): one move
+sequence with **no children** that starts with the survey and ends with the gripper clamped on a
+part — no lift, no "After picture N" node (`PickRoutine*` and `after-node.worker.js` are gone). What
+supersedes the paragraphs above: **(1) nothing scrolls** — picture points are a fixed 2 × 6 grid of
+numbered buttons with the selected one's actions under it, only the selected pick area is open, and
+`test_everything_on_the_nodes_screen_fits_without_scrolling` lays each screen out and fails on a
+clipped control or a scroll pane. **(2) Options = two tabs**, Part (Box / Cylinder, size, tolerance,
+**Grip check**, off by default) and Approach (approach, grip depth, **Closer look**); speeds and the
+gripper have no settings (`PickScript` constants: 60 %, Robotiq via its URCap socket; `digital` is the
+simulator's stand-in). **(3) The picture carries only near misses** (`Scene.nearMisses`, the server's
+`near` flag: a little off the size, or the right size and out of reach) and a **Picture / Depth**
+toggle top right inside the frame (`GET /api/depth.png`, half-size, ramp = the frame's 2–98 %).
+**(4) Reach is the arm's kinematics**: the node sends `arm=<model>` (never `reach=`), and
+`perceptronics/armik.py` — closed-form UR IK over `armfk.DH`, every answer checked against the FK —
+says whether approach + grip have a joint solution at lean 0 / 12 / 24°; only the base's keep-out
+(radius + 150 mm) is kept; an arm not in the table is left to the controller. The Installation's reach
+margins are gone; its map shows the rated reach, named. **(5) The closer look** puts the camera
+0.30 m from the part with the part 12° off the optical axis on the side away from the gripper
+(`picknode.look_pose`, `gripper_bearing`: on the UR3e the open fingertip is 9° off-axis, 0.15 m out —
+a centred part was behind it); with no look pose the node measures again from where it is; with the
+closer look off every part is measured from its picture point (no queue). **(6) No camera** → the
+picture's place says what to check (cables, IP address, firewall; USB on a 503) and the exception goes
+to the log (`Log.java` / the browser console). **(7) `shape=cyl`**: an upright cylinder by its
+diameter, wrist not turned; `gripcheck=0` drops the stroke and finger-room checks. The two nodes write
+the same URScript — `test_the_script_is_the_polyscope_5_nodes_line_for_line` (apart from `global x =`).
+`preview5.py --screens DIR` re-renders the README's pictures. **Not run on a robot**; the PolyScope X
+dialog was clicked through in the 10.13 sim (`urcap/e2e.py`: depth view, both option tabs fit).
+
 **Monocular scan** (`perceptronics scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
 that commit if the idea comes back.

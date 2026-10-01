@@ -954,6 +954,18 @@ class ViewerApp:
         color = frame.color if frame.color.channels == 3 else frame.color.to_rgb()
         return seq, encode_png(color.width, color.height, 3, color.data)
 
+    def depth_png(self, after: int | None, timeout_s: float) -> tuple[int, bytes | None]:
+        """The depth image as a heatmap PNG (``GET /api/depth.png``): the same long-poll as
+        :meth:`color_png`, for the URCap's picture/heatmap toggle. Aligned to the colour
+        image and half its size each way (a pixel loop in Python: a quarter of the work).
+        The ramp spans what the frame holds (:func:`heatmap_range`): a 30 mm part on a
+        table 0.4 m away is a few percent of a fixed 0.15–1 m ramp — one colour."""
+        seq, frame = self.wait_frame(after, timeout_s) if after is not None else self.latest()
+        if frame is None:
+            return seq, None
+        near, far = heatmap_range(frame)
+        return seq, colourise_depth_png(frame, near, far, step=2)
+
     # -- the robot program's pick server (perceptronics.picknode) ------------------------
 
     def pick_frame(self, after: int, timeout_s: float = 2.0) -> tuple | None:
@@ -1640,14 +1652,15 @@ class ViewerHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "approach_mm must be 0..300"}, status=400)
                 return
             self._guarded(lambda: self.app.pick_scene(opts, approach))
-        elif route == "/api/color.png":
+        elif route in ("/api/color.png", "/api/depth.png"):
             try:
                 after = int(qs["after"][0]) if "after" in qs else None
                 timeout_ms = min(10000, max(0, int(qs.get("timeout_ms", ["1500"])[0])))
             except ValueError:
                 self._send_json({"ok": False, "error": "after/timeout_ms must be integers"}, status=400)
                 return
-            seq, png = self.app.color_png(after, timeout_ms / 1000.0)
+            image = self.app.color_png if route == "/api/color.png" else self.app.depth_png
+            seq, png = image(after, timeout_ms / 1000.0)
             if png is None:
                 self._send_json(
                     {"ok": False, "error": "no frame yet", "last_error": self.app.last_error}, status=503
@@ -1808,10 +1821,42 @@ def _depth_palette() -> list[bytes]:
 _PALETTE = _depth_palette()
 
 
-def colourise_depth_png(frame: RgbdFrame, near_m: float | None = None, far_m: float | None = None) -> bytes:
+HEATMAP_NEAR_M, HEATMAP_FAR_M = 0.15, 1.0
+HEATMAP_STEP_M = 0.01  # the ramp's ends move in steps: frame-to-frame noise does not shimmer it
+HEATMAP_MIN_SPAN_M = 0.05
+
+
+def heatmap_range(frame: RgbdFrame) -> tuple[float, float]:
+    """The near and far ends of the heatmap's ramp for this frame: the 2nd and 98th
+    percentile of its valid depths (a flying pixel does not stretch it), rounded outward to
+    :data:`HEATMAP_STEP_M`, at least :data:`HEATMAP_MIN_SPAN_M` apart. A frame with no
+    depth gets the fixed 0.15–1.0 m."""
+    w, h, data, scale = frame.depth.width, frame.depth.height, frame.depth.data, frame.depth.scale_m
+    vals = []
+    for y in range(0, h, 8):
+        for k in range(2 * y * w, 2 * (y + 1) * w, 16):
+            raw = data[k] | (data[k + 1] << 8)
+            if raw:
+                vals.append(raw)
+    if len(vals) < 20:
+        return HEATMAP_NEAR_M, HEATMAP_FAR_M
+    vals.sort()
+    near = vals[len(vals) * 2 // 100] * scale
+    far = vals[min(len(vals) - 1, len(vals) * 98 // 100)] * scale
+    near = math.floor(near / HEATMAP_STEP_M) * HEATMAP_STEP_M
+    far = math.ceil(far / HEATMAP_STEP_M) * HEATMAP_STEP_M
+    if far - near < HEATMAP_MIN_SPAN_M:
+        far = near + HEATMAP_MIN_SPAN_M
+    return near, far
+
+
+def colourise_depth_png(
+    frame: RgbdFrame, near_m: float | None = None, far_m: float | None = None, step: int = 1
+) -> bytes:
     """The depth image as an 8-bit RGB PNG a human (or a vision model) can read:
     near→far runs through the same turbo-like ramp the page uses, invalid
-    depth is black. Range defaults to the frame's own valid min/max."""
+    depth is black. Range defaults to the frame's own valid min/max. ``step`` > 1
+    keeps every ``step``-th pixel each way (a smaller, cheaper picture)."""
     stats = frame.depth.stats()
     near = near_m if near_m is not None else (stats["min_m"] or 0.2)
     far = far_m if far_m is not None else (stats["max_m"] or near + 1.0)
@@ -1822,6 +1867,17 @@ def colourise_depth_png(frame: RgbdFrame, near_m: float | None = None, far_m: fl
     black = b"\x00\x00\x00"
     pal = _PALETTE
     rows = bytearray()
+    if step > 1:
+        w, h, data = frame.depth.width, frame.depth.height, frame.depth.data
+        for y in range(0, h, step):
+            for k in range(2 * y * w, 2 * (y + 1) * w, 2 * step):
+                raw = data[k] | (data[k + 1] << 8)
+                if not raw:
+                    rows += black
+                    continue
+                t = (raw * scale - near) / span
+                rows += pal[0 if t <= 0 else (255 if t >= 1 else int(t * 255))]
+        return encode_png(len(range(0, w, step)), len(range(0, h, step)), 3, bytes(rows))
     for raw in frame.depth.values():
         if not raw:
             rows += black

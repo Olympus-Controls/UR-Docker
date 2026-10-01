@@ -213,7 +213,7 @@ is built, and it is far off.
 ### Not in this session (needs the robot and Nick at the pendant)
 
 1. UR3e powered, `sudo perceptronics-doctor` green on `robot.*`.
-2. Pendant: remove RealSense Pilot, install Perceptronic 0.6.0 from the USB stick,
+2. Pendant: remove RealSense Pilot, install Perceptronic 0.7.0 from the USB stick,
    **Installation → URCaps → Perceptronic → Cockpit = `http://192.168.3.20:7621` → Save**.
 3. Hand-eye on the Pi (`perceptronics calibrate --apply`), then delete the
    `PERCEPTRONICS_T_FLANGE_CAMERA` line from `/etc/perceptronics/cell.env` and restart —

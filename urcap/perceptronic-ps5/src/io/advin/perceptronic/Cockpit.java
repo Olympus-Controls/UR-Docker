@@ -81,7 +81,13 @@ final class Cockpit {
     }
 
     Frame colorPng(long after, int timeoutMs) throws IOException {
-        HttpURLConnection c = open("/api/color.png?after=" + after + "&timeout_ms=" + timeoutMs, "GET", timeoutMs + 5000);
+        return framePng(false, after, timeoutMs);
+    }
+
+    /** The next picture: the colour image, or ({@code depth}) the depth as a heatmap — ``GET /api/depth.png``. */
+    Frame framePng(boolean depth, long after, int timeoutMs) throws IOException {
+        HttpURLConnection c = open("/api/" + (depth ? "depth" : "color") + ".png?after=" + after + "&timeout_ms="
+                + timeoutMs, "GET", timeoutMs + 5000);
         try {
             int status = c.getResponseCode();
             if (status != 200) {
@@ -186,27 +192,96 @@ final class Cockpit {
         }
     }
 
-    /** Why a request to the cockpit failed, and what to do about it — one message per cause. */
-    static String explain(Exception e, String base) {
-        String how = "\nStart one where the camera is:  perceptronics --cell <cell> gui --bind 0.0.0.0"
-                + "\nthen set its URL above (http://<camera-computer-ip>:" + DEFAULT_PORT + ").";
+    /** What went wrong, for the operator: one plain line and the things to check, in order. */
+    static final class Advice {
+        final String summary;
+        final String[] checks;
+        final String detail; // for the log: the exception, the URL, the command
+
+        Advice(String summary, String[] checks, String detail) {
+            this.summary = summary;
+            this.checks = checks;
+            this.detail = detail;
+        }
+
+        /** The summary, then one check per line. */
+        String text() {
+            StringBuilder b = new StringBuilder(summary);
+            for (String c : checks) b.append("\n• ").append(c);
+            return b.toString();
+        }
+    }
+
+    static final String CHECK_CABLES = "Cables: the camera computer is powered and its network cable is plugged in at"
+            + " both ends (link lights on)";
+    static final String CHECK_FIREWALL = "Firewall: the camera computer must let the robot in on TCP ports "
+            + DEFAULT_PORT + " and " + PickScript.DEFAULT_PICK_PORT;
+    static final String CHECK_USB = "Camera cable: the camera's USB cable seated at both ends, in a blue (USB 3) port"
+            + " — unplug it and plug it back in";
+
+    private static String host(String base) {
+        try {
+            String h = new URI(base).getHost();
+            return h == null ? base : h;
+        } catch (URISyntaxException e) {
+            return base;
+        }
+    }
+
+    private static String checkAddress(String base) {
+        return "IP address: is " + host(base) + " the camera computer's, and on the same network as the robot"
+                + " (the robot's own is under Settings → System → Network)?";
+    }
+
+    /**
+     * Why a request to the camera computer failed, as the operator should read it: what
+     * happened in one line, then what to check — cables, the IP address, the firewall — most
+     * likely first. The exception itself goes in {@link Advice#detail}, for the log.
+     */
+    static Advice advise(Exception e, String base) {
+        String why = e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
+        String detail = base + " — " + why + " — the camera computer runs the cockpit with:  perceptronics --cell"
+                + " <cell> gui --bind 0.0.0.0  (service: perceptronics-cockpit)";
+        boolean self = base.contains("127.0.0.1") || base.contains("localhost");
         if (e instanceof java.net.MalformedURLException || e instanceof IllegalArgumentException) {
-            return "\"" + base + "\" is not a URL — enter it as http://<host>:" + DEFAULT_PORT;
+            return new Advice("\"" + base + "\" is not an address.",
+                    new String[] {"Enter it as  http://<camera computer's IP>:" + DEFAULT_PORT}, detail);
         }
         if (e instanceof UnknownHostException) {
-            return "the controller cannot resolve the cockpit's host in " + base + " — use its IP address." + how;
+            return new Advice("The robot cannot find a computer called " + host(base) + ".",
+                    new String[] {"IP address: enter the camera computer's IP address instead of its name",
+                        CHECK_CABLES}, detail);
         }
         if (e instanceof ConnectException) {
-            String hint = base.contains("127.0.0.1") || base.contains("localhost")
-                    ? "\n· 127.0.0.1 is the robot controller itself, not the camera computer — use that computer's IP"
-                    : "\n· the cockpit listens on loopback only unless started with --bind 0.0.0.0";
-            return "nothing answers at " + base + " (connection refused)." + hint + how;
+            return new Advice(self ? "Nothing on the robot controller itself answers at " + base + "."
+                    : "A computer answers at " + host(base) + ", but not the camera program.", new String[] {
+                        self ? "IP address: 127.0.0.1 is this robot, not the camera computer — enter that computer's"
+                                + " IP address" : checkAddress(base),
+                        "Camera program: is it running on the camera computer? Restart that computer if unsure",
+                        CHECK_FIREWALL,
+                    }, detail + " — connection refused: nothing listens on that port, or the cockpit is bound to"
+                            + " loopback only");
         }
         if (e instanceof SocketTimeoutException || e instanceof NoRouteToHostException) {
-            return "no answer from " + base + " — wrong subnet, firewall, or the camera computer is off." + how;
+            return new Advice("No answer from the camera computer at " + host(base) + ".",
+                    new String[] {CHECK_CABLES, checkAddress(base), CHECK_FIREWALL}, detail);
         }
-        String why = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-        return "no cockpit at " + base + " (" + why + ")." + how;
+        return new Advice("The camera computer at " + host(base) + " cannot be reached.",
+                new String[] {CHECK_CABLES, checkAddress(base), CHECK_FIREWALL}, detail);
+    }
+
+    /** {@link #advise} as text for a status line; the detail is written to the log. */
+    static String explain(Exception e, String base) {
+        Advice a = advise(e, base);
+        Log.detail(a.detail);
+        return a.text();
+    }
+
+    /** The camera computer answers but has no picture (HTTP 503): the camera, not the network. */
+    static String noPicture(String base, String lastError) {
+        Log.detail(base + " — the cockpit is up but has no frame" + (lastError == null ? "" : ": " + lastError));
+        return "The camera computer is on, but its camera gives no picture.\n• " + CHECK_USB
+                + "\n• The picture comes back by itself a few seconds after the camera does";
     }
 
     /** ``xs`` as six finite doubles, or null (a JSON list of numbers from the cockpit). */
