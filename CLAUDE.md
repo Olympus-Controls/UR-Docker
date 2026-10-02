@@ -984,6 +984,19 @@ URCap has its own tag line: `urcap5-v<Bundle-Version>` attaches the committed
 proves it is the tagged sources' build (`release-urcap5.yml`; CI never rebuilds it —
 the URCap API jars exist only in the URSim image).
 
+**Before changing anything public-facing — links, owner or vendor names, the licence, a bundle
+id — check Nick's recorded decisions.** They live in the assistant's project memory (the decisions
+log and the dated answers), not in `TODO.md`, which holds only open questions and work. On
+2026-09-30 every link on `docs/index.html` was repointed against a standing decision and had to be
+reverted; when reality contradicts a decision, write the mismatch under `TODO.md`'s open questions
+and let Nick decide (he did, the next day: `LICENSE` is Nick Armenta's, and quick starts and links
+use `JimothyJohn/perceptronics` only).
+
+**`perceptronics doctor` exits 1 when the verdict is NOT READY** — the right answer on a machine
+with no robot, so a script or CI step must not treat that exit code as a crash: look for the
+`verdict:` line (the Windows CI step does; `scripts/setup-windows.ps1` ends with its own `exit 0`).
+`doctor | head; echo $?` reports `head`'s 0, which is how this was misread once.
+
 Unit tests assume a clean shell: with `UR_CELL` (or `PERCEPTRONICS_*`) exported,
 the handeye/webapp/cockpit tests pick up the cell's defaults and fail — run them
 with `env -u UR_CELL python3 -m pytest …` or in a fresh shell.
