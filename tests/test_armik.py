@@ -65,7 +65,7 @@ def test_the_ur3e_cell_reaches_its_parts_where_the_datasheet_ring_said_no():
     assert armik.has_solution([0.56, 0.0, -0.107, math.pi, 0.0, 0.0], "UR3") is False
 
 
-@pytest.mark.parametrize("model", [None, "", "UR7e", "Fanuc", "UR3; rm -rf"])
+@pytest.mark.parametrize("model", [None, "", "UR30", "Fanuc", "UR3; rm -rf"])
 def test_an_arm_the_table_lacks_is_nobodys_to_judge(model):
     assert armik.has_solution([0.3, 0.0, 0.2, 0.0, math.pi, 0.0], model) is None
     if model:
@@ -83,3 +83,17 @@ def test_any_pose_gets_an_answer_and_every_yes_is_true(xyz, rv):
     for s in armik.solutions(pose, "UR10e"):
         got = armfk.frames(s, "UR10E")[-1]
         assert math.dist(got[:3], pose[:3]) < 1e-4
+
+
+@pytest.mark.parametrize(
+    ("model", "same_as"), [("UR7e", "UR5e"), ("UR12e", "UR10e"), ("UR7", "UR5"), ("ur12e", "UR10E")]
+)
+def test_the_ur7e_and_ur12e_are_the_ur5e_and_ur10e(model, same_as):
+    """Nick, 2026-10-01. Before, these two arms got no camera-side reach check at all."""
+    assert armfk.DH[armfk.model_key(model)] == armfk.DH[armfk.model_key(same_as)]
+    q = [0.4, -1.2, 1.5, -0.9, 1.3, 0.7]
+    pose = armfk.frames(q, armfk.model_key(same_as))[-1]
+    assert armik.has_solution(pose, model) is True
+    assert armik.solutions(pose, model) == armik.solutions(pose, same_as)
+    reach = sum(abs(v) for v in armfk.DH[armfk.model_key(same_as)][1]) + 0.6
+    assert armik.has_solution([reach, 0.0, 0.2, 0.0, 3.14159, 0.0], model) is False
