@@ -428,7 +428,7 @@ def test_the_base_keeps_its_keep_out_radius():
     ] == (-2)
 
 
-@pytest.mark.parametrize("arm", ["UR7e", "UR30", "Fanuc"])
+@pytest.mark.parametrize("arm", ["UR30", "Fanuc"])
 def test_an_arm_nobody_here_has_kinematics_for_is_left_to_the_controller(arm):
     part = [Box(0.70, 0.0, 0.05, 0.035, 0.03)]
     got = ask(planner(Frames(part, FAR)), "FIND", f"node=u loc=1 locs=1 {OPTS} arm={arm}", flange=FAR)

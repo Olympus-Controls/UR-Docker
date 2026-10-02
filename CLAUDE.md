@@ -391,6 +391,22 @@ end (decided; a lying one rolls). **The picture: pickable parts green with their
 near misses yellow with why** (still nothing for what is nothing like the part). The closer look
 assumes fingers open 50 mm (`LOOK_STROKE_MM`) when it keeps the part clear of them.
 
+**Settled 2026-10-01 (Nick):** green overlays for pickable parts and yellow for *marginal* ones (the
+server's `near` flag) is the intended picture — nothing is drawn for what is nothing like the part;
+the 3D Pick node's picture carries no watermark; the **UR7e is the UR5e's arm and the UR12e the
+UR10e's** (`armfk.DH` aliases, so `armik` judges them; only the UR30 is still left to the controller).
+
+**Three traps from the 3D Pick sessions.** (1) `urcap/pick5_e2e.py` compiles the test harness in
+`tests/test_urcap5.py` (`HARNESS`): anything the harness starts to use must be in the source list
+`generate()` copies (`PURE_JAVA` + `SCREEN_JAVA`) — a mismatch failed all 23 controller jobs in a
+minute; `tests/test_pick5_e2e.py` now builds the e2e's scripts and replays its session. (2) The
+committed packages in `urcap/dist/` conflict on a rebase whenever *anything packaged* changes on `dev`
+— the LICENSE included — and a conflicting PR shows **no checks at all**: rebase, delete the
+conflicted files, `make urcap-package urcap5-package`, push. (3) Playwright is not in `.venv` (uv is
+gone from the repo): `uv run --with playwright==1.63.0 python urcap/e2e.py --image
+universalrobots/ursim_polyscopex:10.13.0` still works where uv is installed, but leaves a stray
+`uv.lock` — delete it before committing.
+
 **Monocular scan** (`perceptronics scan`, `docs/mono-scan.md`) was removed on
 2026-09-25 (branch refactor/prune-2026-09-25); it lives in git history before
 that commit if the idea comes back.
